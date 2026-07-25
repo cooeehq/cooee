@@ -1,0 +1,22 @@
+{
+  "name": "@cooee/api",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "cron:daily": "bun src/cron/daily.ts",
+    "cron:historical": "bun src/cron/historical.ts",
+    "auth:encrypt-oauth-tokens": "bun src/scripts/encrypt-oauth-tokens.ts",
+    "billing:complimentary": "bun src/scripts/manage-complimentary-access.ts",
+    "stripe:configure": "bun src/scripts/configure-stripe.ts",
+    "dev": "bun --watch src/index.ts",
+    "migrate": "bun src/db/migrate.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1063.0",
+    "@cooee/shared": "workspace:*"
+  }
+}

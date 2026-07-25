@@ -1,0 +1,17 @@
+node_modules
+dist
+**/dist/
+**/dist-admin/
+.env
+.claude/
+posthog-warehouse-report.md
+.env.*
+!.env.example
+.DS_Store
+.turbo
+.vite
+.playwright-mcp
+coverage
+*.tsbuildinfo
+**/*.tsbuildinfo
+**/*.d.ts.map

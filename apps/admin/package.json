@@ -1,0 +1,14 @@
+{
+  "name": "@cooee/admin",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --host 0.0.0.0",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cooee/shared": "workspace:*"
+  }
+}

@@ -1,0 +1,126 @@
+# @cooeehq/react
+
+Drop-in React component for [Cooee](https://cooee.sh) changelogs. Renders a
+"Latest updates" button with an unread count and a popup listing the most
+recent entries from your public feed.
+
+## Install
+
+```bash
+npm install @cooeehq/react
+```
+
+The package is ESM-only. React 18 or 19 is required as a peer dependency.
+
+## Usage
+
+```tsx
+import { CooeeUpdates } from "@cooeehq/react";
+
+export function Updates() {
+  return (
+    <CooeeUpdates
+      feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
+      maxItems={5}
+      appearance={{ colorScheme: "system" }}
+    />
+  );
+}
+```
+
+The feed must be publicly reachable from the browser and allow requests from
+the site where the component is rendered.
+
+## Props
+
+| Prop          | Type                          | Default            | Description                                      |
+| ------------- | ----------------------------- | ------------------ | ------------------------------------------------ |
+| `feedUrl`     | `string`                      | required           | URL of the public Cooee JSON feed                |
+| `maxItems`    | `number`                      | `5`                | Entries to show, clamped between 0 and 100       |
+| `buttonLabel` | `string`                      | `"Latest updates"` | Visible label for the trigger                    |
+| `className`   | `string`                      | —                  | Extra class on the component root                |
+| `appearance`  | `CooeeUpdatesAppearance`      | system theme       | Colour scheme, accent colours, and corner radius |
+| `labels`      | `Partial<CooeeUpdatesLabels>` | English defaults   | Localized status and control labels              |
+| `styleNonce`  | `string`                      | —                  | CSP nonce for the component style block          |
+
+Unread state is tracked per feed URL in `localStorage`; opening the popup
+marks everything as seen. When the feed includes post images, the component
+loads them lazily and resolves legacy relative URLs against the feed origin. A
+footer link opens the complete public changelog in a new tab.
+
+### Appearance
+
+```tsx
+<CooeeUpdates
+  feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
+  appearance={{
+    colorScheme: "dark", // "light", "dark", or "system"
+    accentColor: "#155e75",
+    accentTextColor: "#ffffff",
+    cornerRadius: 12,
+  }}
+/>
+```
+
+When supplying accent colours, choose a foreground/background pair with at
+least 4.5:1 contrast. The component otherwise uses accessible light and dark
+defaults.
+
+For a strict Content Security Policy, pass the nonce from your response's
+`style-src 'nonce-…'` directive through `styleNonce`. Cooee does not require
+`unsafe-inline` style permission when a valid nonce is supplied.
+
+### Localized labels
+
+Override only the strings you need. Count-aware labels are functions so they
+can follow the plural rules for your locale.
+
+```tsx
+<CooeeUpdates
+  feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
+  buttonLabel="Nouveautés"
+  labels={{
+    close: "Fermer les nouveautés",
+    loading: "Chargement…",
+    retry: "Réessayer",
+    empty: "Aucune nouveauté.",
+    viewAll: "Voir toutes les nouveautés",
+  }}
+/>
+```
+
+## Behaviour and accessibility
+
+- Every instance has unique disclosure, panel, and heading IDs.
+- Opening moves focus to the close control. Escape and the close control
+  return focus to the trigger; clicking outside dismisses without stealing
+  focus.
+- Loading, errors, empty results, and loaded counts use screen-reader live
+  regions. Errors include a retry action.
+- Controls use comfortable 44px targets, the panel stays within small
+  viewports, and the styles support RTL text, 200% zoom, forced colours, and
+  reduced-motion preferences.
+- Feed changes cancel stale requests. Invalid responses and unavailable
+  `localStorage` fail gracefully.
+
+## Development
+
+This package lives in the [cooee monorepo](https://github.com/cooeehq/cooee)
+under `packages/embed-react`.
+
+```bash
+bun install
+bun run --cwd packages/embed-react lint
+bun run --cwd packages/embed-react typecheck
+bun test packages/embed-react
+bun run --cwd packages/embed-react build
+```
+
+`build` produces an ESM bundle via Vite and type declarations via `tsc` in
+`dist/`.
+
+## Releasing
+
+Bump `version` in `package.json`, then push a matching `react-v*` tag (e.g.
+`react-v0.1.1`). The `publish-react` GitHub Actions workflow lints, tests,
+builds, and publishes to npm.

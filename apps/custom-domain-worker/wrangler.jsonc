@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cooee-custom-domain-proxy",
+  "account_id": "127371f44ec4516aeb43357af2e0e805",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-09",
+  "routes": [
+    {
+      "pattern": "*/*",
+      "zone_name": "cooee.sh"
+    }
+  ],
+  "vars": {
+    "COOEE_ORIGIN_HOST": "cooee-api-production.up.railway.app"
+  }
+}
