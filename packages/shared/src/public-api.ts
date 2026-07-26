@@ -198,6 +198,58 @@ export const publicApiOpenApiDocument = {
         },
       },
     },
+    "/api/public/changelogs/{slug}/feed.xml": {
+      get: {
+        operationId: "getChangelogRssFeed",
+        summary: "Get a published changelog RSS feed",
+        parameters: [
+          {
+            name: "slug",
+            in: "path",
+            required: true,
+            schema: { type: "string", example: "acme-app" },
+          },
+          {
+            name: "before",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+              example: "2026-07-15T08:00:00Z",
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Published changelog RSS feed",
+            content: {
+              "application/rss+xml": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/InvalidRequest" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+      head: {
+        operationId: "headChangelogRssFeed",
+        summary: "Check whether a public changelog RSS feed is available",
+        parameters: [
+          {
+            name: "slug",
+            in: "path",
+            required: true,
+            schema: { type: "string", example: "acme-app" },
+          },
+        ],
+        responses: {
+          "200": { description: "The RSS feed is available" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
     "/api/public/changelogs/{slug}/latest": {
       get: {
         operationId: "getLatestChangelogUpdates",

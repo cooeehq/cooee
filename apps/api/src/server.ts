@@ -366,7 +366,11 @@ export function createApp(options: AppOptions = {}): App {
             ) {
               const installationIds =
                 await auth.listAccessibleGitHubInstallationIds(request.headers);
-              if (installationIds === null && memberships.length === 0) {
+              if (
+                installationIds === null &&
+                memberships.length === 0 &&
+                env.NODE_ENV === "production"
+              ) {
                 return json(
                   {
                     error:
@@ -813,6 +817,10 @@ export function createApp(options: AppOptions = {}): App {
             (url.pathname === "/api/github/callback" ||
               url.pathname === "/api/onboarding/github")
           ) {
+            const callbackAppUrl =
+              env.NODE_ENV !== "production" && env.VITE_PUBLIC_SITE_URL
+                ? env.VITE_PUBLIC_SITE_URL
+                : config.appUrl;
             const installationId = Number(
               url.searchParams.get("installation_id"),
             );
@@ -820,7 +828,7 @@ export function createApp(options: AppOptions = {}): App {
             if (!Number.isInteger(installationId) || installationId <= 0) {
               return Response.redirect(
                 githubAppCallbackRedirect(
-                  config.appUrl,
+                  callbackAppUrl,
                   "missing-installation",
                 ),
                 302,
@@ -829,7 +837,7 @@ export function createApp(options: AppOptions = {}): App {
 
             if (!isGitHubAppConfigured(config)) {
               return Response.redirect(
-                githubAppCallbackRedirect(config.appUrl, "not-configured"),
+                githubAppCallbackRedirect(callbackAppUrl, "not-configured"),
                 302,
               );
             }
@@ -846,15 +854,16 @@ export function createApp(options: AppOptions = {}): App {
                 }));
               const installationAccessible =
                 stateValid &&
-                auth &&
-                (await auth.canAccessGitHubInstallation(
-                  request.headers,
-                  installationId,
-                ));
+                (env.NODE_ENV !== "production" ||
+                  (auth &&
+                    (await auth.canAccessGitHubInstallation(
+                      request.headers,
+                      installationId,
+                    ))));
               if (!installationAccessible) {
                 return Response.redirect(
                   githubAppCallbackRedirect(
-                    config.appUrl,
+                    callbackAppUrl,
                     "invalid-installation",
                   ),
                   302,
@@ -870,12 +879,12 @@ export function createApp(options: AppOptions = {}): App {
                 workspaceId: getWorkspaceId(url),
               });
               return Response.redirect(
-                githubAppCallbackRedirect(config.appUrl, "connected"),
+                githubAppCallbackRedirect(callbackAppUrl, "connected"),
                 302,
               );
             } catch {
               return Response.redirect(
-                githubAppCallbackRedirect(config.appUrl, "sync-error"),
+                githubAppCallbackRedirect(callbackAppUrl, "sync-error"),
                 302,
               );
             }
@@ -1116,6 +1125,10 @@ export function createApp(options: AppOptions = {}): App {
             /^\/api\/public\/changelogs\/([^/]+)\/feed\.json$/.exec(
               url.pathname,
             );
+          const rssFeedMatch =
+            /^\/api\/public\/changelogs\/([^/]+)\/feed\.xml$/.exec(
+              url.pathname,
+            );
           if (
             request.method === "OPTIONS" &&
             url.pathname.startsWith("/api/public/")
@@ -1132,6 +1145,22 @@ export function createApp(options: AppOptions = {}): App {
                 await publicFeed(
                   store,
                   decodeURIComponent(feedMatch[1]),
+                  url.searchParams,
+                ),
+              ),
+            );
+          }
+
+          if (
+            (request.method === "GET" || request.method === "HEAD") &&
+            rssFeedMatch
+          ) {
+            return publicCorsResponse(
+              respondToHead(
+                request,
+                await publicRssFeed(
+                  store,
+                  decodeURIComponent(rssFeedMatch[1]),
                   url.searchParams,
                 ),
               ),
@@ -1172,6 +1201,18 @@ export function createApp(options: AppOptions = {}): App {
               respondToHead(
                 request,
                 await publicFeedByHost(store, request, url.searchParams),
+              ),
+            );
+          }
+
+          if (
+            (request.method === "GET" || request.method === "HEAD") &&
+            url.pathname === "/api/public/changelog/feed.xml"
+          ) {
+            return publicCorsResponse(
+              respondToHead(
+                request,
+                await publicRssFeedByHost(store, request, url.searchParams),
               ),
             );
           }
@@ -4799,6 +4840,33 @@ async function publicFeedByHost(
   return publicFeedForChangelog(store, changelog, searchParams, limit);
 }
 
+async function publicRssFeed(
+  store: Store,
+  slug: string,
+  searchParams: URLSearchParams = new URLSearchParams(),
+): Promise<Response> {
+  return publicRssResponse(await publicFeed(store, slug, searchParams));
+}
+
+async function publicRssFeedByHost(
+  store: Store,
+  request: Request,
+  searchParams: URLSearchParams = new URL(request.url).searchParams,
+): Promise<Response> {
+  return publicRssResponse(
+    await publicFeedByHost(store, request, searchParams),
+  );
+}
+
+async function publicRssResponse(feedResponse: Response): Promise<Response> {
+  if (!feedResponse.ok) {
+    return feedResponse;
+  }
+
+  const feed = publicFeedSchema.parse(await feedResponse.json());
+  return xml(renderRssFeed(feed), { headers: publicFeedCacheHeaders });
+}
+
 async function publicFeedForChangelog(
   store: Store,
   changelog: StoredChangelog,
@@ -5544,6 +5612,61 @@ function json(body: unknown, init?: ResponseInit): Response {
   headers.set("x-frame-options", "DENY");
   headers.set("cache-control", headers.get("cache-control") ?? "no-store");
   return Response.json(body, { ...init, headers });
+}
+
+function xml(body: string, init?: ResponseInit): Response {
+  const headers = new Headers(init?.headers);
+  headers.set("content-type", "application/rss+xml; charset=utf-8");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("x-frame-options", "DENY");
+  headers.set("cache-control", headers.get("cache-control") ?? "no-store");
+  return new Response(body, { ...init, headers });
+}
+
+function renderRssFeed(
+  feed: ReturnType<typeof publicFeedSchema.parse>,
+): string {
+  const changelog = feed.changelog;
+  const description =
+    changelog.description?.trim() || `${changelog.name} updates`;
+  const items = feed.entries
+    .map(
+      (entry) => `
+      <item>
+        <title>${escapeXml(entry.title)}</title>
+        <description>${escapeXml(entry.summary)}</description>
+        <link>${escapeXml(changelog.publicUrl)}</link>
+        <guid isPermaLink="false">${escapeXml(entry.id)}</guid>
+        <pubDate>${escapeXml(toRssDate(entry.publishedAt))}</pubDate>
+        <category>${escapeXml(entry.category)}</category>
+      </item>`,
+    )
+    .join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>${escapeXml(`${changelog.name} changelog`)}</title>
+    <description>${escapeXml(description)}</description>
+    <link>${escapeXml(changelog.publicUrl)}</link>
+    <lastBuildDate>${escapeXml(toRssDate(feed.generatedAt))}</lastBuildDate>${items}
+  </channel>
+</rss>`;
+}
+
+function toRssDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toUTCString();
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 function secureResponse(response: Response): Response {

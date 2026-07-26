@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { getGitHubContactEmail, getGitHubProfileEmail } from "../auth";
+import {
+  GITHUB_OAUTH_SCOPES,
+  getGitHubContactEmail,
+  getGitHubProfileEmail,
+} from "../auth";
 
 describe("GitHub authentication", () => {
   test("keeps a GitHub profile email when one is available", () => {
@@ -22,5 +26,9 @@ describe("GitHub authentication", () => {
     expect(getGitHubContactEmail(" owner@example.com ")).toBe(
       "owner@example.com",
     );
+  });
+
+  test("requests permission to discover accessible GitHub App installations", () => {
+    expect(GITHUB_OAUTH_SCOPES).toContain("read:org");
   });
 });

@@ -19,6 +19,10 @@ export type AuthSession = {
   user: { id: string; name: string; email: string | null };
 };
 
+// Needed to identify GitHub App installations available to the signed-in user.
+// Better Auth adds this to GitHub's default read:user and user:email scopes.
+export const GITHUB_OAUTH_SCOPES = ["read:org"] as const;
+
 export function getGitHubProfileEmail(profile: {
   id: string | number;
   email?: string | null;
@@ -83,6 +87,7 @@ export function createAuth(
       github: {
         clientId: env.GITHUB_CLIENT_ID ?? "",
         clientSecret: env.GITHUB_CLIENT_SECRET ?? "",
+        scope: [...GITHUB_OAUTH_SCOPES],
         mapProfileToUser: (profile) => ({
           email: getGitHubProfileEmail(profile),
         }),

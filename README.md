@@ -151,6 +151,7 @@ workflow.
 Hosted public endpoints use `https://api.cooee.sh`:
 
 - `GET|HEAD /api/public/changelogs/:slug/feed.json`
+- `GET|HEAD /api/public/changelogs/:slug/feed.xml`
 - `GET|HEAD /api/public/changelogs/:slug/latest?limit=5&before=<RFC3339>`
 - `GET|HEAD /api/public/openapi.json`
 

@@ -199,6 +199,17 @@ describe("api routes", () => {
     expect(feed.headers.get("access-control-allow-origin")).toBe("*");
     expect(feed.headers.get("cache-control")).toContain("max-age=60");
 
+    const rss = await app.fetch(
+      new Request("http://cooee.test/api/public/changelogs/acme-app/feed.xml"),
+    );
+    expect(rss.status).toBe(200);
+    expect(rss.headers.get("content-type")).toContain("application/rss+xml");
+    expect(rss.headers.get("cache-control")).toContain("max-age=60");
+    const rssBody = await rss.text();
+    expect(rssBody).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+    expect(rssBody).toContain("<title>Acme App changelog</title>");
+    expect(rssBody).toContain("<item>");
+
     const latest = await app.fetch(
       new Request(
         "http://cooee.test/api/public/changelogs/acme-app/latest?limit=1",
@@ -220,6 +231,14 @@ describe("api routes", () => {
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
     expect(head.headers.get("access-control-allow-methods")).toContain("HEAD");
+
+    const rssHead = await app.fetch(
+      new Request("http://cooee.test/api/public/changelogs/acme-app/feed.xml", {
+        method: "HEAD",
+      }),
+    );
+    expect(rssHead.status).toBe(200);
+    expect(await rssHead.text()).toBe("");
   });
 
   test("validates public feed queries and preserves not-found responses", async () => {
@@ -230,6 +249,7 @@ describe("api routes", () => {
       "/api/public/changelogs/acme-app/latest?limit=2.5",
       "/api/public/changelogs/acme-app/latest?limit=words",
       "/api/public/changelogs/acme-app/feed.json?before=yesterday",
+      "/api/public/changelogs/acme-app/feed.xml?before=yesterday",
     ]) {
       const response = await app.fetch(new Request(`http://cooee.test${path}`));
       expect(response.status).toBe(400);
@@ -260,6 +280,7 @@ describe("api routes", () => {
       info: { title: "Cooee Public API" },
       paths: {
         "/api/public/changelogs/{slug}/feed.json": {},
+        "/api/public/changelogs/{slug}/feed.xml": {},
         "/api/public/changelogs/{slug}/latest": {},
       },
     });
@@ -331,6 +352,12 @@ describe("api routes", () => {
     const feedJson = await feed.json();
     expect(feedJson.changelog.publicUrl).toBe("https://changelog.partbot.io");
     expect(feedJson.entries).toHaveLength(2);
+
+    const rss = await app.fetch(
+      new Request("https://changelog.partbot.io/api/public/changelog/feed.xml"),
+    );
+    expect(rss.status).toBe(200);
+    expect(await rss.text()).toContain("https://changelog.partbot.io");
 
     const forwardedFeed = await app.fetch(
       new Request(

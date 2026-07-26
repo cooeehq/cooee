@@ -10,6 +10,7 @@ import {
   ChevronRightIcon,
   CheckCircle2Icon,
   ClipboardCopyIcon,
+  CodeXmlIcon,
   CreditCardIcon,
   ExternalLinkIcon,
   EllipsisIcon,
@@ -21,11 +22,14 @@ import {
   LogOutIcon,
   type LucideIcon,
   MoonIcon,
+  ParenthesesIcon,
   PencilIcon,
   RefreshCwIcon,
+  RssIcon,
   SearchIcon,
   SendIcon,
   SettingsIcon,
+  Share2Icon,
   ShieldCheckIcon,
   SparklesIcon,
   SunIcon,
@@ -805,11 +809,13 @@ function applyPublicChangelogSeoMetadata({
   description,
   faviconUrl,
   publicUrl,
+  rssUrl,
 }: {
   appName: string;
   description?: string | null;
   faviconUrl?: string | null;
   publicUrl?: string | null;
+  rssUrl?: string | null;
 }) {
   if (typeof document === "undefined") {
     return;
@@ -852,6 +858,10 @@ function applyPublicChangelogSeoMetadata({
   if (faviconUrl) {
     upsertFaviconLink(faviconUrl);
   }
+
+  if (rssUrl) {
+    upsertRssLink(rssUrl);
+  }
 }
 
 function getCooeeSocialImageUrl(publicUrl: string | null): string | null {
@@ -892,6 +902,22 @@ function upsertCanonicalLink(href: string) {
   if (!link) {
     link = document.createElement("link");
     link.setAttribute("rel", "canonical");
+    document.head.append(link);
+  }
+
+  link.setAttribute("href", href);
+}
+
+function upsertRssLink(href: string) {
+  let link = document.head.querySelector<HTMLLinkElement>(
+    'link[rel="alternate"][type="application/rss+xml"]',
+  );
+
+  if (!link) {
+    link = document.createElement("link");
+    link.setAttribute("rel", "alternate");
+    link.setAttribute("type", "application/rss+xml");
+    link.setAttribute("title", "Changelog RSS feed");
     document.head.append(link);
   }
 
@@ -3420,7 +3446,7 @@ export function App({
                 </a>
               </nav>
 
-              {showCloudAccountMenu ? (
+              {isSignedIn ? (
                 <SidebarUserMenu
                   authUser={authUser}
                   appName={appName}
@@ -3941,12 +3967,21 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
 
   useEffect(() => {
     let ignore = false;
+    let requestInFlight = false;
 
-    async function loadPublicChangelog() {
-      setState({ status: "loading" });
+    async function loadPublicChangelog(showLoadingState = true) {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      if (showLoadingState) {
+        setState({ status: "loading" });
+      }
 
       try {
-        const response = await fetch(getPublicChangelogFeedPath(slug));
+        const response = await fetch(getPublicChangelogFeedPath(slug), {
+          cache: "no-store",
+        });
         if (!response.ok) {
           throw new Error(`Changelog feed failed with ${response.status}`);
         }
@@ -4005,13 +4040,35 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
             message: "This changelog is not available.",
           });
         }
+      } finally {
+        requestInFlight = false;
       }
     }
 
     void loadPublicChangelog();
 
+    const refreshPublicChangelog = () => {
+      void loadPublicChangelog(false);
+    };
+    const refreshVisiblePublicChangelog = () => {
+      if (document.visibilityState === "visible") {
+        refreshPublicChangelog();
+      }
+    };
+
+    window.addEventListener("focus", refreshPublicChangelog);
+    document.addEventListener(
+      "visibilitychange",
+      refreshVisiblePublicChangelog,
+    );
+
     return () => {
       ignore = true;
+      window.removeEventListener("focus", refreshPublicChangelog);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisiblePublicChangelog,
+      );
     };
   }, [slug]);
 
@@ -4077,13 +4134,16 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
       return;
     }
 
+    const publicResourceUrls = getPublicChangelogResourceUrls(slug);
+
     applyPublicChangelogSeoMetadata({
       appName: state.appName,
       description: state.description,
       faviconUrl: state.faviconUrl,
       publicUrl: state.publicUrl,
+      rssUrl: publicResourceUrls.rss,
     });
-  }, [state]);
+  }, [slug, state]);
 
   if (state.status === "ready") {
     return (
@@ -4098,6 +4158,7 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
         publicLogoAlignment={state.publicLogoAlignment}
         publicAppLabel={state.publicAppLabel}
         publicAppUrl={state.publicAppUrl}
+        publicResourceUrls={getPublicChangelogResourceUrls(slug)}
         hasMoreEntries={state.pagination.hasMore}
         isLoadingMoreEntries={state.isLoadingMoreEntries}
         loadMoreError={state.loadMoreError}
@@ -4151,6 +4212,7 @@ export function PublicChangelogPage({
   publicLogoAlignment = "left",
   publicAppLabel = defaultPublicAppLabel,
   publicAppUrl,
+  publicResourceUrls,
   showBranding = true,
   visibleRepositories: _visibleRepositories,
 }: {
@@ -4170,6 +4232,11 @@ export function PublicChangelogPage({
   publicLogoAlignment?: PublicLogoAlignment;
   publicAppLabel?: string;
   publicAppUrl: string;
+  publicResourceUrls?: {
+    api: string;
+    json: string;
+    rss: string;
+  };
   showBranding?: boolean;
   visibleRepositories: PublicPreviewRepository[];
 }) {
@@ -4380,6 +4447,64 @@ export function PublicChangelogPage({
                 )}
                 <span className="sr-only">{publicThemeToggleLabel}</span>
               </Button>
+              {publicResourceUrls ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        aria-label="Changelog feeds"
+                        className="rounded-full"
+                        size="icon-sm"
+                        title="Changelog feeds"
+                        type="button"
+                        variant="outline"
+                      />
+                    }
+                  >
+                    <Share2Icon aria-hidden />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        render={
+                          <a
+                            href={publicResourceUrls.json}
+                            rel="noreferrer"
+                            target="_blank"
+                          />
+                        }
+                      >
+                        <ParenthesesIcon data-icon="inline-start" aria-hidden />
+                        JSON feed
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        render={
+                          <a
+                            href={publicResourceUrls.rss}
+                            rel="noreferrer"
+                            target="_blank"
+                          />
+                        }
+                      >
+                        <RssIcon data-icon="inline-start" aria-hidden />
+                        RSS feed
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        render={
+                          <a
+                            href={publicResourceUrls.api}
+                            rel="noreferrer"
+                            target="_blank"
+                          />
+                        }
+                      >
+                        <CodeXmlIcon data-icon="inline-start" aria-hidden />
+                        API
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
               <Button
                 className="rounded-full"
                 aria-controls="public-changelog-filters"
@@ -10588,6 +10713,22 @@ export function getPublicChangelogFeedPath(
     : "/api/public/changelog/feed.json";
 
   return before ? `${path}?before=${encodeURIComponent(before)}` : path;
+}
+
+export function getPublicChangelogResourceUrls(slug: string | null): {
+  api: string;
+  json: string;
+  rss: string;
+} {
+  const feedPath = slug
+    ? `/api/public/changelogs/${encodeURIComponent(slug)}`
+    : "/api/public/changelog";
+
+  return {
+    api: "/api/public/openapi.json",
+    json: `${feedPath}/feed.json`,
+    rss: `${feedPath}/feed.xml`,
+  };
 }
 
 export function isCustomChangelogRootLocation(location: {

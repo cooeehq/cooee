@@ -221,6 +221,27 @@ describe("launch security boundaries", () => {
     expect(await store.listWorkspaceMemberships("user_teammate")).toEqual([]);
   });
 
+  test("allows a local OAuth App login to bootstrap a development workspace", async () => {
+    const store = new InMemoryStore();
+    const app = createApp({
+      auth: {
+        ...authenticatedAs("user_local"),
+        listAccessibleGitHubInstallationIds: async () => null,
+      },
+      env: { NODE_ENV: "development", COOEE_RUNTIME_MODE: "hosted" },
+      store,
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost:3000/api/admin/settings"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await store.listWorkspaceMemberships("user_local")).toEqual([
+      expect.objectContaining({ role: "owner" }),
+    ]);
+  });
+
   test("public feeds support cross-origin embeds and static HTML has security headers", async () => {
     const staticRoot = mkdtempSync(join(tmpdir(), "cooee-security-"));
     writeFileSync(
@@ -453,6 +474,58 @@ describe("launch security boundaries", () => {
     expect(callback.headers.get("location")).toContain("github=connected");
     expect(await store.listGitHubInstallations("ws_acme")).toContainEqual(
       expect.objectContaining({ installationId: 67890 }),
+    );
+  });
+
+  test("allows a signed local GitHub App callback with an OAuth App session", async () => {
+    const store = InMemoryStore.seeded();
+    store.memberships.push({
+      id: "membership_owner",
+      workspaceId: "ws_acme",
+      userId: "user_owner",
+      role: "owner",
+    });
+    const auth = authenticatedAs();
+    auth.canAccessGitHubInstallation = async () => false;
+    const app = createApp({
+      auth,
+      env: {
+        NODE_ENV: "development",
+        APP_URL: "https://cooee.test",
+        VITE_PUBLIC_SITE_URL: "http://localhost:5173",
+        BETTER_AUTH_SECRET: "a".repeat(32),
+        GITHUB_APP_ID: "123",
+        GITHUB_APP_PRIVATE_KEY: "private",
+        GITHUB_APP_SLUG: "cooee-test",
+      },
+      githubClient: {
+        listMergedPullRequests: async () => [],
+        syncInstallation: async (installationId: number) => ({
+          installation: {
+            installationId,
+            accountLogin: "owner",
+            accountType: "User",
+            suspendedAt: null,
+          },
+          repositories: [],
+        }),
+      },
+      store,
+    });
+    const install = await app.fetch(
+      new Request("https://cooee.test/api/admin/github/install"),
+    );
+    const state = new URL(
+      install.headers.get("location") ?? "",
+    ).searchParams.get("state");
+    const callback = await app.fetch(
+      new Request(
+        `https://cooee.test/api/github/callback?installation_id=67890&state=${encodeURIComponent(state ?? "")}`,
+      ),
+    );
+
+    expect(callback.headers.get("location")).toBe(
+      "http://localhost:5173/changelog?github=connected",
     );
   });
 

@@ -5,6 +5,7 @@ import {
   PublicChangelogPage,
   getAdminDocumentTitle,
   getNextScheduledRunLabel,
+  getPublicChangelogResourceUrls,
   getSurfaceFromPathname,
   shouldShowAdminSessionLoadingPage,
 } from "../App";
@@ -43,6 +44,7 @@ describe("Cooee admin app", () => {
     const html = renderToStaticMarkup(
       <App
         deploymentMode="admin"
+        initialAuthUser={{ name: "Rod ONeill", email: "rod@example.com" }}
         initialIsSignedIn
         initialSurface="app"
         showOnboarding={false}
@@ -52,6 +54,7 @@ describe("Cooee admin app", () => {
     expect(html).toContain("Changelog");
     expect(html).toContain("Repositories");
     expect(html).toContain("Held for review");
+    expect(html).toContain("Rod ONeill");
     expect(html).toContain("Posts per page");
     expect(html).toContain('aria-label="Posts per page"');
     expect(html).toContain('aria-label="Loading held-review count"');
@@ -126,6 +129,7 @@ describe("Cooee admin app", () => {
       lightLogoDataUrl: "https://assets.test/acme-light.svg",
       logoDataUrl: "https://assets.test/acme-default.svg",
       publicAppUrl: "",
+      publicResourceUrls: getPublicChangelogResourceUrls("acme"),
       visibleRepositories: [],
     };
     const lightHtml = renderToStaticMarkup(
@@ -141,5 +145,19 @@ describe("Cooee admin app", () => {
     );
     expect(darkHtml).toContain('src="https://assets.test/acme-default.svg"');
     expect(darkHtml).not.toContain('src="https://assets.test/acme-light.svg"');
+    expect(lightHtml).toContain('aria-label="Changelog feeds"');
+  });
+
+  test("builds changelog resource URLs for hosted and custom domains", () => {
+    expect(getPublicChangelogResourceUrls("acme app")).toEqual({
+      api: "/api/public/openapi.json",
+      json: "/api/public/changelogs/acme%20app/feed.json",
+      rss: "/api/public/changelogs/acme%20app/feed.xml",
+    });
+    expect(getPublicChangelogResourceUrls(null)).toEqual({
+      api: "/api/public/openapi.json",
+      json: "/api/public/changelog/feed.json",
+      rss: "/api/public/changelog/feed.xml",
+    });
   });
 });
