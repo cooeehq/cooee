@@ -19,6 +19,28 @@ type MigrationSqlClient = {
 
 const migrationsDir = fileURLToPath(new URL("./migrations", import.meta.url));
 
+const compatibleMigrationChecksums = new Map<string, ReadonlySet<string>>([
+  [
+    "0000_initial.sql",
+    new Set([
+      // Production applied the incremental pre-open-source baseline before the
+      // migrations were consolidated into the current fresh-install schema.
+      "810f69208c81f8190c42d05a42a177010132e237275395a0a05e72356e041236",
+    ]),
+  ],
+]);
+
+export function migrationChecksumMatches(
+  version: string,
+  recorded: string,
+  expected: string,
+): boolean {
+  return (
+    recorded === expected ||
+    compatibleMigrationChecksums.get(version)?.has(recorded) === true
+  );
+}
+
 export async function listMigrationFiles(
   directory = migrationsDir,
 ): Promise<MigrationFile[]> {
@@ -75,7 +97,10 @@ export async function runDatabaseMigrations(
     for (const row of appliedRows) {
       const expected = migrationChecksums.get(row.version);
       if (!expected) continue;
-      if (row.checksum && row.checksum !== expected) {
+      if (
+        row.checksum &&
+        !migrationChecksumMatches(row.version, row.checksum, expected)
+      ) {
         throw new Error(
           `Applied migration ${row.version} no longer matches its recorded checksum.`,
         );
