@@ -1642,6 +1642,7 @@ export function App({
     try {
       const response = await fetch(
         "/api/admin/post-image-generation/availability",
+        { cache: "no-store" },
       );
       if (!response.ok) {
         throw new Error("Post image generation availability request failed.");
@@ -2624,6 +2625,8 @@ export function App({
     setPublishedEntryRewriteInstructions("");
     setMarketingRegenerationStatus("idle");
     setPostImageGenerationStatus("idle");
+    setPostImageGenerationAvailability({ status: "checking" });
+    void loadPostImageGenerationAvailability();
     setPublishedEntryDraft({
       title: entry.title,
       summary: entry.summary,
