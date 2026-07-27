@@ -5068,7 +5068,7 @@ function PublicChangelogEntry({
   return (
     <article
       className={cn(
-        "rounded-3xl border border-border/70 bg-white/90 p-9 text-card-foreground shadow-xs dark:bg-card [&+&]:mt-3",
+        "rounded-3xl border border-border/70 bg-white/90 p-5 text-card-foreground shadow-xs sm:p-9 dark:bg-card [&+&]:mt-3",
         anchorId && "scroll-mt-24",
       )}
       data-categories={categories}
@@ -11782,6 +11782,11 @@ export function buildPublicChangelogPreview({
           @media (max-width: 720px) {
             .filter-fields {
               grid-template-columns: 1fr;
+            }
+          }
+          @media (max-width: 639px) {
+            article[data-display-type="post"] {
+              padding: 20px;
             }
           }
 	          footer {
