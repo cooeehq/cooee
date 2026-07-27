@@ -1138,6 +1138,7 @@ describe("api routes", () => {
 
   test("generates a post image for an existing changelog post", async () => {
     const store = InMemoryStore.seeded();
+    const assetStorage = new TestAssetStorage();
     const originalSummary = store.entries[0].summary;
     const seenPrompts: Array<{
       category: string;
@@ -1156,7 +1157,7 @@ describe("api routes", () => {
         };
       },
     };
-    const app = createApp({ store, imageGenerator } as any);
+    const app = createApp({ assetStorage, store, imageGenerator } as any);
 
     const response = await app.fetch(
       new Request(
@@ -1176,7 +1177,8 @@ describe("api routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       id: "entry_saved_filters",
-      imageUrl: "data:image/webp;base64,cG9zdC1pbWFnZQ==",
+      imageUrl:
+        "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
       summary: originalSummary,
       title: "Saved filters",
     });
@@ -1189,7 +1191,26 @@ describe("api routes", () => {
     ]);
     expect(store.entries[0].summary).toBe(originalSummary);
     expect(store.entries[0].imageUrl).toBe(
-      "data:image/webp;base64,cG9zdC1pbWFnZQ==",
+      "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+    );
+    expect(
+      assetStorage.objects.get(
+        "workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+      ),
+    ).toEqual({
+      body: new TextEncoder().encode("post-image"),
+      contentType: "image/webp",
+    });
+
+    const publicImage = await app.fetch(
+      new Request(
+        "http://cooee.test/api/public/changelogs/acme-app/entries/entry_saved_filters/image",
+      ),
+    );
+    expect(publicImage.status).toBe(200);
+    expect(publicImage.headers.get("content-type")).toBe("image/webp");
+    expect(new Uint8Array(await publicImage.arrayBuffer())).toEqual(
+      new TextEncoder().encode("post-image"),
     );
   });
 
@@ -3798,6 +3819,33 @@ describe("api routes", () => {
     expect(body.entries[0].imageUrl).toBe(
       "https://cooee.test/api/public/changelogs/acme-app/entries/entry_saved_filters/image",
     );
+  });
+
+  test("migrates generated data URLs when their public image is requested", async () => {
+    const store = InMemoryStore.seeded();
+    const assetStorage = new TestAssetStorage();
+    store.entries[0].imageUrl = "data:image/webp;base64,cG9zdC1pbWFnZQ==";
+    const app = createApp({ assetStorage, store });
+
+    const image = await app.fetch(
+      new Request(
+        "https://cooee.test/api/public/changelogs/acme-app/entries/entry_saved_filters/image",
+      ),
+    );
+
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/webp");
+    expect(new Uint8Array(await image.arrayBuffer())).toEqual(
+      new TextEncoder().encode("post-image"),
+    );
+    expect(store.entries[0].imageUrl).toBe(
+      "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+    );
+    expect(
+      assetStorage.objects.has(
+        "workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+      ),
+    ).toBe(true);
   });
 
   test("public feed includes the configured changelog theme", async () => {

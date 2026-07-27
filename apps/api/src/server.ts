@@ -1749,6 +1749,7 @@ export function createApp(options: AppOptions = {}): App {
               unknown
             >;
             const result = await generateChangelogEntryPostImage({
+              assetStorage,
               category: body.category,
               entryId: decodeURIComponent(changelogEntryGenerateImageMatch[1]),
               imageGenerator,
@@ -4616,10 +4617,34 @@ async function publicChangelogEntryImage({
     selected.entry.status !== "published" ||
     !selected.entry.publishedAt ||
     !Number.isFinite(Date.parse(selected.entry.publishedAt)) ||
-    Date.parse(selected.entry.publishedAt) > Date.now() ||
-    selected.entry.imageUrl !== expectedUrl
+    Date.parse(selected.entry.publishedAt) > Date.now()
   ) {
     return json({ error: "Post image not found" }, { status: 404 });
+  }
+
+  if (selected.entry.imageUrl !== expectedUrl) {
+    const legacyImage = await readGeneratedPostImage(
+      selected.entry.imageUrl ?? "",
+      false,
+    );
+    if (!legacyImage) {
+      return json({ error: "Post image not found" }, { status: 404 });
+    }
+
+    await assetStorage.putObject({
+      ...legacyImage,
+      key: postImageAssetKey(workspaceId, entryId),
+    });
+    const migratedEntry = await store.updateEntryImage({
+      entryId,
+      imageUrl: expectedUrl,
+      workspaceId,
+    });
+    if (!migratedEntry) {
+      return json({ error: "Post image not found" }, { status: 404 });
+    }
+
+    return postImageResponse(legacyImage);
   }
 
   const image = await assetStorage.getObject(
@@ -4629,6 +4654,13 @@ async function publicChangelogEntryImage({
     return json({ error: "Post image not found" }, { status: 404 });
   }
 
+  return postImageResponse(image);
+}
+
+function postImageResponse(image: {
+  body: Uint8Array;
+  contentType: string;
+}): Response {
   return new Response(toArrayBuffer(image.body), {
     headers: new Headers({
       "cache-control": "public, max-age=3600",
@@ -6367,6 +6399,7 @@ function buildRegenerationFallbackPullRequests({
 }
 
 async function generateChangelogEntryPostImage({
+  assetStorage,
   category,
   entryId,
   imageGenerator,
@@ -6375,6 +6408,7 @@ async function generateChangelogEntryPostImage({
   title,
   workspaceId,
 }: {
+  assetStorage: AssetStorage | null;
   category: unknown;
   entryId: string;
   imageGenerator: AiImageGenerator;
@@ -6414,6 +6448,10 @@ async function generateChangelogEntryPostImage({
     return { status: "not-found" };
   }
 
+  if (!assetStorage) {
+    return { status: "provider-error" };
+  }
+
   const selectedCategory =
     normalizeChangelogCategory(category) ?? selectedEntry.category;
   const categoryDefinition = getChangelogCategoryDefinition(
@@ -6435,13 +6473,20 @@ async function generateChangelogEntryPostImage({
       title: imageTitle,
     });
 
-    if (!isSafeGeneratedImageUrl(generated.imageUrl)) {
+    const image = await readGeneratedPostImage(generated.imageUrl);
+    if (!image) {
       return { status: "invalid-output" };
     }
 
+    const imageUrl = publicPostImageUrl(workspaceId, entryId);
+    await assetStorage.putObject({
+      ...image,
+      key: postImageAssetKey(workspaceId, entryId),
+    });
+
     const entry = await store.updateEntryImage({
       entryId,
-      imageUrl: generated.imageUrl,
+      imageUrl,
       workspaceId,
     });
 
@@ -6449,6 +6494,65 @@ async function generateChangelogEntryPostImage({
   } catch {
     return { status: "provider-error" };
   }
+}
+
+async function readGeneratedPostImage(
+  imageUrl: string,
+  allowRemote = true,
+): Promise<{ body: Uint8Array; contentType: string } | null> {
+  const dataUrlMatch =
+    /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([a-z0-9+/=]+)$/i.exec(
+      imageUrl,
+    );
+  if (dataUrlMatch) {
+    const binary = atob(dataUrlMatch[2]);
+    const body = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
+    if (body.byteLength > maxPostImageSizeBytes) {
+      return null;
+    }
+    return {
+      body,
+      contentType:
+        dataUrlMatch[1].toLowerCase() === "image/jpg"
+          ? "image/jpeg"
+          : dataUrlMatch[1].toLowerCase(),
+    };
+  }
+
+  if (!allowRemote || !isSafeGeneratedImageUrl(imageUrl)) {
+    return null;
+  }
+
+  const response = await fetch(imageUrl, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const contentType = response.headers
+    .get("content-type")
+    ?.toLowerCase()
+    .split(";")[0]
+    .trim();
+  if (!contentType || !postImageContentTypes.has(contentType)) {
+    return null;
+  }
+
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxPostImageSizeBytes) {
+    return null;
+  }
+
+  const body = new Uint8Array(await response.arrayBuffer());
+  if (body.byteLength > maxPostImageSizeBytes) {
+    return null;
+  }
+
+  return { body, contentType };
 }
 
 function normalizePostImageText(value: unknown): string | null {
