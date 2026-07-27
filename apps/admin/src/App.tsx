@@ -1261,10 +1261,6 @@ export function App({
       ? "dashboard"
       : activeView;
   const nextTheme = theme === "dark" ? "light" : "dark";
-  const postImageGenerationUnavailableReason =
-    postImageGenerationAvailability.status === "unavailable"
-      ? postImageGenerationAvailability.reason
-      : null;
   const orderedConnectedRepositories = orderRepositoriesForDisplay(
     githubConnection.repositories.filter(isConnectedChangelogRepository),
   );
@@ -1642,6 +1638,7 @@ export function App({
     try {
       const response = await fetch(
         "/api/admin/post-image-generation/availability",
+        { cache: "no-store" },
       );
       if (!response.ok) {
         throw new Error("Post image generation availability request failed.");
@@ -2624,6 +2621,8 @@ export function App({
     setPublishedEntryRewriteInstructions("");
     setMarketingRegenerationStatus("idle");
     setPostImageGenerationStatus("idle");
+    setPostImageGenerationAvailability({ status: "checking" });
+    void loadPostImageGenerationAvailability();
     setPublishedEntryDraft({
       title: entry.title,
       summary: entry.summary,
@@ -2791,15 +2790,6 @@ export function App({
       !editingPublishedEntry ||
       !isPersistedPublishedEntry(editingPublishedEntry)
     ) {
-      return;
-    }
-
-    if (postImageGenerationAvailability.status !== "available") {
-      toast.error("Image generation is unavailable.", {
-        description:
-          postImageGenerationUnavailableReason ??
-          postImageGenerationNotConfiguredMessage,
-      });
       return;
     }
 
@@ -6666,7 +6656,7 @@ function EditPublishedEntrySheet({
   const isPostImageTextMissing =
     !entryDraft.title.trim() || !entryDraft.summary.trim();
   const isPostImageGenerationLocked =
-    postImageGenerationAvailabilityStatus !== "available";
+    postImageGenerationAvailabilityStatus === "checking";
   const postDateParts = getPublishedAtInputParts(entryDraft.publishedAt);
   const isPostDateValid = Boolean(
     normalizePublishedEntryDraftDate(entryDraft.publishedAt),
