@@ -148,6 +148,28 @@ describe("Cooee admin app", () => {
     expect(lightHtml).toContain('aria-label="Changelog feeds"');
   });
 
+  test("shows an explicit load-more control before the public branding", () => {
+    const html = renderToStaticMarkup(
+      <PublicChangelogPage
+        appName="Acme"
+        embedded
+        entries={[]}
+        hasMoreEntries
+        logoDataUrl={null}
+        onLoadMoreEntries={() => {}}
+        publicAppUrl=""
+        visibleRepositories={[]}
+      />,
+    );
+
+    expect(html).toContain("Load more...");
+    expect(html).toContain("data-public-load-more-control");
+    expect(html).not.toContain("data-public-load-more-sentinel");
+    expect(html.indexOf("Load more...")).toBeLessThan(
+      html.indexOf("Powered by"),
+    );
+  });
+
   test("builds changelog resource URLs for hosted and custom domains", () => {
     expect(getPublicChangelogResourceUrls("acme app")).toEqual({
       api: "/api/public/openapi.json",
