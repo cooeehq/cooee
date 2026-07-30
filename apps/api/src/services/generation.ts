@@ -2,10 +2,12 @@ import {
   compareChangelogCategories,
   filterPublishablePullRequests,
   getLastCompletedScheduleWindow,
+  getPullRequestCategoryOverride,
   validateGeneratedEntry,
 } from "@cooee/shared";
 import type {
   AiWritingOptions,
+  ChangelogCategoryDefinition,
   ChangelogEntry,
   GeneratedChangeItem,
   PullRequestMetadata,
@@ -328,22 +330,28 @@ async function generateChangelogForWindowUnlocked(input: {
     for (const pullRequest of itemPullRequests) {
       coveredPullRequestNumbers.add(pullRequest.number);
     }
-    const itemPublishedAt = input.windowStart
-      ? (getLatestMergedAt(itemPullRequests) ?? publishedAt)
-      : publishedAt;
-    const entry = await input.store.createEntry({
-      changelogId: changelog.id,
-      title: item.title,
-      summary: item.summary,
-      category: item.category,
-      status: "published",
-      publishedAt: itemPublishedAt,
-      windowEndedAt: windowEnd,
-      items: [],
-      sourcePullRequests: itemPullRequests.map(toSourcePullRequest),
-      generationKey: input.generationKey,
-    });
-    entries.push(entry);
+    for (const group of groupPullRequestsByCategoryOverride(
+      itemPullRequests,
+      item.category,
+      changelog.settings.categoryDefinitions,
+    )) {
+      const itemPublishedAt = input.windowStart
+        ? (getLatestMergedAt(group.pullRequests) ?? publishedAt)
+        : publishedAt;
+      const entry = await input.store.createEntry({
+        changelogId: changelog.id,
+        title: item.title,
+        summary: item.summary,
+        category: group.category,
+        status: "published",
+        publishedAt: itemPublishedAt,
+        windowEndedAt: windowEnd,
+        items: [],
+        sourcePullRequests: group.pullRequests.map(toSourcePullRequest),
+        generationKey: input.generationKey,
+      });
+      entries.push(entry);
+    }
   }
 
   const uncoveredPullRequests = filtered.publishable.filter(
@@ -359,7 +367,11 @@ async function generateChangelogForWindowUnlocked(input: {
         changelogId: changelog.id,
         title: item.title,
         summary: item.summary,
-        category: item.category,
+        category:
+          getPullRequestCategoryOverride(
+            pullRequest.labels,
+            changelog.settings.categoryDefinitions,
+          ) ?? item.category,
         status: "published",
         publishedAt: input.windowStart ? pullRequest.mergedAt : windowEnd,
         windowEndedAt: windowEnd,
@@ -419,7 +431,11 @@ async function generateChangelogForWindowUnlocked(input: {
           changelogId: changelog.id,
           title: item.title,
           summary: item.summary,
-          category: item.category,
+          category:
+            getPullRequestCategoryOverride(
+              pullRequest.labels,
+              changelog.settings.categoryDefinitions,
+            ) ?? item.category,
           status: "published",
           publishedAt: input.windowStart ? pullRequest.mergedAt : windowEnd,
           windowEndedAt: windowEnd,
@@ -599,6 +615,47 @@ function getItemPullRequests(
     );
 
   return selected;
+}
+
+function groupPullRequestsByCategoryOverride(
+  pullRequests: PullRequestMetadata[],
+  generatedCategory: ChangelogEntry["category"],
+  categoryDefinitions: ChangelogCategoryDefinition[],
+): Array<{
+  category: ChangelogEntry["category"];
+  pullRequests: PullRequestMetadata[];
+}> {
+  const explicitCategories = new Set(
+    pullRequests.flatMap((pullRequest) => {
+      const category = getPullRequestCategoryOverride(
+        pullRequest.labels,
+        categoryDefinitions,
+      );
+      return category ? [category] : [];
+    }),
+  );
+
+  if (explicitCategories.size <= 1) {
+    return [
+      {
+        category: [...explicitCategories][0] ?? generatedCategory,
+        pullRequests,
+      },
+    ];
+  }
+
+  const groups = new Map<ChangelogEntry["category"], PullRequestMetadata[]>();
+  for (const pullRequest of pullRequests) {
+    const category =
+      getPullRequestCategoryOverride(pullRequest.labels, categoryDefinitions) ??
+      generatedCategory;
+    groups.set(category, [...(groups.get(category) ?? []), pullRequest]);
+  }
+
+  return [...groups].map(([category, groupedPullRequests]) => ({
+    category,
+    pullRequests: groupedPullRequests,
+  }));
 }
 
 function getPostForSinglePullRequest(

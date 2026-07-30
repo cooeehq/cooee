@@ -165,6 +165,21 @@ export function getChangelogCategoryIds(
   return definitions.map((definition) => definition.id);
 }
 
+export function getPullRequestCategoryOverride(
+  labels: string[],
+  definitions: ChangelogCategoryDefinition[] = defaultChangelogCategoryDefinitions,
+): ChangelogCategory | null {
+  const categoryLabels = new Set(
+    labels.map((label) => label.trim().toLowerCase()),
+  );
+
+  return (
+    definitions.find((definition) =>
+      categoryLabels.has(`cooee:${definition.id.trim().toLowerCase()}`),
+    )?.id ?? null
+  );
+}
+
 function normalizeCategoryLabel(value: string): string {
   return value.trim().replace(/\s+/g, " ").slice(0, 48);
 }
