@@ -1421,7 +1421,9 @@ export class PostgresStore implements Store {
           title,
           summary,
           category,
-          note
+          note,
+          feedback_kind,
+          source_pull_requests
         )
         values (
           ${id},
@@ -1431,7 +1433,9 @@ export class PostgresStore implements Store {
           ${entry.title},
           ${entry.summary},
           ${entry.category},
-          ${input.note?.trim() || null}
+          ${input.note?.trim() || null},
+          ${input.feedbackKind ?? "dismissed"},
+          ${sql.json(entry.source_pull_requests ?? [])}
         )
         returning *
       `;
@@ -1455,7 +1459,7 @@ export class PostgresStore implements Store {
       where workspace_id = ${workspaceId}
         and changelog_id = ${changelogId}
       order by created_at desc
-      limit 20
+      limit 100
     `;
 
     return rows.map(mapAiFeedback);
@@ -1666,6 +1670,8 @@ function mapAiFeedback(row: postgres.Row): AiFeedback {
     summary: row.summary,
     category: row.category,
     note: row.note ?? null,
+    feedbackKind: row.feedback_kind ?? "dismissed",
+    sourcePullRequests: row.source_pull_requests ?? [],
     createdAt: toIso(row.created_at),
   };
 }

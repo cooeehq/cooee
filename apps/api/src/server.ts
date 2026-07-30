@@ -1565,6 +1565,7 @@ export function createApp(options: AppOptions = {}): App {
               workspaceId: getWorkspaceId(url),
               entryId: decodeURIComponent(changelogEntryRelevantMatch[1]),
               note: `Marked relevant.${note ? ` ${note}` : ""}`,
+              feedbackKind: "relevant",
             });
 
             if (!feedback) {
@@ -6694,6 +6695,7 @@ async function mergeChangelogEntries({
         workspaceId,
         entryId: entry.id,
         note: `Merged with related posts into "${mergedEntry.title}". Treat these updates as one post in future AI syncs.`,
+        feedbackKind: "merged",
       }),
     ),
   );

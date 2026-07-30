@@ -991,6 +991,8 @@ describe("api routes", () => {
         summary: "A dependency was upgraded.",
         category: "maintenance",
         note: "Do not publish dependency-only updates.",
+        feedbackKind: "dismissed",
+        sourcePullRequests: [],
         createdAt: "2026-06-08T00:00:00.000Z",
       },
       {
@@ -1002,6 +1004,8 @@ describe("api routes", () => {
         summary: "This learning belongs to another repository.",
         category: "maintenance",
         note: "Do not use this learning here.",
+        feedbackKind: "dismissed",
+        sourcePullRequests: [],
         createdAt: "2026-06-08T00:00:00.000Z",
       },
     );
@@ -1741,6 +1745,8 @@ describe("api routes", () => {
         summary: entry.summary,
         category: entry.category,
         note: "Dependency-only updates are not relevant.",
+        feedbackKind: "dismissed",
+        sourcePullRequests: entry.sourcePullRequests,
         createdAt: expect.any(String),
       },
     ]);
@@ -1893,6 +1899,7 @@ describe("api routes", () => {
       entryId: relevantEntry.id,
       title: "Billing import improvements",
       note: "Marked relevant. This held PR should be considered customer-relevant.",
+      feedbackKind: "relevant",
     });
   });
 

@@ -1247,6 +1247,8 @@ export class InMemoryStore implements Store {
       summary: entry.summary,
       category: entry.category,
       note: input.note?.trim() || null,
+      feedbackKind: input.feedbackKind ?? "dismissed",
+      sourcePullRequests: entry.sourcePullRequests,
       createdAt: new Date().toISOString(),
     };
 

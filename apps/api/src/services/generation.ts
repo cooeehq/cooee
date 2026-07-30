@@ -304,6 +304,11 @@ async function generateChangelogForWindowUnlocked(input: {
     ]),
   );
   const coveredPullRequestNumbers = new Set<number>();
+  const skippedPullRequestNumbers = new Set(
+    (validation.entry.skippedPullRequestNumbers ?? []).filter((number) =>
+      pullRequestsByNumber.has(number),
+    ),
+  );
 
   for (const item of [...publishableItems].sort((left, right) =>
     compareChangelogCategories(
@@ -342,7 +347,9 @@ async function generateChangelogForWindowUnlocked(input: {
   }
 
   const uncoveredPullRequests = filtered.publishable.filter(
-    (pullRequest) => !coveredPullRequestNumbers.has(pullRequest.number),
+    (pullRequest) =>
+      !coveredPullRequestNumbers.has(pullRequest.number) &&
+      !skippedPullRequestNumbers.has(pullRequest.number),
   );
   if (uncoveredPullRequests.length === 1 && entries.length === 0) {
     const pullRequest = uncoveredPullRequests[0];
@@ -395,6 +402,14 @@ async function generateChangelogForWindowUnlocked(input: {
         continue;
       }
 
+      if (
+        fallbackValidation.entry.skippedPullRequestNumbers?.includes(
+          pullRequest.number,
+        )
+      ) {
+        continue;
+      }
+
       const item = getPostForSinglePullRequest(
         fallbackValidation.entry,
         pullRequest,
@@ -417,6 +432,10 @@ async function generateChangelogForWindowUnlocked(input: {
   }
 
   await input.store.markGenerated(changelog.id, windowEnd);
+
+  if (entries.length === 0) {
+    return { status: "empty", entries: [] };
+  }
 
   const heldEntry = entries.find((entry) => entry.status === "held");
   return {

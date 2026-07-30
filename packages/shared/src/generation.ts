@@ -23,6 +23,12 @@ export type PromptPayload = {
     summary: string;
     category: ChangelogCategory;
     note?: string | null;
+    feedbackKind?: "dismissed" | "relevant" | "merged";
+    sourcePullRequests?: Array<{
+      number: number;
+      title?: string;
+      url: string;
+    }>;
   }>;
   categories: ChangelogCategoryDefinition[];
   pullRequests: Array<Omit<SanitizedPullRequest, "id">>;
@@ -43,6 +49,7 @@ export type GeneratedEntryCandidate = {
   summary: unknown;
   category: unknown;
   items?: unknown;
+  skippedPullRequestNumbers?: unknown;
   confidence: unknown;
   sensitive: unknown;
 };
@@ -60,6 +67,7 @@ export type GeneratedEntryValidation =
         category: ChangelogCategory;
         confidence: number;
         items?: GeneratedChangeItem[];
+        skippedPullRequestNumbers?: number[];
       };
     }
   | {
@@ -90,6 +98,7 @@ export function buildPromptPayload(
       buildAudienceInstruction(options),
       'Address the product user directly as the reader. Prefer second person wording such as "you" and "your". Do not describe the reader in the third person as users, merchants, customers, store owners, teams, or similar audience labels unless the change genuinely affects a different group than the reader.',
       "Create one item per unique customer-facing change. Do not combine unrelated changes into one title or summary. Use only the configured category ids.",
+      "Treat dismissed learnings as repository-specific publishing guidance. When a current pull request matches a dismissed learning and is not customer-facing, omit it from items and include its number in skippedPullRequestNumbers. Treat relevant learnings as corrections that similar pull requests should remain eligible. Treat merged learnings as guidance to combine directly related pull requests. Every current pull request must appear in exactly one item or in skippedPullRequestNumbers.",
       buildPersonalityInstruction(options),
       marketingCopyCategoryIds.length > 0
         ? `Write fuller feature-marketing posts for post display categories mapped to marketing copy: ${marketingCopyCategoryIds.join(", ")}. Lead with user value, describe the feature outcome, and keep the tone benefit-led without inventing claims.`
@@ -190,8 +199,11 @@ export function validateGeneratedEntry(
   }
 
   const items = normalizeGeneratedItems(candidate.items, categories);
+  const skippedPullRequestNumbers = normalizeSourcePullRequestNumbers(
+    candidate.skippedPullRequestNumbers,
+  );
 
-  if (items === null) {
+  if (items === null || skippedPullRequestNumbers === null) {
     return { ok: false, reason: "invalid-output" };
   }
 
@@ -213,6 +225,9 @@ export function validateGeneratedEntry(
       category: candidate.category as ChangelogCategory,
       confidence: candidate.confidence,
       ...(items.length > 0 ? { items } : {}),
+      ...(skippedPullRequestNumbers.length > 0
+        ? { skippedPullRequestNumbers }
+        : {}),
     },
   };
 }
