@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getPullRequestCategoryOverride } from "../categories";
 import { buildPromptPayload, validateGeneratedEntry } from "../generation";
 import type { PullRequestMetadata } from "../types";
 
@@ -84,6 +85,38 @@ describe("AI generation contracts", () => {
     );
     expect(payload.instructions).not.toContain("fix,");
     expect(payload.instructions).not.toContain("release-note");
+  });
+
+  test("treats configured cooee category labels as authoritative", () => {
+    const payload = buildPromptPayload(
+      [{ ...pr, labels: ["backend", "Cooee:Feature"] }],
+      {
+        categoryDefinitions: [
+          { id: "feature", label: "Feature", displayType: "post" },
+          { id: "fix", label: "Fix", displayType: "text" },
+        ],
+      },
+    );
+
+    expect(payload.instructions).toContain("PR #42 must use feature");
+    expect(
+      getPullRequestCategoryOverride(
+        ["cooee:release-note"],
+        [
+          {
+            id: "release-note",
+            label: "Release note",
+            displayType: "callout",
+          },
+        ],
+      ),
+    ).toBe("release-note");
+    expect(
+      getPullRequestCategoryOverride(
+        ["cooee:not-configured"],
+        [{ id: "feature", label: "Feature", displayType: "post" }],
+      ),
+    ).toBeNull();
   });
 
   test("instructs generated copy to speak directly to the product user", () => {

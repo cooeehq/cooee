@@ -5,6 +5,7 @@ import {
 import {
   defaultChangelogCategoryDefinitions,
   getChangelogCategoryIds,
+  getPullRequestCategoryOverride,
   normalizeChangelogCategoryDefinitions,
 } from "./categories";
 import type {
@@ -100,6 +101,7 @@ export function buildPromptPayload(
       "Create one item per unique customer-facing change. Do not combine unrelated changes into one title or summary. Use only the configured category ids.",
       "Treat dismissed learnings as repository-specific publishing guidance. When a current pull request matches a dismissed learning and is not customer-facing, omit it from items and include its number in skippedPullRequestNumbers. Treat relevant learnings as corrections that similar pull requests should remain eligible. Treat merged learnings as guidance to combine directly related pull requests. Every current pull request must appear in exactly one item or in skippedPullRequestNumbers.",
       buildPersonalityInstruction(options),
+      buildCategoryOverrideInstruction(pullRequests, categories),
       marketingCopyCategoryIds.length > 0
         ? `Write fuller feature-marketing posts for post display categories mapped to marketing copy: ${marketingCopyCategoryIds.join(", ")}. Lead with user value, describe the feature outcome, and keep the tone benefit-led without inventing claims.`
         : "",
@@ -118,6 +120,23 @@ export function buildPromptPayload(
       return sanitized;
     }),
   };
+}
+
+function buildCategoryOverrideInstruction(
+  pullRequests: PullRequestMetadata[],
+  categories: ChangelogCategoryDefinition[],
+): string {
+  const overrides = pullRequests.flatMap((pullRequest) => {
+    const category = getPullRequestCategoryOverride(
+      pullRequest.labels,
+      categories,
+    );
+    return category ? [`PR #${pullRequest.number} must use ${category}`] : [];
+  });
+
+  return overrides.length > 0
+    ? `PR labels named cooee:<category-id> are authoritative category assignments. ${overrides.join("; ")}. Do not combine PRs assigned to different categories into one item.`
+    : "PR labels named cooee:<category-id> are authoritative category assignments when the category id is configured.";
 }
 
 export function buildImplementationDetailInstruction(

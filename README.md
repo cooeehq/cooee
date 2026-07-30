@@ -207,6 +207,11 @@ The default skip labels are `cooee:skip` and `cooee:internal`; the default
 sensitive labels are `security` and `vulnerability`. Review these defaults for
 your organization before enabling scheduled generation.
 
+To assign a merged pull request to a category, add a label using
+`cooee:<category-id>`, such as `cooee:feature`, `cooee:improvement`,
+`cooee:fix`, or `cooee:maintenance`. These labels override AI categorisation
+and also work with custom category ids configured in the dashboard.
+
 Please report vulnerabilities privately through GitHub Security Advisories as
 described in [SECURITY.md](SECURITY.md). Do not include credentials, private PR
 content, or customer data in a public issue.

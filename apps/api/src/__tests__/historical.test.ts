@@ -452,6 +452,63 @@ describe("historical changelog generation", () => {
     ).toBe(false);
   });
 
+  test("uses cooee category labels instead of generated categories", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_56",
+        number: 56,
+        title: "Add workspace templates",
+        labels: ["cooee:feature"],
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+      pullRequest({
+        id: "pr_57",
+        number: 57,
+        title: "Repair template imports",
+        labels: ["COOEE:FIX"],
+        mergedAt: "2026-06-03T05:15:00.000Z",
+      }),
+    );
+    const incorrectlyCategorizingSummarizer: AiSummarizer = {
+      summarize: async () => ({
+        title: "Template updates",
+        summary: "Templates are easier to use.",
+        category: "improvement",
+        confidence: 0.95,
+        sensitive: false,
+        items: [
+          {
+            title: "Workspace template updates",
+            summary:
+              "You can start from templates and import them more reliably.",
+            category: "improvement",
+            sourcePullRequestNumbers: [56, 57],
+          },
+        ],
+      }),
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: incorrectlyCategorizingSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(
+      result.entries?.map((entry) => [
+        entry.sourcePullRequests[0]?.number,
+        entry.category,
+      ]),
+    ).toEqual([
+      [56, "feature"],
+      [57, "fix"],
+    ]);
+  });
+
   test("keeps directly related pull requests together in one post", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [];

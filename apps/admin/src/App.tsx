@@ -8575,7 +8575,7 @@ function SettingsView({
                   type="file"
                 />
                 {logoPreviewUrl ? (
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-muted/35 px-3 py-2">
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-zinc-950 px-3 py-2">
                     <img
                       alt="Uploaded logo preview"
                       className="h-7 w-auto"
@@ -9194,6 +9194,9 @@ function SettingsView({
                             {formatCategoryDisplayTypeBadge(
                               category.displayType,
                             )}
+                          </p>
+                          <p className="mt-1 text-balance font-mono text-xs leading-5 text-muted-foreground">
+                            PR label: cooee:{category.id}
                           </p>
                         </div>
                         <Button
