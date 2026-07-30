@@ -8563,17 +8563,10 @@ function SettingsView({
 
             <SettingsRow
               description="Used in dark mode and whenever no light mode logo is set. PNG, JPEG, WebP, GIF, or SVG up to 512 KB."
-              htmlFor="settings-logo-upload"
+              htmlFor={logoPreviewUrl ? undefined : "settings-logo-upload"}
               title="Default logo"
             >
               <div className="grid gap-3">
-                <Input
-                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                  disabled={logoUploadStatus === "saving"}
-                  id="settings-logo-upload"
-                  onChange={uploadLogo}
-                  type="file"
-                />
                 {logoPreviewUrl ? (
                   <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-zinc-950 px-3 py-2">
                     <img
@@ -8591,7 +8584,15 @@ function SettingsView({
                       {logoUploadStatus === "saving" ? "Removing" : "Remove"}
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <Input
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    disabled={logoUploadStatus === "saving"}
+                    id="settings-logo-upload"
+                    onChange={uploadLogo}
+                    type="file"
+                  />
+                )}
               </div>
             </SettingsRow>
 
@@ -8601,21 +8602,12 @@ function SettingsView({
                   ? "Shown on light backgrounds. Falls back to the default logo when empty. PNG, JPEG, WebP, GIF, or SVG up to 512 KB."
                   : "Available on paid plans. Shown on light backgrounds instead of the default logo."
               }
-              htmlFor="settings-light-logo-upload"
+              htmlFor={
+                lightLogoPreviewUrl ? undefined : "settings-light-logo-upload"
+              }
               title="Light mode logo"
             >
               <div className="grid gap-3">
-                <Input
-                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                  disabled={
-                    !customBrandingEnabled || customBrandAssetStatus !== null
-                  }
-                  id="settings-light-logo-upload"
-                  onChange={(event) =>
-                    void uploadCustomBrandAsset("lightLogo", event)
-                  }
-                  type="file"
-                />
                 {lightLogoPreviewUrl ? (
                   <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-[oklch(0.98_0.005_105)] px-3 py-2">
                     <img
@@ -8635,7 +8627,19 @@ function SettingsView({
                         : "Remove"}
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <Input
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    disabled={
+                      !customBrandingEnabled || customBrandAssetStatus !== null
+                    }
+                    id="settings-light-logo-upload"
+                    onChange={(event) =>
+                      void uploadCustomBrandAsset("lightLogo", event)
+                    }
+                    type="file"
+                  />
+                )}
               </div>
             </SettingsRow>
 
@@ -8645,21 +8649,12 @@ function SettingsView({
                   ? "Used in browser tabs for the public changelog. PNG, SVG, or ICO up to 256 KB."
                   : "Available on paid plans. Used in browser tabs for the public changelog."
               }
-              htmlFor="settings-favicon-upload"
+              htmlFor={
+                faviconPreviewUrl ? undefined : "settings-favicon-upload"
+              }
               title="Favicon"
             >
               <div className="grid gap-3">
-                <Input
-                  accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,.ico"
-                  disabled={
-                    !customBrandingEnabled || customBrandAssetStatus !== null
-                  }
-                  id="settings-favicon-upload"
-                  onChange={(event) =>
-                    void uploadCustomBrandAsset("favicon", event)
-                  }
-                  type="file"
-                />
                 {faviconPreviewUrl ? (
                   <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-muted/35 px-3 py-2">
                     <img
@@ -8679,7 +8674,19 @@ function SettingsView({
                         : "Remove"}
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <Input
+                    accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,.ico"
+                    disabled={
+                      !customBrandingEnabled || customBrandAssetStatus !== null
+                    }
+                    id="settings-favicon-upload"
+                    onChange={(event) =>
+                      void uploadCustomBrandAsset("favicon", event)
+                    }
+                    type="file"
+                  />
+                )}
               </div>
             </SettingsRow>
           </SettingsSection>
