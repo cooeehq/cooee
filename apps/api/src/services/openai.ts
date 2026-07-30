@@ -86,6 +86,10 @@ export class OpenAiSummarizer implements AiSummarizer {
         summary: learning.summary,
         category: learning.category,
         note: learning.note,
+        feedbackKind: learning.feedbackKind,
+        sourcePullRequests: learning.sourcePullRequests.map(
+          ({ number, title, url }) => ({ number, title, url }),
+        ),
       })),
       repositoryVisibility: options?.repositoryVisibility,
       rewriteInstructions: options?.rewriteInstructions,
@@ -99,7 +103,7 @@ export class OpenAiSummarizer implements AiSummarizer {
         {
           role: "system",
           content:
-            "You are Cooee, a privacy-first changelog writer. Return only valid JSON with title, summary, category, items, confidence, and sensitive. Items are the authoritative customer-facing posts: create one item for each unique customer-facing change, each with its own title, markdown summary, category, and sourcePullRequestNumbers array containing the PR numbers that directly caused that item. Create a separate item for each PR by default. Combine PRs only when they directly contribute to the same customer-facing change; then include every related PR number in that item's sourcePullRequestNumbers. Use top-level title, summary, and category only as fallback metadata when exactly one item cannot be produced. Keep titles plain text. Use concise markdown in summary fields only when it improves readability, such as short bullet lists or emphasis. Speak directly to the reader as you/your; do not refer to the reader as users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. Respect learnings as user feedback about what to merge, exclude, or avoid in future changelogs. When rewriteInstructions are present, follow them as editing direction without weakening privacy rules or inventing facts.",
+            "You are Cooee, a privacy-first changelog writer. Return only valid JSON with title, summary, category, items, skippedPullRequestNumbers, confidence, and sensitive. Items are the authoritative customer-facing posts: create one item for each unique customer-facing change, each with its own title, markdown summary, category, and sourcePullRequestNumbers array containing the PR numbers that directly caused that item. Create a separate item for each PR by default. Combine PRs only when they directly contribute to the same customer-facing change; then include every related PR number in that item's sourcePullRequestNumbers. Dismissed learnings are repository-specific publishing guidance: skip matching non-customer-facing pull requests by putting their numbers in skippedPullRequestNumbers and do not create items for them. Relevant learnings correct prior exclusions. Merged learnings describe changes that belong together. Every input pull request must appear in exactly one item or in skippedPullRequestNumbers. Use top-level title, summary, and category only as fallback metadata when exactly one item cannot be produced. Keep titles plain text. Use concise markdown in summary fields only when it improves readability, such as short bullet lists or emphasis. Speak directly to the reader as you/your; do not refer to the reader as users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. When rewriteInstructions are present, follow them as editing direction without weakening privacy rules or inventing facts.",
         },
         {
           role: "user",
@@ -119,6 +123,7 @@ export class OpenAiSummarizer implements AiSummarizer {
               "summary",
               "category",
               "items",
+              "skippedPullRequestNumbers",
               "confidence",
               "sensitive",
             ],
@@ -153,6 +158,10 @@ export class OpenAiSummarizer implements AiSummarizer {
                     },
                   },
                 },
+              },
+              skippedPullRequestNumbers: {
+                type: "array",
+                items: { type: "integer", minimum: 1 },
               },
               confidence: { type: "number", minimum: 0, maximum: 1 },
               sensitive: { type: "boolean" },
@@ -220,6 +229,10 @@ export class OpenAiSummarizer implements AiSummarizer {
                     summary: learning.summary,
                     category: learning.category,
                     note: learning.note,
+                    feedbackKind: learning.feedbackKind,
+                    sourcePullRequests: learning.sourcePullRequests.map(
+                      ({ number, title, url }) => ({ number, title, url }),
+                    ),
                   })),
                 }
               : {}),

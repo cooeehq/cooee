@@ -344,6 +344,13 @@ export const aiFeedback = pgTable(
     summary: text("summary").notNull(),
     category: text("category").notNull(),
     note: text("note"),
+    feedbackKind: text("feedback_kind").notNull().default("dismissed"),
+    sourcePullRequests: jsonb("source_pull_requests")
+      .$type<
+        Array<{ number: number; title?: string; url: string; author?: string }>
+      >()
+      .notNull()
+      .default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

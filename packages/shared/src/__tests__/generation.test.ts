@@ -114,6 +114,36 @@ describe("AI generation contracts", () => {
     );
   });
 
+  test("includes structured repository feedback in the generation prompt", () => {
+    const payload = buildPromptPayload([pr], {
+      learnings: [
+        {
+          title: "Dependency refresh",
+          summary: "Internal dependencies were updated.",
+          category: "maintenance",
+          note: "Dependency-only updates are not relevant.",
+          feedbackKind: "dismissed",
+          sourcePullRequests: [
+            {
+              number: 40,
+              title: "Refresh dependencies",
+              url: "https://github.com/acme/app/pull/40",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(payload.learnings?.[0]).toMatchObject({
+      feedbackKind: "dismissed",
+      note: "Dependency-only updates are not relevant.",
+      sourcePullRequests: [{ number: 40, title: "Refresh dependencies" }],
+    });
+    expect(payload.instructions).toContain(
+      "omit it from items and include its number in skippedPullRequestNumbers",
+    );
+  });
+
   test("suppresses backend library and service names for private repositories", () => {
     const payload = buildPromptPayload([pr], {
       aiAudience: "technical-users",
@@ -242,6 +272,29 @@ describe("AI generation contracts", () => {
             category: "fix",
           },
         ],
+      },
+    });
+  });
+
+  test("validates explicit learned exclusions", () => {
+    expect(
+      validateGeneratedEntry({
+        title: "Customer-facing updates",
+        summary: "Only customer-facing changes are included.",
+        category: "improvement",
+        confidence: 0.94,
+        sensitive: false,
+        items: [],
+        skippedPullRequestNumbers: [40, 40, 41],
+      }),
+    ).toEqual({
+      ok: true,
+      entry: {
+        title: "Customer-facing updates",
+        summary: "Only customer-facing changes are included.",
+        category: "improvement",
+        confidence: 0.94,
+        skippedPullRequestNumbers: [40, 41],
       },
     });
   });

@@ -276,6 +276,8 @@ export type AiFeedback = {
   summary: string;
   category: ChangelogEntry["category"];
   note: string | null;
+  feedbackKind: "dismissed" | "relevant" | "merged";
+  sourcePullRequests: StoredEntry["sourcePullRequests"];
   createdAt: string;
 };
 
@@ -283,6 +285,7 @@ export type MarkEntryNotRelevantInput = {
   workspaceId: string;
   entryId: string;
   note?: string | null;
+  feedbackKind?: AiFeedback["feedbackKind"];
 };
 
 export type CreateChangelogInput = {

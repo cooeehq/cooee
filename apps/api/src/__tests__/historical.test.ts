@@ -574,6 +574,123 @@ describe("historical changelog generation", () => {
     ]);
   });
 
+  test("honors repository dismissal learnings without republishing skipped PRs", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.aiFeedback.push({
+      id: "feedback_dependency_updates",
+      workspaceId: "ws_acme",
+      changelogId: "cl_acme",
+      entryId: "entry_dependency_update",
+      title: "Dependency refresh",
+      summary: "Internal dependencies were updated.",
+      category: "maintenance",
+      note: "Dependency-only updates are not relevant to readers.",
+      feedbackKind: "dismissed",
+      sourcePullRequests: [
+        {
+          number: 39,
+          title: "Refresh dependencies",
+          url: "https://github.com/acme/app/pull/39",
+        },
+      ],
+      createdAt: "2026-06-02T00:00:00.000Z",
+    });
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_60",
+        number: 60,
+        title: "Refresh internal dependencies",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+      pullRequest({
+        id: "pr_61",
+        number: 61,
+        title: "Add shipment status filters",
+        mergedAt: "2026-06-03T05:15:00.000Z",
+      }),
+    );
+    const summarizeCalls: number[][] = [];
+    const learnedSummarizer: AiSummarizer = {
+      summarize: async (pullRequests, options) => {
+        summarizeCalls.push(
+          pullRequests.map((pullRequest) => pullRequest.number),
+        );
+        expect(options?.learnings?.[0]?.feedbackKind).toBe("dismissed");
+        return {
+          title: "Shipment status filters",
+          summary: "You can filter shipments by their current status.",
+          category: "feature",
+          confidence: 0.95,
+          sensitive: false,
+          items: [
+            {
+              title: "Shipment status filters",
+              summary: "You can filter shipments by their current status.",
+              category: "feature",
+              sourcePullRequestNumbers: [61],
+            },
+          ],
+          skippedPullRequestNumbers: [60],
+        };
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: learnedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(summarizeCalls).toEqual([[60, 61]]);
+    expect(result.status).toBe("published");
+    expect(result.entries?.map((entry) => entry.title)).toEqual([
+      "Shipment status filters",
+    ]);
+    expect(
+      result.entries?.flatMap((entry) =>
+        entry.sourcePullRequests.map((pullRequest) => pullRequest.number),
+      ),
+    ).toEqual([61]);
+  });
+
+  test("returns an empty window when repository learnings skip every PR", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_62",
+        number: 62,
+        title: "Refresh internal dependencies",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    const learnedSummarizer: AiSummarizer = {
+      summarize: async () => ({
+        title: "No customer-facing changes",
+        summary: "This window contains no customer-facing changes.",
+        category: "maintenance",
+        confidence: 0.95,
+        sensitive: false,
+        items: [],
+        skippedPullRequestNumbers: [62],
+      }),
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: learnedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(result).toEqual({ status: "empty", entries: [] });
+    expect(store.entries).toEqual([]);
+  });
+
   test("runs historical generation across the last N completed windows", async () => {
     const store = InMemoryStore.seeded();
     store.changelogs[0].settings.scheduleFrequency = "weekly";
