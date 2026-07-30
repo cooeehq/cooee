@@ -4280,7 +4280,6 @@ export function PublicChangelogPage({
     filteredEntries,
     resolvedCategoryDefinitions,
   );
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const hasLoadMoreControl = hasMoreEntries && Boolean(onLoadMoreEntries);
   const appUrl = publicAppUrl.trim();
   const appLabel = normalizePublicAppLabel(publicAppLabel);
@@ -4317,29 +4316,6 @@ export function PublicChangelogPage({
   useEffect(() => {
     onThemeChange?.(currentPublicTheme);
   }, [currentPublicTheme, onThemeChange]);
-
-  useEffect(() => {
-    if (!hasLoadMoreControl || isLoadingMoreEntries) {
-      return;
-    }
-
-    const target = loadMoreRef.current;
-    if (!target || typeof IntersectionObserver === "undefined") {
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (observedEntries) => {
-        if (observedEntries.some((entry) => entry.isIntersecting)) {
-          onLoadMoreEntries?.();
-        }
-      },
-      { rootMargin: "600px 0px" },
-    );
-
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [hasLoadMoreControl, isLoadingMoreEntries, onLoadMoreEntries]);
 
   function updatePublicTheme(theme: ThemeMode) {
     setCurrentPublicTheme(theme);
@@ -4686,8 +4662,7 @@ export function PublicChangelogPage({
         {hasLoadMoreControl ? (
           <div
             className="mt-1 flex flex-col items-center gap-3 border-t border-border pt-5"
-            data-public-load-more-sentinel
-            ref={loadMoreRef}
+            data-public-load-more-control
           >
             <Button
               className="rounded-full text-sm"
@@ -4706,7 +4681,7 @@ export function PublicChangelogPage({
                   Loading older updates
                 </span>
               ) : (
-                "Load older updates"
+                "Load more..."
               )}
             </Button>
             {loadMoreError ? (
