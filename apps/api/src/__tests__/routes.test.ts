@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   defaultChangelogCategoryDefinitions,
+  defaultPostImageSettings,
   type PullRequestMetadata,
 } from "@cooee/shared";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Stripe from "stripe";
+import sharp from "sharp";
 import { createApp } from "../server";
 import { InMemoryStore } from "../store/memory";
 import type { StoredChangelog, StoredEntry } from "../store/types";
@@ -32,6 +34,10 @@ class TestAssetStorage {
 
   async getObject(key: string) {
     return this.objects.get(key) ?? null;
+  }
+
+  async deleteObject(key: string) {
+    this.objects.delete(key);
   }
 }
 
@@ -1142,7 +1148,21 @@ describe("api routes", () => {
 
   test("generates a post image for an existing changelog post", async () => {
     const store = InMemoryStore.seeded();
+    store.changelogs[0].settings.postImageSettings = {
+      ...defaultPostImageSettings,
+      mode: "illustration",
+    };
     const assetStorage = new TestAssetStorage();
+    const generatedImage = await sharp({
+      create: {
+        width: 32,
+        height: 32,
+        channels: 3,
+        background: "#10B981",
+      },
+    })
+      .webp()
+      .toBuffer();
     const originalSummary = store.entries[0].summary;
     const seenPrompts: Array<{
       category: string;
@@ -1157,7 +1177,7 @@ describe("api routes", () => {
       }) => {
         seenPrompts.push(input);
         return {
-          imageUrl: "data:image/webp;base64,cG9zdC1pbWFnZQ==",
+          imageUrl: `data:image/webp;base64,${generatedImage.toString("base64")}`,
         };
       },
     };
@@ -1179,31 +1199,32 @@ describe("api routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const generatedBody = await response.json();
+    expect(generatedBody).toMatchObject({
       id: "entry_saved_filters",
-      imageUrl:
-        "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
       summary: originalSummary,
       title: "Saved filters",
     });
-    expect(seenPrompts).toEqual([
-      {
+    expect(generatedBody.imageUrl).toMatch(
+      /^\/api\/public\/workspaces\/ws_acme\/changelog-entries\/entry_saved_filters\/image\?v=[a-zA-Z0-9_-]+$/,
+    );
+    expect(seenPrompts).toMatchObject([
+      expect.objectContaining({
         category: "feature",
         summary: "Saved filters now get a more visual launch post.",
         title: "Saved filter views",
-      },
+      }),
     ]);
     expect(store.entries[0].summary).toBe(originalSummary);
-    expect(store.entries[0].imageUrl).toBe(
-      "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+    expect(store.entries[0].imageUrl).toBe(generatedBody.imageUrl);
+    const storedImage = assetStorage.objects.get(
+      "workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
     );
-    expect(
-      assetStorage.objects.get(
-        "workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
-      ),
-    ).toEqual({
-      body: new TextEncoder().encode("post-image"),
-      contentType: "image/webp",
+    expect(storedImage?.contentType).toBe("image/webp");
+    expect(await sharp(storedImage!.body).metadata()).toMatchObject({
+      format: "webp",
+      height: 1024,
+      width: 1536,
     });
 
     const publicImage = await app.fetch(
@@ -1213,8 +1234,8 @@ describe("api routes", () => {
     );
     expect(publicImage.status).toBe(200);
     expect(publicImage.headers.get("content-type")).toBe("image/webp");
-    expect(new Uint8Array(await publicImage.arrayBuffer())).toEqual(
-      new TextEncoder().encode("post-image"),
+    expect(Array.from(new Uint8Array(await publicImage.arrayBuffer()))).toEqual(
+      Array.from(storedImage!.body),
     );
   });
 
@@ -1283,6 +1304,10 @@ describe("api routes", () => {
 
   test("returns generic provider image errors without leaking provider details", async () => {
     const store = InMemoryStore.seeded();
+    store.changelogs[0].settings.postImageSettings = {
+      ...store.changelogs[0].settings.postImageSettings,
+      mode: "illustration",
+    };
     const imageGenerator = {
       generatePostImage: async () => {
         throw new Error(
@@ -1345,9 +1370,10 @@ describe("api routes", () => {
     const body = await response.json();
     expect(body).toMatchObject({
       id: "entry_saved_filters",
-      imageUrl:
-        "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
     });
+    expect(body.imageUrl).toMatch(
+      /^\/api\/public\/workspaces\/ws_acme\/changelog-entries\/entry_saved_filters\/image\?v=[a-zA-Z0-9_-]+$/,
+    );
     expect(store.entries[0].imageUrl).toBe(body.imageUrl);
     expect([...assetStorage.objects.keys()]).toEqual([
       "workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
@@ -1374,6 +1400,65 @@ describe("api routes", () => {
     expect(new Uint8Array(await canonicalPublicImage.arrayBuffer())).toEqual(
       imageBytes,
     );
+  });
+
+  test("uploads, previews, replaces, and removes a private style reference", async () => {
+    const store = InMemoryStore.seeded();
+    const assetStorage = new TestAssetStorage();
+    const image = await sharp({
+      create: {
+        width: 80,
+        height: 60,
+        channels: 3,
+        background: "#D6D3D1",
+      },
+    })
+      .png()
+      .toBuffer();
+    const app = createApp({ assetStorage, store });
+    const form = new FormData();
+    form.set("image", new File([image], "master.png", { type: "image/png" }));
+
+    const upload = await app.fetch(
+      new Request(
+        "http://cooee.test/api/admin/changelogs/cl_acme/post-image-reference",
+        { method: "POST", body: form },
+      ),
+    );
+    expect(upload.status).toBe(200);
+    expect(await upload.json()).toMatchObject({
+      postImageSettings: {
+        referenceAssetKey: "post-image-references/ws_acme/cl_acme.webp",
+      },
+    });
+    const stored = assetStorage.objects.get(
+      "post-image-references/ws_acme/cl_acme.webp",
+    );
+    expect(stored?.contentType).toBe("image/webp");
+    expect(await sharp(stored!.body).metadata()).toMatchObject({
+      format: "webp",
+      width: 80,
+      height: 60,
+    });
+
+    const preview = await app.fetch(
+      new Request(
+        "http://cooee.test/api/admin/changelogs/cl_acme/post-image-reference",
+      ),
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("cache-control")).toBe("private, no-store");
+
+    const remove = await app.fetch(
+      new Request(
+        "http://cooee.test/api/admin/changelogs/cl_acme/post-image-reference",
+        { method: "DELETE" },
+      ),
+    );
+    expect(remove.status).toBe(204);
+    expect(
+      store.changelogs[0].settings.postImageSettings.referenceAssetKey,
+    ).toBeNull();
   });
 
   test("historical generation runs across the requested lookback window", async () => {
@@ -2187,6 +2272,7 @@ describe("api routes", () => {
       timeZone: "UTC",
       includePullRequestLinks: false,
       publicTheme: "light",
+      postImageSettings: defaultPostImageSettings,
     };
     const store = new InMemoryStore({
       workspaces: [
@@ -3564,6 +3650,7 @@ describe("api routes", () => {
         publishTime: "09:00",
         timeZone: "Australia/Brisbane",
         includePullRequestLinks: false,
+        postImageSettings: defaultPostImageSettings,
       },
     });
     const app = createApp({
@@ -3813,7 +3900,7 @@ describe("api routes", () => {
   test("public feed returns changelog-scoped absolute post image URLs", async () => {
     const store = InMemoryStore.seeded();
     store.entries[0].imageUrl =
-      "api/public/workspaces/ws_acme/changelog-entries/entry_feature/image";
+      "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image?v=fresh123";
     const app = createApp({ store });
 
     const feed = await app.fetch(
@@ -3824,7 +3911,7 @@ describe("api routes", () => {
     const body = await feed.json();
 
     expect(body.entries[0].imageUrl).toBe(
-      "https://cooee.test/api/public/changelogs/acme-app/entries/entry_saved_filters/image",
+      "https://cooee.test/api/public/changelogs/acme-app/entries/entry_saved_filters/image?v=fresh123",
     );
   });
 
@@ -3845,8 +3932,8 @@ describe("api routes", () => {
     expect(new Uint8Array(await image.arrayBuffer())).toEqual(
       new TextEncoder().encode("post-image"),
     );
-    expect(store.entries[0].imageUrl).toBe(
-      "/api/public/workspaces/ws_acme/changelog-entries/entry_saved_filters/image",
+    expect(store.entries[0].imageUrl).toMatch(
+      /^\/api\/public\/workspaces\/ws_acme\/changelog-entries\/entry_saved_filters\/image\?v=[a-zA-Z0-9_-]+$/,
     );
     expect(
       assetStorage.objects.has(

@@ -6,6 +6,7 @@ import type {
   ChangelogLogoAlignment,
   ChangelogPublicTheme,
   HostedPaidPlanId,
+  PostImageSettings,
   PullRequestMetadata,
   PublicChangelog,
   ScheduleFrequency,
@@ -205,6 +206,7 @@ export type ChangelogSettings = {
   timeZone: string;
   includePullRequestLinks: boolean;
   publicTheme: ChangelogPublicTheme;
+  postImageSettings: PostImageSettings;
 };
 
 export type StoredChangelog = PublicChangelog & {
@@ -225,6 +227,16 @@ export type StoredEntry = ChangelogEntry & {
   holdReason?: string;
   processedAt?: string;
   windowEndedAt: string;
+  imageGenerationStatus?: "pending" | "generating" | "failed" | null;
+  imageGenerationError?: string | null;
+  imageGenerationAttemptCount?: number;
+};
+
+export type PostImageGenerationJob = {
+  entryId: string;
+  changelogId: string;
+  attemptCount: number;
+  claimToken: string;
 };
 
 export type MergeGenerationJob = {
@@ -265,6 +277,11 @@ export type UpdateEntryImageInput = {
   workspaceId: string;
   entryId: string;
   imageUrl: string | null;
+};
+
+export type EnqueuePostImageGenerationInput = {
+  workspaceId: string;
+  entryId: string;
 };
 
 export type AiFeedback = {
@@ -355,6 +372,24 @@ export type Store = {
     claimToken: string;
     error: string;
     nextAttemptAt: string;
+  }): Promise<void>;
+  enqueuePostImageGeneration(
+    input: EnqueuePostImageGenerationInput,
+  ): Promise<StoredEntry | null>;
+  claimPostImageGenerationJobs(input: {
+    now: string;
+    limit: number;
+  }): Promise<PostImageGenerationJob[]>;
+  completePostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    imageUrl: string;
+  }): Promise<StoredEntry | null>;
+  retryPostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    error: string;
+    nextAttemptAt?: string;
   }): Promise<void>;
   listWorkspaceMemberships(userId: string): Promise<WorkspaceMembership[]>;
   ensureUserWorkspace(

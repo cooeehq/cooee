@@ -29,6 +29,7 @@ release and let Railway rebuild the affected services from the repository.
 ## Common Use Cases
 
 - Turn merged pull requests into reviewed product updates.
+- Let coding agents classify the pull requests they create before merge.
 - Publish a hosted changelog and cross-origin JSON feed.
 - Add an accessible updates popup to a React 18 or 19 application.
 - Let AI clients retrieve published updates through a read-only MCP tool.
@@ -73,6 +74,11 @@ Create a GitHub OAuth app and GitHub App before deploying, then provide:
 
 The GitHub App needs read-only access to pull requests and metadata, and should
 subscribe to pull request, installation, and installation-repository events.
+
+To label PRs from Codex, Claude, or another compatible coding agent, install
+the Cooee PR Labels skill in each developer environment. It uses the
+developer's GitHub CLI permission to add labels, so the Cooee GitHub App stays
+read-only. See [Coding-agent PR labels](https://github.com/cooeehq/cooee/blob/main/docs/agent-skills.md).
 
 ## After Deployment
 

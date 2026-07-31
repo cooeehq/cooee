@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cooee PR Labels"
+  short_description: "Classify PRs for Cooee changelogs"
+  default_prompt: "Use $cooee-pr-labels to classify the active PR and add or confirm its Cooee label."

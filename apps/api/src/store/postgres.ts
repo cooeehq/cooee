@@ -4,6 +4,7 @@ import {
   getLastCompletedScheduleWindow,
   isChangelogDue,
   normalizeChangelogCategoryDefinitions,
+  normalizePostImageSettings,
 } from "@cooee/shared";
 import type { PullRequestMetadata } from "@cooee/shared";
 import type {
@@ -34,6 +35,7 @@ import type {
   Workspace,
   WorkspaceMembership,
   WorkspaceSettings,
+  PostImageGenerationJob,
   WorkClaimResult,
 } from "./types";
 
@@ -204,6 +206,105 @@ export class PostgresStore implements Store {
       where id = ${input.jobId}
         and status = 'processing'
         and claim_token = ${input.claimToken}
+    `;
+  }
+
+  async enqueuePostImageGeneration(input: {
+    workspaceId: string;
+    entryId: string;
+  }): Promise<StoredEntry | null> {
+    const rows = await this.sql`
+      update changelog_entries e
+      set image_generation_status = 'pending',
+        image_generation_error = null,
+        image_generation_attempt_count = 0,
+        image_generation_next_attempt_at = now(),
+        image_generation_claim_token = null,
+        image_generation_claimed_at = null,
+        updated_at = now()
+      from changelogs c
+      where e.changelog_id = c.id
+        and c.workspace_id = ${input.workspaceId}
+        and e.id = ${input.entryId}
+        and e.image_url is null
+      returning e.*
+    `;
+    return rows[0] ? mapEntry(rows[0]) : null;
+  }
+
+  async claimPostImageGenerationJobs(input: {
+    now: string;
+    limit: number;
+  }): Promise<PostImageGenerationJob[]> {
+    const staleAt = new Date(new Date(input.now).getTime() - 60 * 60 * 1000);
+    const rows = await this.sql`
+      with candidates as (
+        select id
+        from changelog_entries
+        where image_url is null and (
+          (image_generation_status = 'pending'
+            and image_generation_next_attempt_at <= ${new Date(input.now)})
+          or (image_generation_status = 'generating'
+            and image_generation_claimed_at < ${staleAt})
+        )
+        order by image_generation_next_attempt_at asc nulls first, created_at asc
+        for update skip locked
+        limit ${input.limit}
+      )
+      update changelog_entries entries
+      set image_generation_status = 'generating',
+        image_generation_attempt_count = entries.image_generation_attempt_count + 1,
+        image_generation_claim_token = entries.id || ':' ||
+          (entries.image_generation_attempt_count + 1)::text,
+        image_generation_claimed_at = ${new Date(input.now)},
+        updated_at = now()
+      from candidates
+      where entries.id = candidates.id
+      returning entries.*
+    `;
+    return rows.map(mapPostImageGenerationJob);
+  }
+
+  async completePostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    imageUrl: string;
+  }): Promise<StoredEntry | null> {
+    const rows = await this.sql`
+      update changelog_entries
+      set image_url = ${input.imageUrl},
+        image_generation_status = null,
+        image_generation_error = null,
+        image_generation_next_attempt_at = null,
+        image_generation_claim_token = null,
+        image_generation_claimed_at = null,
+        updated_at = now()
+      where id = ${input.entryId}
+        and image_url is null
+        and image_generation_status = 'generating'
+        and image_generation_claim_token = ${input.claimToken}
+      returning *
+    `;
+    return rows[0] ? mapEntry(rows[0]) : null;
+  }
+
+  async retryPostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    error: string;
+    nextAttemptAt?: string;
+  }): Promise<void> {
+    await this.sql`
+      update changelog_entries
+      set image_generation_status = ${input.nextAttemptAt ? "pending" : "failed"},
+        image_generation_error = ${input.error},
+        image_generation_next_attempt_at = ${input.nextAttemptAt ? new Date(input.nextAttemptAt) : null},
+        image_generation_claim_token = null,
+        image_generation_claimed_at = null,
+        updated_at = now()
+      where id = ${input.entryId}
+        and image_generation_status = 'generating'
+        and image_generation_claim_token = ${input.claimToken}
     `;
   }
 
@@ -675,7 +776,7 @@ export class PostgresStore implements Store {
           publish_time, schedule_frequency, schedule_weekday,
           schedule_month_day, skip_labels, sensitive_labels,
           category_definitions, group_entries_by_category,
-          include_pull_request_links, public_theme
+          include_pull_request_links, public_theme, image_settings
         ) values (
           ${crypto.randomUUID()}, ${input.workspaceId}, ${input.repositoryId},
           ${input.slug}, ${input.name}, ${input.description}, ${input.publicUrl},
@@ -690,7 +791,8 @@ export class PostgresStore implements Store {
           ${sql.json(input.settings.categoryDefinitions)},
           ${input.settings.groupEntriesByCategory},
           ${input.settings.includePullRequestLinks},
-          ${input.settings.publicTheme}
+          ${input.settings.publicTheme},
+          ${sql.json(input.settings.postImageSettings)}
         )
         returning *
       `;
@@ -731,6 +833,7 @@ export class PostgresStore implements Store {
         group_entries_by_category = ${input.settings.groupEntriesByCategory},
         include_pull_request_links = ${input.settings.includePullRequestLinks},
         public_theme = ${input.settings.publicTheme},
+        image_settings = ${this.sql.json(input.settings.postImageSettings)},
         updated_at = now()
       where id = ${input.changelogId}
         and workspace_id = ${input.workspaceId}
@@ -1369,6 +1472,11 @@ export class PostgresStore implements Store {
     const rows = await this.sql`
       update changelog_entries e
       set image_url = ${input.imageUrl},
+        image_generation_status = null,
+        image_generation_error = null,
+        image_generation_next_attempt_at = null,
+        image_generation_claim_token = null,
+        image_generation_claimed_at = null,
         updated_at = now()
       from changelogs c
       where e.changelog_id = c.id
@@ -1626,6 +1734,7 @@ function mapChangelog(row: postgres.Row): StoredChangelog {
       timeZone: row.time_zone,
       includePullRequestLinks: row.include_pull_request_links,
       publicTheme: row.public_theme === "dark" ? "dark" : "light",
+      postImageSettings: normalizePostImageSettings(row.image_settings),
     },
   };
 }
@@ -1640,11 +1749,23 @@ function mapEntry(row: postgres.Row): StoredEntry {
     status: row.status,
     holdReason: row.hold_reason ?? undefined,
     imageUrl: row.image_url ?? null,
+    imageGenerationStatus: row.image_generation_status ?? null,
+    imageGenerationError: row.image_generation_error ?? null,
+    imageGenerationAttemptCount: row.image_generation_attempt_count ?? 0,
     processedAt: row.created_at ? toIso(row.created_at) : undefined,
     windowEndedAt: toIso(row.window_ended_at),
     publishedAt: row.published_at ? toIso(row.published_at) : null,
     items: row.items ?? [],
     sourcePullRequests: row.source_pull_requests ?? [],
+  };
+}
+
+function mapPostImageGenerationJob(row: postgres.Row): PostImageGenerationJob {
+  return {
+    entryId: row.id,
+    changelogId: row.changelog_id,
+    attemptCount: row.image_generation_attempt_count,
+    claimToken: row.image_generation_claim_token,
   };
 }
 

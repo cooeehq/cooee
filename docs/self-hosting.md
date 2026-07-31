@@ -74,6 +74,25 @@ After changing callback URLs or environment variables, redeploy the Cooee and
 cron services. Do not copy private keys or webhook secrets into issues, logs, or
 screenshots.
 
+### Coding-agent PR labels
+
+Cooee's GitHub App remains read-only. To have Codex, Claude, and other
+skill-compatible coding agents classify the PR they are working on, install the
+Cooee PR Labels skill in the developer's GitHub CLI environment:
+
+```bash
+npx skills add cooeehq/cooee --skill cooee-pr-labels -g
+gh auth login
+```
+
+The skill uses the developer's `gh` authority to inspect the active PR and add
+a missing Cooee label without replacing existing labels. It adds a clear
+customer-facing category (`cooee:feature`, `cooee:improvement`, `cooee:fix`, or
+`cooee:maintenance`) and asks before applying a privacy label. The defaults are
+`cooee:skip` and `cooee:internal`; use `cooee:private` only after adding it to
+Cooee's Privacy labels settings. See [Coding-agent PR labels](agent-skills.md)
+for the full workflow and custom-category behavior.
+
 ## Service configuration
 
 ### Cooee

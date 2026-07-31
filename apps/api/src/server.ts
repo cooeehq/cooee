@@ -11,9 +11,11 @@ import {
   isBillingCadence,
   isEntitledSubscriptionStatus,
   isHostedPaidPlanId,
+  isHexColor,
   getChangelogCategoryDefinition,
   normalizeChangelogCategoryDefinitions,
   normalizeChangelogCategoryId,
+  normalizePostImageSettings,
   parsePublicFeedQuery,
   publicApiOpenApiDocument,
   publicFeedSchema,
@@ -53,6 +55,17 @@ import {
   type AiSummarizer,
   type AiTokenUsage,
 } from "./services/openai";
+import {
+  normalizeReferenceImage,
+  PostImageGenerationError,
+  PostImageOrchestrator,
+} from "./services/post-images";
+import {
+  getPostImageVersion,
+  isPublicPostImageUrl,
+  postImageAssetKey,
+  publicPostImageUrl,
+} from "./services/post-image-assets";
 import {
   billingPlans,
   type BillingCadence,
@@ -183,6 +196,7 @@ export function createApp(options: AppOptions = {}): App {
   const summarizer = options.summarizer ?? createDefaultSummarizer(env);
   const imageGenerator =
     options.imageGenerator ?? createDefaultImageGenerator(env);
+  const postImageOrchestrator = new PostImageOrchestrator(imageGenerator);
   const assetStorage =
     options.assetStorage === undefined
       ? createAssetStorage(env)
@@ -444,7 +458,9 @@ export function createApp(options: AppOptions = {}): App {
                 reason: "A paid plan is required to use AI features.",
               });
             }
-            return json(getPostImageGenerationAvailability(imageGenerator));
+            return json(
+              getPostImageGenerationAvailability(imageGenerator, assetStorage),
+            );
           }
 
           if (
@@ -565,6 +581,12 @@ export function createApp(options: AppOptions = {}): App {
                 slug: requestedSlug,
                 workspaceSettings: existingSettings,
               });
+              if (
+                normalized.settings.postImageSettings.enabled &&
+                normalized.settings.postImageSettings.mode !== "brand-card"
+              ) {
+                await assertAiFeatureEntitlement(store, workspaceId);
+              }
               await assertCustomDomainEntitlement({
                 customDomain: normalized.customDomain,
                 store,
@@ -892,6 +914,43 @@ export function createApp(options: AppOptions = {}): App {
 
           const changelogSettingsMatch =
             /^\/api\/admin\/changelogs\/([^/]+)\/settings$/.exec(url.pathname);
+
+          const changelogImageReferenceMatch =
+            /^\/api\/admin\/changelogs\/([^/]+)\/post-image-reference$/.exec(
+              url.pathname,
+            );
+          if (changelogImageReferenceMatch) {
+            const workspaceId = getWorkspaceId(url);
+            const changelogId = decodeURIComponent(
+              changelogImageReferenceMatch[1],
+            );
+            if (request.method === "POST") {
+              await assertAiFeatureEntitlement(store, workspaceId);
+              return uploadPostImageReference({
+                assetStorage,
+                changelogId,
+                request,
+                store,
+                workspaceId,
+              });
+            }
+            if (request.method === "GET") {
+              return readPostImageReference({
+                assetStorage,
+                changelogId,
+                store,
+                workspaceId,
+              });
+            }
+            if (request.method === "DELETE") {
+              return deletePostImageReference({
+                assetStorage,
+                changelogId,
+                store,
+                workspaceId,
+              });
+            }
+          }
           if (request.method === "GET" && changelogSettingsMatch) {
             const workspaceId = getWorkspaceId(url);
             const changelog = await store.getChangelogById(
@@ -952,7 +1011,21 @@ export function createApp(options: AppOptions = {}): App {
               items: [],
               sourcePullRequests: [],
             });
-            return json(serializeAdminChangelogEntry(entry), { status: 201 });
+            const categoryDefinition = getChangelogCategoryDefinition(
+              entry.category,
+              changelog.settings.categoryDefinitions,
+            );
+            const createdEntry =
+              changelog.settings.postImageSettings.enabled &&
+              categoryDefinition.displayType === "post"
+                ? ((await store.enqueuePostImageGeneration({
+                    entryId: entry.id,
+                    workspaceId,
+                  })) ?? entry)
+                : entry;
+            return json(serializeAdminChangelogEntry(createdEntry), {
+              status: 201,
+            });
           }
           if (request.method === "GET" && adminChangelogEntriesMatch) {
             const workspaceId = getWorkspaceId(url);
@@ -1007,6 +1080,12 @@ export function createApp(options: AppOptions = {}): App {
               slug: requestedSlug,
               workspaceSettings,
             });
+            if (
+              normalized.settings.postImageSettings.enabled &&
+              normalized.settings.postImageSettings.mode !== "brand-card"
+            ) {
+              await assertAiFeatureEntitlement(store, workspaceId);
+            }
             await assertCustomDomainEntitlement({
               customDomain: normalized.customDomain,
               store,
@@ -1620,7 +1699,28 @@ export function createApp(options: AppOptions = {}): App {
               );
             }
 
-            return json(serializeAdminChangelogEntry(entry));
+            const selected = await findWorkspaceEntry({
+              entryId,
+              store,
+              workspaceId,
+            });
+            const categoryDefinition = selected
+              ? getChangelogCategoryDefinition(
+                  entry.category,
+                  selected.changelog.settings.categoryDefinitions,
+                )
+              : null;
+            const publishedEntry =
+              selected?.changelog.settings.postImageSettings.enabled &&
+              categoryDefinition?.displayType === "post" &&
+              !entry.imageUrl
+                ? ((await store.enqueuePostImageGeneration({
+                    entryId,
+                    workspaceId,
+                  })) ?? entry)
+                : entry;
+
+            return json(serializeAdminChangelogEntry(publishedEntry));
           }
 
           const changelogEntryRegenerateMarketingMatch =
@@ -1735,15 +1835,6 @@ export function createApp(options: AppOptions = {}): App {
             );
           if (request.method === "POST" && changelogEntryGenerateImageMatch) {
             await assertAiFeatureEntitlement(store, getWorkspaceId(url));
-            if (imageGenerator.disabledReason) {
-              return json(
-                {
-                  error: postImageGenerationNotConfiguredMessage,
-                  unavailable: true,
-                },
-                { status: 503 },
-              );
-            }
 
             const body = (await request.json().catch(() => ({}))) as Record<
               string,
@@ -1753,10 +1844,12 @@ export function createApp(options: AppOptions = {}): App {
               assetStorage,
               category: body.category,
               entryId: decodeURIComponent(changelogEntryGenerateImageMatch[1]),
-              imageGenerator,
+              postImageOrchestrator,
+              recordAiUsage,
               store,
               summary: body.summary,
               title: body.title,
+              instructions: body.instructions,
               workspaceId: getWorkspaceId(url),
             });
 
@@ -3446,6 +3539,9 @@ async function selectRepositoryForChangelog({
         timeZone: workspaceSettings.timeZone,
         includePullRequestLinks: workspaceSettings.includePullRequestLinks,
         publicTheme: workspaceSettings.publicTheme,
+        postImageSettings: normalizePostImageSettings(undefined, {
+          legacyEnabled: workspaceSettings.createImagesPerUpdate,
+        }),
       },
     }));
   if (!changelog) {
@@ -3593,6 +3689,9 @@ function serializeAdminChangelogEntry(entry: StoredEntry) {
     processedAt: entry.processedAt ?? null,
     windowEndedAt: entry.windowEndedAt,
     imageUrl: entry.imageUrl ?? null,
+    imageGenerationStatus: entry.imageGenerationStatus ?? null,
+    imageGenerationError: entry.imageGenerationError ?? null,
+    imageGenerationAttemptCount: entry.imageGenerationAttemptCount ?? 0,
     holdReason: entry.holdReason ?? null,
     items: entry.items ?? [],
     sourcePullRequests: entry.sourcePullRequests,
@@ -3697,6 +3796,8 @@ function serializeChangelogSettings(
       ...changelog.settings.skipLabels,
       ...changelog.settings.sensitiveLabels,
     ]),
+    postImageSettings: changelog.settings.postImageSettings,
+    createImagesPerUpdate: changelog.settings.postImageSettings.enabled,
   };
 }
 
@@ -3817,6 +3918,46 @@ function normalizeChangelogSettings({
     ]),
   );
   const customDomain = readRequestedCustomDomain(settings.customDomain);
+  const requestedPostImageSettings = isRecord(settings.postImageSettings)
+    ? settings.postImageSettings
+    : null;
+  if (
+    requestedPostImageSettings?.accentColor !== undefined &&
+    !isHexColor(requestedPostImageSettings.accentColor)
+  ) {
+    throw json(
+      { error: "Accent colour must use the #RRGGBB format." },
+      { status: 400 },
+    );
+  }
+  if (
+    typeof requestedPostImageSettings?.defaultPrompt === "string" &&
+    requestedPostImageSettings.defaultPrompt.length > 1_000
+  ) {
+    throw json(
+      { error: "Image art direction must be 1,000 characters or less." },
+      { status: 400 },
+    );
+  }
+  const postImageSettings = normalizePostImageSettings(
+    settings.postImageSettings,
+    {
+      legacyEnabled:
+        typeof settings.createImagesPerUpdate === "boolean"
+          ? settings.createImagesPerUpdate
+          : changelog.settings.postImageSettings.enabled,
+    },
+  );
+  if (
+    postImageSettings.mode === "illustration" &&
+    postImageSettings.illustrationStyle === "custom" &&
+    !postImageSettings.defaultPrompt
+  ) {
+    throw json(
+      { error: "Custom illustration style requires saved art direction." },
+      { status: 400 },
+    );
+  }
 
   return {
     description: changelog.description ?? "",
@@ -3865,6 +4006,7 @@ function normalizeChangelogSettings({
         ["light", "dark"],
         changelog.settings.publicTheme,
       ),
+      postImageSettings,
     },
     slug,
     workspaceSettings: {
@@ -4568,7 +4710,7 @@ async function uploadChangelogEntryImage({
 
   const body = new Uint8Array(await image.arrayBuffer());
   const key = postImageAssetKey(workspaceId, entryId);
-  const imageUrl = publicPostImageUrl(workspaceId, entryId);
+  const imageUrl = publicPostImageUrl(workspaceId, entryId, body);
 
   await assetStorage.putObject({
     body,
@@ -4589,6 +4731,162 @@ async function uploadChangelogEntryImage({
   return json(serializeAdminChangelogEntry(entry));
 }
 
+async function uploadPostImageReference({
+  assetStorage,
+  changelogId,
+  request,
+  store,
+  workspaceId,
+}: {
+  assetStorage: AssetStorage | null;
+  changelogId: string;
+  request: Request;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  if (!assetStorage) {
+    return json(
+      { error: "Post image asset storage is not configured." },
+      { status: 503 },
+    );
+  }
+  const changelog = await store.getChangelogById(changelogId);
+  if (!changelog || changelog.workspaceId !== workspaceId) {
+    return json({ error: "Changelog not found" }, { status: 404 });
+  }
+  const form = await request.formData().catch(() => null);
+  const image = form?.get("image");
+  if (!(image instanceof File)) {
+    return json({ error: "Reference image is required." }, { status: 400 });
+  }
+  const contentType = image.type.toLowerCase().split(";")[0].trim();
+  if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+    return json(
+      { error: "Reference image must be a PNG, JPEG, or WebP image." },
+      { status: 415 },
+    );
+  }
+  try {
+    const normalized = await normalizeReferenceImage(
+      new Uint8Array(await image.arrayBuffer()),
+    );
+    const key = postImageReferenceAssetKey(workspaceId, changelogId);
+    await assetStorage.putObject({ ...normalized, key });
+    const updated = await updateChangelogPostImageReference({
+      changelog,
+      referenceAssetKey: key,
+      store,
+    });
+    if (!updated) {
+      await assetStorage.deleteObject?.(key);
+      return json({ error: "Changelog not found" }, { status: 404 });
+    }
+    return json({
+      postImageSettings: updated.settings.postImageSettings,
+      previewUrl: `/api/admin/changelogs/${encodeURIComponent(changelogId)}/post-image-reference`,
+    });
+  } catch (error) {
+    if (error instanceof PostImageGenerationError) {
+      const sizeError = error.message.includes("10MB");
+      return json({ error: error.message }, { status: sizeError ? 413 : 422 });
+    }
+    throw error;
+  }
+}
+
+async function readPostImageReference({
+  assetStorage,
+  changelogId,
+  store,
+  workspaceId,
+}: {
+  assetStorage: AssetStorage | null;
+  changelogId: string;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  const changelog = await store.getChangelogById(changelogId);
+  const key = changelog?.settings.postImageSettings.referenceAssetKey;
+  if (
+    !assetStorage ||
+    !changelog ||
+    changelog.workspaceId !== workspaceId ||
+    !key
+  ) {
+    return json({ error: "Reference image not found" }, { status: 404 });
+  }
+  const asset = await assetStorage.getObject(key);
+  if (!asset) {
+    return json({ error: "Reference image not found" }, { status: 404 });
+  }
+  return new Response(toArrayBuffer(asset.body), {
+    headers: {
+      "cache-control": "private, no-store",
+      "content-type": asset.contentType,
+    },
+  });
+}
+
+async function deletePostImageReference({
+  assetStorage,
+  changelogId,
+  store,
+  workspaceId,
+}: {
+  assetStorage: AssetStorage | null;
+  changelogId: string;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  const changelog = await store.getChangelogById(changelogId);
+  if (!changelog || changelog.workspaceId !== workspaceId) {
+    return json({ error: "Changelog not found" }, { status: 404 });
+  }
+  const key = changelog.settings.postImageSettings.referenceAssetKey;
+  if (key && !assetStorage) {
+    return json(
+      { error: "Post image asset storage is not configured." },
+      { status: 503 },
+    );
+  }
+  if (key) await assetStorage?.deleteObject?.(key);
+  const updated = await updateChangelogPostImageReference({
+    changelog,
+    referenceAssetKey: null,
+    store,
+  });
+  return updated
+    ? new Response(null, { status: 204 })
+    : json({ error: "Changelog not found" }, { status: 404 });
+}
+
+async function updateChangelogPostImageReference(input: {
+  changelog: StoredChangelog;
+  referenceAssetKey: string | null;
+  store: Store;
+}): Promise<StoredChangelog | null> {
+  const changelog = input.changelog;
+  return input.store.updateChangelogSettings({
+    workspaceId: changelog.workspaceId,
+    changelogId: changelog.id,
+    slug: changelog.slug,
+    name: changelog.name,
+    description: changelog.description ?? "",
+    publicUrl: changelog.publicUrl,
+    customDomain: changelog.customDomain,
+    customHostnameId: changelog.customHostnameId,
+    customHostnameStatus: changelog.customHostnameStatus,
+    customHostnameSslStatus: changelog.customHostnameSslStatus,
+    settings: {
+      ...changelog.settings,
+      postImageSettings: {
+        ...changelog.settings.postImageSettings,
+        referenceAssetKey: input.referenceAssetKey,
+      },
+    },
+  });
+}
+
 async function publicChangelogEntryImage({
   assetStorage,
   changelogId,
@@ -4607,7 +4905,6 @@ async function publicChangelogEntryImage({
   }
 
   const selected = await findWorkspaceEntry({ entryId, store, workspaceId });
-  const expectedUrl = publicPostImageUrl(workspaceId, entryId);
   const settings = normalizeWorkspaceSettings(
     await store.getWorkspaceSettings(workspaceId),
   );
@@ -4623,7 +4920,7 @@ async function publicChangelogEntryImage({
     return json({ error: "Post image not found" }, { status: 404 });
   }
 
-  if (selected.entry.imageUrl !== expectedUrl) {
+  if (!isPublicPostImageUrl(selected.entry.imageUrl, workspaceId, entryId)) {
     const legacyImage = await readGeneratedPostImage(
       selected.entry.imageUrl ?? "",
       false,
@@ -4638,7 +4935,7 @@ async function publicChangelogEntryImage({
     });
     const migratedEntry = await store.updateEntryImage({
       entryId,
-      imageUrl: expectedUrl,
+      imageUrl: publicPostImageUrl(workspaceId, entryId, legacyImage.body),
       workspaceId,
     });
     if (!migratedEntry) {
@@ -4811,22 +5108,28 @@ function versionPublicAssetUrl(path: string, assetKey?: string): string {
   return `${path}?v=${(hash >>> 0).toString(36)}`;
 }
 
-function postImageAssetKey(workspaceId: string, entryId: string): string {
-  return `workspaces/${workspaceId}/changelog-entries/${entryId}/image`;
+function postImageReferenceAssetKey(
+  workspaceId: string,
+  changelogId: string,
+): string {
+  return `post-image-references/${encodeURIComponent(workspaceId)}/${encodeURIComponent(changelogId)}.webp`;
 }
 
-function publicPostImageUrl(workspaceId: string, entryId: string): string {
-  return `/api/public/workspaces/${encodeURIComponent(workspaceId)}/changelog-entries/${encodeURIComponent(entryId)}/image`;
-}
-
-function publicChangelogPostImageUrl(slug: string, entryId: string): string {
-  return `/api/public/changelogs/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}/image`;
+function publicChangelogPostImageUrl(
+  slug: string,
+  entryId: string,
+  storedImageUrl?: string | null,
+): string {
+  const path = `/api/public/changelogs/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}/image`;
+  const version = getPostImageVersion(storedImageUrl);
+  return version ? `${path}?v=${version}` : path;
 }
 
 function getPostImageGenerationAvailability(
   imageGenerator: AiImageGenerator,
+  assetStorage: AssetStorage | null,
 ): { available: true } | { available: false; reason: string } {
-  if (!imageGenerator.disabledReason) {
+  if (assetStorage && !imageGenerator.disabledReason) {
     return { available: true };
   }
 
@@ -4971,7 +5274,11 @@ async function publicFeedForChangelog(
           ...entry,
           imageUrl: resolvePublicAssetUrl(
             entry.imageUrl
-              ? publicChangelogPostImageUrl(changelog.slug, entry.id)
+              ? publicChangelogPostImageUrl(
+                  changelog.slug,
+                  entry.id,
+                  entry.imageUrl,
+                )
               : null,
             publicUrl,
           ),
@@ -6403,7 +6710,9 @@ async function generateChangelogEntryPostImage({
   assetStorage,
   category,
   entryId,
-  imageGenerator,
+  instructions,
+  postImageOrchestrator,
+  recordAiUsage,
   store,
   summary,
   title,
@@ -6412,7 +6721,13 @@ async function generateChangelogEntryPostImage({
   assetStorage: AssetStorage | null;
   category: unknown;
   entryId: string;
-  imageGenerator: AiImageGenerator;
+  instructions: unknown;
+  postImageOrchestrator: PostImageOrchestrator;
+  recordAiUsage: (input: {
+    workspaceId: string;
+    sourceId: string;
+    usage: AiTokenUsage;
+  }) => Promise<void>;
   store: Store;
   summary: unknown;
   title: unknown;
@@ -6466,22 +6781,45 @@ async function generateChangelogEntryPostImage({
 
   const imageTitle = normalizePostImageText(title) ?? selectedEntry.title;
   const imageSummary = normalizePostImageText(summary) ?? selectedEntry.summary;
+  const oneOffInstructions =
+    typeof instructions === "string"
+      ? instructions.trim().slice(0, 1_000)
+      : undefined;
 
   try {
-    const generated = await imageGenerator.generatePostImage({
+    const imageSettings = selectedChangelog.settings.postImageSettings;
+    const reference = imageSettings.referenceAssetKey
+      ? await assetStorage.getObject(imageSettings.referenceAssetKey)
+      : null;
+    const generated = await postImageOrchestrator.render({
       category: selectedCategory,
       summary: imageSummary,
       title: imageTitle,
+      instructions: oneOffInstructions,
+      settings: imageSettings,
+      reference,
     });
-
-    const image = await readGeneratedPostImage(generated.imageUrl);
-    if (!image) {
-      return { status: "invalid-output" };
+    if (generated.requestId) {
+      console.info("Post image generated", {
+        entryId,
+        requestId: generated.requestId,
+      });
+    }
+    if (generated.usage) {
+      await recordAiUsage({
+        workspaceId,
+        sourceId: `post-image:${entryId}:${crypto.randomUUID()}`,
+        usage: generated.usage,
+      });
     }
 
-    const imageUrl = publicPostImageUrl(workspaceId, entryId);
+    const imageUrl = publicPostImageUrl(
+      workspaceId,
+      entryId,
+      generated.body,
+    );
     await assetStorage.putObject({
-      ...image,
+      ...generated,
       key: postImageAssetKey(workspaceId, entryId),
     });
 
@@ -6492,7 +6830,10 @@ async function generateChangelogEntryPostImage({
     });
 
     return entry ? { status: "ok", entry } : { status: "not-found" };
-  } catch {
+  } catch (error) {
+    if (error instanceof PostImageGenerationError && !error.retryable) {
+      return { status: "invalid-output" };
+    }
     return { status: "provider-error" };
   }
 }

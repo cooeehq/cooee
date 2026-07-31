@@ -37,19 +37,20 @@
     "typecheck": "tsc -p packages/shared && tsc -p packages/embed-react && tsc -p apps/api && tsc -p apps/mcp --noEmit && tsc -p apps/admin"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.1.17",
-    "@types/turndown": "5.0.6",
     "@types/bun": "latest",
     "@types/node": "^20.19.0",
+    "@types/opentype.js": "^1.3.10",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/turndown": "5.0.6",
     "@vitejs/plugin-react": "^5.1.1",
-    "@eslint/js": "^9.39.1",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "typescript-eslint": "^8.65.0",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
     "vite": "^6.4.1"
   },
   "dependencies": {

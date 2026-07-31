@@ -44,6 +44,7 @@ This is a Bun and TypeScript monorepo:
 | `apps/mcp`             | Separate read-only MCP server backed by the public API                                        |
 | `packages/shared`      | Feed schemas, privacy filters, scheduling, and shared product contracts                       |
 | `packages/embed-react` | Published ESM-only React package, [`@cooeehq/react`](packages/embed-react/README.md)          |
+| `skills`               | Installable coding-agent integrations, including [Cooee PR Labels](docs/agent-skills.md)      |
 
 The API can serve the built admin bundle, so the recommended self-hosted setup is
 compact:
@@ -93,9 +94,10 @@ bun run dev:api
 bun run dev:admin
 ```
 
-Vite proxies `/api/*` to the Bun API. Configure the local GitHub OAuth callback
-as `http://localhost:5173/api/auth/callback/github`, the GitHub App callback as
-`http://localhost:5173/api/github/callback`, and its webhook URL as
+Vite proxies `/api/*` to the Bun API. Better Auth uses its configured base URL,
+so configure the local GitHub OAuth callback as
+`http://localhost:3000/api/auth/callback/github`. Configure the GitHub App
+callback as `http://localhost:5173/api/github/callback`, and its webhook URL as
 `http://localhost:5173/api/webhooks/github` when using a tunnel that forwards to
 Vite. See [Self-hosting](docs/self-hosting.md) for the production values and a
 complete environment-variable reference.
@@ -211,6 +213,10 @@ To assign a merged pull request to a category, add a label using
 `cooee:<category-id>`, such as `cooee:feature`, `cooee:improvement`,
 `cooee:fix`, or `cooee:maintenance`. These labels override AI categorisation
 and also work with custom category ids configured in the dashboard.
+
+For Codex, Claude, and other compatible coding agents, install the
+[Cooee PR Labels skill](docs/agent-skills.md) to inspect and label active PRs
+automatically, with confirmation for private or ambiguous work.
 
 Please report vulnerabilities privately through GitHub Security Advisories as
 described in [SECURITY.md](SECURITY.md). Do not include credentials, private PR
