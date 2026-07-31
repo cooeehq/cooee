@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   createSetupSession,
   discoverRepository,
+  isMainModule,
   parseArguments,
   parseGitHubRemote,
   pollSetupSession,
@@ -30,6 +31,16 @@ test("recognizes common GitHub origin remotes", () => {
     "cooeehq/cooee",
   );
   expect(parseGitHubRemote("https://gitlab.com/cooeehq/cooee.git")).toBeNull();
+});
+
+test("runs when npm invokes the bin through a symlink", () => {
+  expect(
+    isMainModule(
+      "file:///tmp/cooee-changelog/dist/index.js",
+      "/tmp/cooee-changelog/node_modules/.bin/cooee-changelog",
+      () => "/tmp/cooee-changelog/dist/index.js",
+    ),
+  ).toBe(true);
 });
 
 test("discovers the repository without requiring GitHub CLI credentials", async () => {

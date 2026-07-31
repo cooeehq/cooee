@@ -1,6 +1,6 @@
 {
   "name": "cooee-changelog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Connect the current GitHub repository to Cooee.",
   "license": "MIT",
   "type": "module",
