@@ -1464,12 +1464,31 @@ export function App({
   }, [isCliSetupRoute, isSignedIn]);
 
   useEffect(() => {
-    if (cliSetup?.status !== "ready-to-complete" || !isSignedIn) {
+    const nextAction = getCliSetupNextAction({
+      isSignedIn,
+      onboardingCompleted: settings.onboardingCompleted,
+      status: cliSetup?.status ?? null,
+      workspaceSettingsLoaded,
+    });
+    if (!nextAction) {
+      return;
+    }
+    if (nextAction === "complete") {
+      void completeCliSetupSession().catch(() => {
+        toast.error("Repository connected, but Cooee could not confirm setup.", {
+          description: "Return to the terminal after refreshing this page.",
+        });
+      });
       return;
     }
     setOnboardingStep(1);
     setIsOnboardingOpen(true);
-  }, [cliSetup?.status, isSignedIn]);
+  }, [
+    cliSetup?.status,
+    isSignedIn,
+    settings.onboardingCompleted,
+    workspaceSettingsLoaded,
+  ]);
 
   useEffect(() => {
     if (
@@ -3433,14 +3452,7 @@ export function App({
         if (!onboardingSaved) {
           throw new Error("Cooee could not save onboarding.");
         }
-        const response = await fetch("/api/cli/setup-sessions/complete", {
-          method: "POST",
-        });
-        if (!response.ok) {
-          throw new Error("Cooee could not finish the paired setup.");
-        }
-        setCliSetup(null);
-        window.history.replaceState({}, "", "/changelog");
+        await completeCliSetupSession();
       } catch {
         toast.error("Repository connected, but Cooee could not confirm setup.", {
           description: "Return to the terminal after refreshing this page.",
@@ -3450,6 +3462,17 @@ export function App({
     toast.success("Setup saved.", {
       description: "Your onboarding preferences were saved.",
     });
+  }
+
+  async function completeCliSetupSession(): Promise<void> {
+    const response = await fetch("/api/cli/setup-sessions/complete", {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error("Cooee could not finish the paired setup.");
+    }
+    setCliSetup(null);
+    window.history.replaceState({}, "", "/changelog");
   }
 
   if (surface === "publicChangelog") {
@@ -11820,6 +11843,27 @@ function getCliSetupRoute(): boolean {
 
 export function isCliSetupPath(pathname: string): boolean {
   return pathname.replace(/\/$/, "") === "/app/setup";
+}
+
+export function getCliSetupNextAction({
+  isSignedIn,
+  onboardingCompleted,
+  status,
+  workspaceSettingsLoaded,
+}: {
+  isSignedIn: boolean;
+  onboardingCompleted: boolean;
+  status: string | null;
+  workspaceSettingsLoaded: boolean;
+}): "complete" | "onboard" | null {
+  if (
+    status !== "ready-to-complete" ||
+    !isSignedIn ||
+    !workspaceSettingsLoaded
+  ) {
+    return null;
+  }
+  return onboardingCompleted ? "complete" : "onboard";
 }
 
 export function shouldShowOnboardingAfterSettingsLoaded({
