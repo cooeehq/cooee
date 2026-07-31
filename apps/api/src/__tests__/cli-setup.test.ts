@@ -111,6 +111,38 @@ test("expires setup sessions and keeps the feature disabled outside hosted setup
   expect(unavailable.status).toBe(404);
 });
 
+test("does not rate limit authenticated CLI polling while setup is in progress", async () => {
+  const store = InMemoryStore.seeded();
+  const app = createApp({
+    env: {
+      COOEE_CLI_SETUP_ENABLED: "true",
+      NODE_ENV: "production",
+    },
+    store,
+  });
+  const created = await app.fetch(
+    new Request("https://app.cooee.sh/api/cli/setup-sessions", {
+      body: JSON.stringify({ repository: "cooeehq/cooee" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    }),
+  );
+  const body = (await created.json()) as {
+    pollToken: string;
+    sessionId: string;
+  };
+
+  for (let attempt = 0; attempt < 35; attempt += 1) {
+    const response = await app.fetch(
+      new Request(
+        `https://app.cooee.sh/api/cli/setup-sessions/${body.sessionId}`,
+        { headers: { authorization: `Bearer ${body.pollToken}` } },
+      ),
+    );
+    expect(response.status).toBe(200);
+  }
+});
+
 test("binds the GitHub App callback to the paired setup session", async () => {
   const store = new InMemoryStore();
   const auth: AuthRuntime = {

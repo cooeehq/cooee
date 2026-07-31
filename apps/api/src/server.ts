@@ -268,7 +268,8 @@ export function createApp(options: AppOptions = {}): App {
             productionRuntime &&
             (url.pathname.startsWith("/api/admin/") ||
               url.pathname.startsWith("/api/webhooks/") ||
-              url.pathname.startsWith("/api/cli/")) &&
+              (request.method === "POST" &&
+                url.pathname === "/api/cli/setup-sessions")) &&
             isRateLimited(
               rateLimitBuckets,
               request,
