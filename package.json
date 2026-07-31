@@ -34,7 +34,7 @@
     "changelog:historical": "bun --filter @cooee/api cron:historical",
     "railway:cron": "bun --filter @cooee/api cron:daily",
     "test": "bun test",
-    "typecheck": "tsc -p packages/shared && tsc -p packages/embed-react && tsc -p apps/api && tsc -p apps/mcp --noEmit && tsc -p apps/admin"
+    "typecheck": "tsc -p packages/shared && tsc -p packages/embed-react && tsc -p packages/cli && tsc -p apps/api && tsc -p apps/mcp --noEmit && tsc -p apps/admin"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

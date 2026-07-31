@@ -10,7 +10,9 @@ import type {
   AiUsageEvent,
   BillingNotificationType,
   BillingSubscription,
+  CliSetupSession,
   ComplimentaryAccessGrant,
+  CreateCliSetupSessionInput,
   CreateChangelogInput,
   EnsureGitHubInstallationMembershipsInput,
   GitHubInstallation,
@@ -92,6 +94,7 @@ export class InMemoryStore implements Store {
     processingStartedAt: string;
   }> = [];
   aiUsageEvents: AiUsageEvent[] = [];
+  cliSetupSessions: CliSetupSession[] = [];
 
   constructor(input?: {
     workspaces?: Workspace[];
@@ -687,6 +690,88 @@ export class InMemoryStore implements Store {
     subscription.cancelAtPeriodEnd = false;
     subscription.cancelAt = null;
     subscription.endedAt = endedAt;
+  }
+
+  async pruneCliSetupSessions(before: string): Promise<void> {
+    const cutoff = new Date(before).getTime();
+    this.cliSetupSessions = this.cliSetupSessions.filter(
+      (session) => new Date(session.expiresAt).getTime() >= cutoff,
+    );
+  }
+
+  async createCliSetupSession(
+    input: CreateCliSetupSessionInput,
+  ): Promise<CliSetupSession> {
+    const session: CliSetupSession = {
+      id: crypto.randomUUID(),
+      browserCodeHash: input.browserCodeHash,
+      pollTokenHash: input.pollTokenHash,
+      targetRepository: input.targetRepository,
+      userId: null,
+      workspaceId: null,
+      changelogId: null,
+      changelogUrl: null,
+      status: "pending",
+      error: null,
+      expiresAt: input.expiresAt,
+      completedAt: null,
+    };
+    this.cliSetupSessions.push(session);
+    return session;
+  }
+
+  async getCliSetupSession(id: string): Promise<CliSetupSession | null> {
+    return this.cliSetupSessions.find((session) => session.id === id) ?? null;
+  }
+
+  async getCliSetupSessionByBrowserCodeHash(
+    browserCodeHash: string,
+  ): Promise<CliSetupSession | null> {
+    return (
+      this.cliSetupSessions.find(
+        (session) => session.browserCodeHash === browserCodeHash,
+      ) ?? null
+    );
+  }
+
+  async claimCliSetupSession(input: {
+    id: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<CliSetupSession | null> {
+    const session = await this.getCliSetupSession(input.id);
+    if (
+      !session ||
+      new Date(session.expiresAt).getTime() <= Date.now() ||
+      (session.userId && session.userId !== input.userId)
+    ) {
+      return null;
+    }
+    session.userId = input.userId;
+    session.workspaceId = input.workspaceId;
+    if (session.status === "pending") session.status = "awaiting-installation";
+    return session;
+  }
+
+  async updateCliSetupSession(input: {
+    id: string;
+    status: CliSetupSession["status"];
+    error?: string | null;
+    changelogId?: string | null;
+    changelogUrl?: string | null;
+    completedAt?: string | null;
+  }): Promise<CliSetupSession | null> {
+    const session = await this.getCliSetupSession(input.id);
+    if (!session) return null;
+    session.status = input.status;
+    session.error = input.error ?? null;
+    if (input.changelogId !== undefined)
+      session.changelogId = input.changelogId;
+    if (input.changelogUrl !== undefined)
+      session.changelogUrl = input.changelogUrl;
+    if (input.completedAt !== undefined)
+      session.completedAt = input.completedAt;
+    return session;
   }
 
   async listGitHubInstallations(

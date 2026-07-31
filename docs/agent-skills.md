@@ -1,5 +1,15 @@
 # Coding-agent PR labels
 
+If this repository is not connected to Cooee yet, start the hosted setup first:
+
+```bash
+npx cooee-changelog
+```
+
+It opens the browser-based signup and GitHub App flow for the current GitHub
+repository, then offers to install this skill when setup is complete. It never
+reads your GitHub CLI credentials or changes repository files.
+
 The Cooee PR Labels skill helps Codex, Claude, and other skill-compatible
 coding agents classify a pull request before it merges. It reads the active PR
 through the authenticated GitHub CLI, preserves its labels, and adds the Cooee

@@ -177,6 +177,33 @@ export type GitHubRepository = {
   private: boolean;
 };
 
+export type CliSetupSessionStatus =
+  | "pending"
+  | "awaiting-installation"
+  | "repository-not-granted"
+  | "ready-to-complete"
+  | "completed";
+
+export type CliSetupSession = {
+  id: string;
+  browserCodeHash: string;
+  pollTokenHash: string;
+  targetRepository: string;
+  userId: string | null;
+  workspaceId: string | null;
+  changelogId: string | null;
+  changelogUrl: string | null;
+  status: CliSetupSessionStatus;
+  error: string | null;
+  expiresAt: string;
+  completedAt: string | null;
+};
+
+export type CreateCliSetupSessionInput = Pick<
+  CliSetupSession,
+  "browserCodeHash" | "pollTokenHash" | "targetRepository" | "expiresAt"
+>;
+
 export type UpsertGitHubInstallationInput = {
   workspaceId: string;
   installationId: number;
@@ -428,6 +455,27 @@ export type Store = {
     stripeSubscriptionId: string,
     endedAt: string,
   ): Promise<void>;
+  pruneCliSetupSessions(before: string): Promise<void>;
+  createCliSetupSession(
+    input: CreateCliSetupSessionInput,
+  ): Promise<CliSetupSession>;
+  getCliSetupSession(id: string): Promise<CliSetupSession | null>;
+  getCliSetupSessionByBrowserCodeHash(
+    browserCodeHash: string,
+  ): Promise<CliSetupSession | null>;
+  claimCliSetupSession(input: {
+    id: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<CliSetupSession | null>;
+  updateCliSetupSession(input: {
+    id: string;
+    status: CliSetupSessionStatus;
+    error?: string | null;
+    changelogId?: string | null;
+    changelogUrl?: string | null;
+    completedAt?: string | null;
+  }): Promise<CliSetupSession | null>;
   listGitHubInstallations(workspaceId: string): Promise<GitHubInstallation[]>;
   listRepositories(workspaceId: string): Promise<GitHubRepository[]>;
   upsertGitHubInstallation(
