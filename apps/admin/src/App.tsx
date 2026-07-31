@@ -321,6 +321,13 @@ type GitHubConnectionState = {
   error: string | null;
 };
 
+type CliSetupBrowserState = {
+  error: string | null;
+  expiresAt: string;
+  status: string;
+  targetRepository: string;
+};
+
 type AuthUser = {
   name?: string | null;
   email?: string | null;
@@ -1185,7 +1192,7 @@ export function App({
   const [confirmationDialogInput, setConfirmationDialogInput] = useState("");
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(() =>
-    getInitialOnboardingOpen(showOnboarding),
+    getCliSetupRoute() ? false : getInitialOnboardingOpen(showOnboarding),
   );
   const [onboardingStep, setOnboardingStep] = useState(() =>
     clampOnboardingStep(initialOnboardingStep),
@@ -1264,9 +1271,11 @@ export function App({
     useState<string | null>(() => getStoredActiveRepositoryDisplayName());
   const [authUser, setAuthUser] = useState<AuthUser | null>(initialAuthUser);
   const [signInStatus, setSignInStatus] = useState<"idle" | "running">("idle");
+  const [cliSetup, setCliSetup] = useState<CliSetupBrowserState | null>(null);
   const publicSiteUrl = getPublicSiteUrl();
   const cloudAccountMenuEnabled =
     initialCloudAccountMenuEnabled ?? getCloudAccountMenuEnabled();
+  const isCliSetupRoute = getCliSetupRoute();
 
   const showCloudAccountMenu = shouldShowCloudAccountMenu({
     billingEnabled: githubConnection.billingEnabled,
@@ -1382,6 +1391,85 @@ export function App({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isCliSetupRoute || typeof window === "undefined") {
+      return;
+    }
+
+    let isCurrent = true;
+    async function loadCliSetup() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get("code");
+      const endpoint = code
+        ? "/api/cli/setup-sessions/claim"
+        : "/api/cli/setup-sessions/browser";
+      const response = await fetch(
+        endpoint,
+        code
+          ? {
+              body: JSON.stringify({ code }),
+              headers: { "content-type": "application/json" },
+              method: "POST",
+            }
+          : undefined,
+      );
+      const body = (await response
+        .json()
+        .catch(() => ({}))) as Partial<CliSetupBrowserState> & {
+        error?: string;
+      };
+      if (
+        !response.ok ||
+        !body.targetRepository ||
+        !body.expiresAt ||
+        !body.status
+      ) {
+        if (isCurrent) {
+          setCliSetup({
+            error: body.error ?? "This Cooee setup link has expired.",
+            expiresAt: "",
+            status: "expired",
+            targetRepository: "the requested repository",
+          });
+        }
+        return;
+      }
+      if (code) {
+        window.history.replaceState({}, "", "/app/setup");
+      }
+      if (isCurrent) {
+        setCliSetup({
+          error: body.error ?? null,
+          expiresAt: body.expiresAt,
+          status: body.status,
+          targetRepository: body.targetRepository,
+        });
+      }
+    }
+
+    void loadCliSetup().catch(() => {
+      if (isCurrent) {
+        setCliSetup({
+          error: "Cooee could not load this setup session.",
+          expiresAt: "",
+          status: "expired",
+          targetRepository: "the requested repository",
+        });
+      }
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [isCliSetupRoute, isSignedIn]);
+
+  useEffect(() => {
+    if (cliSetup?.status !== "ready-to-complete" || !isSignedIn) {
+      return;
+    }
+    setOnboardingStep(1);
+    setIsOnboardingOpen(true);
+  }, [cliSetup?.status, isSignedIn]);
 
   useEffect(() => {
     if (
@@ -1546,13 +1634,13 @@ export function App({
   ]);
 
   useEffect(() => {
-    if (surface !== "app") {
+    if (surface !== "app" || isCliSetupRoute) {
       return;
     }
 
     persistActiveView(activeView);
     replaceAppViewHistory(activeView);
-  }, [surface, activeView]);
+  }, [surface, activeView, isCliSetupRoute]);
 
   useEffect(() => {
     if (surface !== "app" || typeof window === "undefined") {
@@ -1776,11 +1864,13 @@ export function App({
       setSettingsScope("workspace");
       toast.dismiss(settingsLoadErrorToastId);
       setIsOnboardingOpen(
-        shouldShowOnboardingAfterSettingsLoaded({
-          localCompleted,
-          settingsCompleted: nextSettings.onboardingCompleted,
-          showOnboarding,
-        }),
+        isCliSetupRoute
+          ? false
+          : shouldShowOnboardingAfterSettingsLoaded({
+              localCompleted,
+              settingsCompleted: nextSettings.onboardingCompleted,
+              showOnboarding,
+            }),
       );
 
       if (nextSettings.onboardingCompleted) {
@@ -2042,7 +2132,9 @@ export function App({
   }
 
   function connectRepository() {
-    goToView("repositories");
+    if (!isCliSetupRoute) {
+      goToView("repositories");
+    }
 
     if (githubConnection.loading) {
       return;
@@ -2066,7 +2158,11 @@ export function App({
       return;
     }
 
-    window.location.assign("/api/admin/github/install");
+    window.location.assign(
+      isCliSetupRoute
+        ? "/api/cli/setup-sessions/install"
+        : "/api/admin/github/install",
+    );
   }
 
   async function selectRepository(repositoryId: string) {
@@ -2349,7 +2445,10 @@ export function App({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           provider: "github",
-          callbackURL: new URL("/changelog", window.location.origin).toString(),
+          callbackURL: new URL(
+            isCliSetupRoute ? "/app/setup" : "/changelog",
+            window.location.origin,
+          ).toString(),
         }),
       });
 
@@ -3319,7 +3418,7 @@ export function App({
     }
   }
 
-  function closeOnboarding() {
+  async function closeOnboarding() {
     markOnboardingCompleted();
     const nextSettings = {
       ...settingsRef.current,
@@ -3328,7 +3427,26 @@ export function App({
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
     setIsOnboardingOpen(false);
-    void persistOnboardingCompleted();
+    const onboardingSaved = await persistOnboardingCompleted();
+    if (isCliSetupRoute) {
+      try {
+        if (!onboardingSaved) {
+          throw new Error("Cooee could not save onboarding.");
+        }
+        const response = await fetch("/api/cli/setup-sessions/complete", {
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error("Cooee could not finish the paired setup.");
+        }
+        setCliSetup(null);
+        window.history.replaceState({}, "", "/changelog");
+      } catch {
+        toast.error("Repository connected, but Cooee could not confirm setup.", {
+          description: "Return to the terminal after refreshing this page.",
+        });
+      }
+    }
     toast.success("Setup saved.", {
       description: "Your onboarding preferences were saved.",
     });
@@ -3363,6 +3481,7 @@ export function App({
           }
           onSignIn={() => void signInWithGitHub()}
           publicSiteUrl={publicSiteUrl}
+          setupRepository={cliSetup?.targetRepository ?? null}
         />
         <Toaster theme={theme} />
       </>
@@ -3587,6 +3706,12 @@ export function App({
             </header>
 
             <div className="app-view px-4 py-7 sm:px-6 sm:py-9 lg:px-8 xl:px-10 xl:py-10">
+              {cliSetup ? (
+                <CliSetupBanner
+                  onReconnect={connectRepository}
+                  setup={cliSetup}
+                />
+              ) : null}
               {visibleActiveView === "dashboard" ? (
                 <DashboardView
                   categoryDefinitions={settings.categoryDefinitions}
@@ -5275,11 +5400,13 @@ function AdminLoginPage({
   isLoading,
   onSignIn,
   publicSiteUrl,
+  setupRepository,
 }: {
   error: string | null;
   isLoading: boolean;
   onSignIn: () => void;
   publicSiteUrl: string;
+  setupRepository: string | null;
 }) {
   const [supportNavigationPill, setSupportNavigationPill] = useState<{
     isVisible: boolean;
@@ -5357,8 +5484,9 @@ function AdminLoginPage({
                 Sign in
               </h1>
               <p className="mt-4 max-w-sm text-balance text-sm leading-6 text-muted-foreground">
-                Connect a GitHub repository to get started, or manage your
-                existing changelog.
+                {setupRepository
+                  ? `Continue to connect ${setupRepository}.`
+                  : "Connect a GitHub repository to get started, or manage your existing changelog."}
               </p>
 
               {error ? (
@@ -5477,6 +5605,48 @@ function AdminSessionLoadingPage() {
     >
       <span className="text-sm text-muted-foreground">Loading Cooee…</span>
     </main>
+  );
+}
+
+function CliSetupBanner({
+  onReconnect,
+  setup,
+}: {
+  onReconnect: () => void;
+  setup: CliSetupBrowserState;
+}) {
+  const message =
+    setup.status === "ready-to-complete"
+      ? "Repository connected. Finish the remaining setup choices."
+      : setup.status === "repository-not-granted"
+        ? (setup.error ??
+          "Grant the Cooee GitHub App access to this repository.")
+        : setup.status === "expired"
+          ? (setup.error ?? "This setup link has expired.")
+          : "Continue the GitHub App setup in this browser.";
+
+  return (
+    <div
+      className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/35 px-4 py-3 text-sm"
+      role="status"
+    >
+      <p className="min-w-0 text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {setup.targetRepository}
+        </span>
+        {" — "}
+        {message}
+      </p>
+      {["pending", "awaiting-installation", "repository-not-granted"].includes(
+        setup.status,
+      ) ? (
+        <Button onClick={onReconnect} size="sm" variant="outline">
+          {setup.status === "repository-not-granted"
+            ? "Review GitHub access"
+            : "Connect GitHub App"}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -11186,6 +11356,10 @@ export function getSurfaceFromPathname(
     return "login";
   }
 
+  if (isCliSetupPath(pathname)) {
+    return "app";
+  }
+
   if (getAppViewFromPathname(pathname)) {
     return "app";
   }
@@ -11625,14 +11799,27 @@ function markOnboardingCompleted() {
   }
 }
 
-async function persistOnboardingCompleted() {
+async function persistOnboardingCompleted(): Promise<boolean> {
   try {
-    await fetch("/api/admin/onboarding/complete", {
+    const response = await fetch("/api/admin/onboarding/complete", {
       method: "POST",
     });
+    return response.ok;
   } catch {
     // Local storage still prevents the current browser from reopening the wizard.
+    return false;
   }
+}
+
+function getCliSetupRoute(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    isCliSetupPath(window.location?.pathname ?? "")
+  );
+}
+
+export function isCliSetupPath(pathname: string): boolean {
+  return pathname.replace(/\/$/, "") === "/app/setup";
 }
 
 export function shouldShowOnboardingAfterSettingsLoaded({

@@ -4,6 +4,7 @@ import {
   App,
   PublicChangelogPage,
   getAdminDocumentTitle,
+  isCliSetupPath,
   getNextScheduledRunLabel,
   getLocalPublicChangelogUrl,
   getPublicChangelogResourceUrls,
@@ -17,6 +18,8 @@ describe("Cooee admin app", () => {
     expect(getSurfaceFromPathname("/changelog")).toBe("app");
     expect(getSurfaceFromPathname("/changelog/settings")).toBe("app");
     expect(getSurfaceFromPathname("/app/settings")).toBe("app");
+    expect(getSurfaceFromPathname("/app/setup")).toBe("app");
+    expect(isCliSetupPath("/app/setup/")).toBe(true);
     expect(getSurfaceFromPathname("/changelog/acme")).toBe("publicChangelog");
     expect(getSurfaceFromPathname("/application")).toBe("notFound");
     expect(getSurfaceFromPathname("/docs")).toBe("notFound");
