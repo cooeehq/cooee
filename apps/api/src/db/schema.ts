@@ -13,6 +13,7 @@ import {
 import type {
   ChangelogCategory,
   ChangelogCategoryDefinition,
+  PostImageSettings,
 } from "@cooee/shared";
 
 export const billingMode = pgEnum("billing_mode", ["hosted", "self-hosted"]);
@@ -257,6 +258,19 @@ export const changelogs = pgTable(
       .notNull()
       .default(false),
     publicTheme: text("public_theme").notNull().default("light"),
+    imageSettings: jsonb("image_settings")
+      .$type<PostImageSettings>()
+      .notNull()
+      .default({
+        enabled: false,
+        mode: "brand-card",
+        accentColor: "#10B981",
+        titleOverlay: true,
+        backgroundPattern: "space",
+        referenceAssetKey: null,
+        illustrationStyle: "soft-3d",
+        defaultPrompt: "",
+      }),
     lastGeneratedWindowEnd: timestamp("last_generated_window_end", {
       withTimezone: true,
     }),
@@ -295,39 +309,65 @@ export const pullRequests = pgTable("pull_requests", {
     .defaultNow(),
 });
 
-export const changelogEntries = pgTable("changelog_entries", {
-  id: text("id").primaryKey(),
-  changelogId: text("changelog_id")
-    .notNull()
-    .references(() => changelogs.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  summary: text("summary").notNull(),
-  category: text("category").notNull(),
-  status: changelogEntryStatus("status").notNull().default("draft"),
-  holdReason: text("hold_reason"),
-  imageUrl: text("image_url"),
-  items: jsonb("items")
-    .$type<
-      Array<{ title: string; summary: string; category: ChangelogCategory }>
-    >()
-    .notNull()
-    .default([]),
-  sourcePullRequests: jsonb("source_pull_requests")
-    .$type<
-      Array<{ number: number; title?: string; url: string; author?: string }>
-    >()
-    .notNull()
-    .default([]),
-  generationKey: text("generation_key").unique(),
-  windowEndedAt: timestamp("window_ended_at", { withTimezone: true }).notNull(),
-  publishedAt: timestamp("published_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const changelogEntries = pgTable(
+  "changelog_entries",
+  {
+    id: text("id").primaryKey(),
+    changelogId: text("changelog_id")
+      .notNull()
+      .references(() => changelogs.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    category: text("category").notNull(),
+    status: changelogEntryStatus("status").notNull().default("draft"),
+    holdReason: text("hold_reason"),
+    imageUrl: text("image_url"),
+    imageGenerationStatus: text("image_generation_status"),
+    imageGenerationError: text("image_generation_error"),
+    imageGenerationAttemptCount: integer("image_generation_attempt_count")
+      .notNull()
+      .default(0),
+    imageGenerationNextAttemptAt: timestamp(
+      "image_generation_next_attempt_at",
+      {
+        withTimezone: true,
+      },
+    ),
+    imageGenerationClaimToken: text("image_generation_claim_token"),
+    imageGenerationClaimedAt: timestamp("image_generation_claimed_at", {
+      withTimezone: true,
+    }),
+    items: jsonb("items")
+      .$type<
+        Array<{ title: string; summary: string; category: ChangelogCategory }>
+      >()
+      .notNull()
+      .default([]),
+    sourcePullRequests: jsonb("source_pull_requests")
+      .$type<
+        Array<{ number: number; title?: string; url: string; author?: string }>
+      >()
+      .notNull()
+      .default([]),
+    generationKey: text("generation_key").unique(),
+    windowEndedAt: timestamp("window_ended_at", {
+      withTimezone: true,
+    }).notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("changelog_entries_image_generation_due_idx").on(
+      table.imageGenerationStatus,
+      table.imageGenerationNextAttemptAt,
+    ),
+  ],
+);
 
 export const aiFeedback = pgTable(
   "ai_feedback",

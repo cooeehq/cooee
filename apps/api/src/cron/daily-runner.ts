@@ -1,6 +1,11 @@
 import { getLastCompletedScheduleWindow } from "@cooee/shared";
 import { generateChangelogForWindow } from "../services/generation";
-import { createDefaultSummarizer, type AiSummarizer } from "../services/openai";
+import {
+  createDefaultImageGenerator,
+  createDefaultSummarizer,
+  type AiImageGenerator,
+  type AiSummarizer,
+} from "../services/openai";
 import {
   createAiTokenUsageReporter,
   createStripeClient,
@@ -8,6 +13,9 @@ import {
 import { loadConfig } from "../config";
 import { createStore } from "../store";
 import type { Store } from "../store/types";
+import { createAssetStorage, type AssetStorage } from "../services/assets";
+import { PostImageOrchestrator } from "../services/post-images";
+import { processPostImageGenerationJobs } from "../services/post-image-jobs";
 
 export type DailyCronResult = {
   processed: number;
@@ -22,6 +30,8 @@ export async function runDailyChangelogCron(
     now?: Date;
     store?: Store;
     summarizer?: AiSummarizer;
+    imageGenerator?: AiImageGenerator;
+    assetStorage?: AssetStorage | null;
   } = {},
 ): Promise<DailyCronResult> {
   const env = input.env ?? Bun.env;
@@ -33,6 +43,12 @@ export async function runDailyChangelogCron(
       OPENAI_MODEL: env.OPENAI_MODEL,
     });
   const now = input.now ?? new Date();
+  const imageGenerator =
+    input.imageGenerator ?? createDefaultImageGenerator(env);
+  const assetStorage =
+    input.assetStorage === undefined
+      ? createAssetStorage(env)
+      : input.assetStorage;
   const config = loadConfig(env);
   const recordAiUsage = createAiTokenUsageReporter({
     config,
@@ -114,7 +130,15 @@ export async function runDailyChangelogCron(
       }
     }
 
-    return { processed: mergeJobs.length + due.length };
+    const imageJobs = await processPostImageGenerationJobs({
+      assetStorage,
+      now,
+      orchestrator: new PostImageOrchestrator(imageGenerator),
+      recordAiUsage,
+      store,
+    });
+
+    return { processed: mergeJobs.length + due.length + imageJobs };
   } finally {
     await store.close?.();
   }

@@ -2,6 +2,10 @@
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 <svg width="100%" height="100%" viewBox="0 0 1800 240" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;overflow:visible;">
     <style><![CDATA[
+svg {
+  pointer-events: none;
+}
+
 .logo-extra-o {
   opacity: 0;
 }
@@ -19,73 +23,73 @@
   will-change: transform;
 }
 
-svg:hover .logo-extra-o-1,
+svg[data-play-on-mount="true"] .logo-extra-o-1,
 .home-logo-link:hover .logo-extra-o-1,
 .home-logo-link:focus-visible .logo-extra-o-1 {
   animation: logo-o-call-1 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-2,
+svg[data-play-on-mount="true"] .logo-extra-o-2,
 .home-logo-link:hover .logo-extra-o-2,
 .home-logo-link:focus-visible .logo-extra-o-2 {
   animation: logo-o-call-2 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-3,
+svg[data-play-on-mount="true"] .logo-extra-o-3,
 .home-logo-link:hover .logo-extra-o-3,
 .home-logo-link:focus-visible .logo-extra-o-3 {
   animation: logo-o-call-3 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-4,
+svg[data-play-on-mount="true"] .logo-extra-o-4,
 .home-logo-link:hover .logo-extra-o-4,
 .home-logo-link:focus-visible .logo-extra-o-4 {
   animation: logo-o-call-4 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-5,
+svg[data-play-on-mount="true"] .logo-extra-o-5,
 .home-logo-link:hover .logo-extra-o-5,
 .home-logo-link:focus-visible .logo-extra-o-5 {
   animation: logo-o-call-5 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-mark {
   animation: logo-o-pop 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-svg:hover .logo-extra-o-1 .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-1 .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-1 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-1 .logo-extra-o-mark {
   animation-delay: 40ms;
 }
 
-svg:hover .logo-extra-o-2 .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-2 .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-2 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-2 .logo-extra-o-mark {
   animation-delay: 145ms;
 }
 
-svg:hover .logo-extra-o-3 .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-3 .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-3 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-3 .logo-extra-o-mark {
   animation-delay: 250ms;
 }
 
-svg:hover .logo-extra-o-4 .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-4 .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-4 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-4 .logo-extra-o-mark {
   animation-delay: 355ms;
 }
 
-svg:hover .logo-extra-o-5 .logo-extra-o-mark,
+svg[data-play-on-mount="true"] .logo-extra-o-5 .logo-extra-o-mark,
 .home-logo-link:hover .logo-extra-o-5 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-5 .logo-extra-o-mark {
   animation-delay: 460ms;
 }
 
-svg:hover .logo-tail,
+svg[data-play-on-mount="true"] .logo-tail,
 .home-logo-link:hover .logo-tail,
 .home-logo-link:focus-visible .logo-tail {
   animation: logo-tail-shout 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -140,13 +144,13 @@ svg:hover .logo-tail,
   .logo-extra-o,
   .logo-extra-o-mark,
   .logo-tail,
-  svg:hover .logo-extra-o,
+  svg[data-play-on-mount="true"] .logo-extra-o,
   .home-logo-link:hover .logo-extra-o,
   .home-logo-link:focus-visible .logo-extra-o,
-  svg:hover .logo-extra-o-mark,
+  svg[data-play-on-mount="true"] .logo-extra-o-mark,
   .home-logo-link:hover .logo-extra-o-mark,
   .home-logo-link:focus-visible .logo-extra-o-mark,
-  svg:hover .logo-tail,
+  svg[data-play-on-mount="true"] .logo-tail,
   .home-logo-link:hover .logo-tail,
   .home-logo-link:focus-visible .logo-tail {
     animation: none;
@@ -155,6 +159,7 @@ svg:hover .logo-tail,
   }
 }
 ]]></style>
+    <rect class="logo-hit-area" x="0" y="0" width="1070" height="240" fill="none" style="pointer-events:all;"/>
     <g transform="matrix(1,0,0,1,-957.930004,-812.465126)">
         <g transform="matrix(7.621297,0,0,7.621297,-6417.830354,-5595.49737)">
             <path d="M993.665,863.208L987.831,859.84C987.639,859.729 987.392,859.783 987.27,859.968C986.037,861.84 984.325,862.876 982.278,862.876C980.293,862.876 978.514,861.987 977.33,860.591C976.331,859.515 975.72,858.082 975.72,856.511C975.72,854.94 976.331,853.507 977.33,852.431C978.514,851.036 980.293,850.146 982.278,850.146C984.325,850.146 986.037,851.183 987.27,853.055C987.392,853.239 987.639,853.294 987.831,853.183L990.002,851.93L993.759,849.761C993.919,849.668 993.973,849.462 993.876,849.305L993.876,849.304C993.645,848.931 993.397,848.569 993.132,848.219C993.128,848.215 993.125,848.211 993.122,848.206C992.861,847.863 992.585,847.533 992.294,847.216C992.273,847.193 992.25,847.17 992.229,847.146C992.102,847.01 991.971,846.877 991.839,846.744C991.816,846.721 991.793,846.697 991.769,846.674C991.644,846.551 991.517,846.432 991.388,846.315C991.312,846.246 991.235,846.179 991.158,846.112C991.105,846.066 991.051,846.021 990.998,845.975C988.964,844.263 986.46,843.137 983.785,842.767C983.696,842.755 983.607,842.744 983.518,842.734C983.407,842.721 983.297,842.708 983.187,842.698C983.015,842.682 982.843,842.669 982.669,842.659C982.607,842.655 982.545,842.652 982.482,842.649C982.274,842.64 982.065,842.634 981.855,842.634C974.095,842.634 967.783,848.859 967.783,856.512C967.783,864.164 974.095,870.389 981.855,870.389C982.065,870.389 982.274,870.382 982.482,870.374C982.545,870.371 982.607,870.368 982.669,870.364C982.843,870.355 983.015,870.341 983.187,870.325C983.297,870.314 983.407,870.302 983.518,870.289C983.607,870.278 983.696,870.267 983.785,870.255C986.459,869.886 988.963,868.76 990.997,867.048C991.051,867.003 991.105,866.957 991.159,866.91C991.236,866.843 991.312,866.777 991.387,866.709C991.517,866.591 991.645,866.471 991.77,866.349C991.792,866.327 991.814,866.305 991.836,866.283C991.957,866.159 992.155,865.957 992.272,865.83C992.279,865.823 992.287,865.815 992.294,865.807C992.585,865.49 992.861,865.159 993.122,864.817C993.125,864.812 993.129,864.808 993.132,864.803C993.299,864.584 993.598,864.13 993.809,863.803C993.94,863.6 993.874,863.328 993.665,863.208L993.665,863.208Z" style="fill-rule:nonzero;"/>

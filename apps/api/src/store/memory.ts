@@ -1,5 +1,6 @@
 import {
   defaultChangelogCategoryDefinitions,
+  defaultPostImageSettings,
   getLastCompletedScheduleWindow,
   isChangelogDue,
 } from "@cooee/shared";
@@ -33,6 +34,7 @@ import type {
   WorkspaceMembership,
   WorkspaceSettings,
   WorkClaimResult,
+  PostImageGenerationJob,
 } from "./types";
 
 export class InMemoryStore implements Store {
@@ -180,6 +182,7 @@ export class InMemoryStore implements Store {
             timeZone: "Australia/Brisbane",
             includePullRequestLinks: false,
             publicTheme: "light",
+            postImageSettings: defaultPostImageSettings,
           },
         },
       ],
@@ -350,6 +353,126 @@ export class InMemoryStore implements Store {
     job.claimToken = null;
     job.nextAttemptAt = input.nextAttemptAt;
     job.lastError = input.error;
+  }
+
+  async enqueuePostImageGeneration(input: {
+    workspaceId: string;
+    entryId: string;
+  }): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry?.changelogId,
+    );
+    if (
+      !entry ||
+      changelog?.workspaceId !== input.workspaceId ||
+      entry.imageUrl
+    ) {
+      return null;
+    }
+    entry.imageGenerationStatus = "pending";
+    entry.imageGenerationError = null;
+    entry.imageGenerationAttemptCount = 0;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: new Date().toISOString(),
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+    return entry;
+  }
+
+  async claimPostImageGenerationJobs(input: {
+    now: string;
+    limit: number;
+  }): Promise<PostImageGenerationJob[]> {
+    const now = new Date(input.now).getTime();
+    const staleAt = now - 60 * 60 * 1000;
+    const due = this.entries
+      .filter((entry) => {
+        const internal = entry as StoredEntry & {
+          imageGenerationNextAttemptAt?: string | null;
+          imageGenerationClaimedAt?: string | null;
+        };
+        return (
+          !entry.imageUrl &&
+          ((entry.imageGenerationStatus === "pending" &&
+            new Date(internal.imageGenerationNextAttemptAt ?? 0).getTime() <=
+              now) ||
+            (entry.imageGenerationStatus === "generating" &&
+              new Date(internal.imageGenerationClaimedAt ?? 0).getTime() <
+                staleAt))
+        );
+      })
+      .slice(0, input.limit);
+
+    return due.map((entry) => {
+      const attemptCount = (entry.imageGenerationAttemptCount ?? 0) + 1;
+      const claimToken = `${entry.id}:${attemptCount}`;
+      entry.imageGenerationStatus = "generating";
+      entry.imageGenerationAttemptCount = attemptCount;
+      Object.assign(entry, {
+        imageGenerationClaimToken: claimToken,
+        imageGenerationClaimedAt: input.now,
+      });
+      return {
+        entryId: entry.id,
+        changelogId: entry.changelogId,
+        attemptCount,
+        claimToken,
+      };
+    });
+  }
+
+  async completePostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    imageUrl: string;
+  }): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId) as
+      | (StoredEntry & { imageGenerationClaimToken?: string | null })
+      | undefined;
+    if (
+      !entry ||
+      entry.imageUrl ||
+      entry.imageGenerationStatus !== "generating" ||
+      entry.imageGenerationClaimToken !== input.claimToken
+    ) {
+      return null;
+    }
+    entry.imageUrl = input.imageUrl;
+    entry.imageGenerationStatus = null;
+    entry.imageGenerationError = null;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+    return entry;
+  }
+
+  async retryPostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    error: string;
+    nextAttemptAt?: string;
+  }): Promise<void> {
+    const entry = this.entries.find((item) => item.id === input.entryId) as
+      | (StoredEntry & { imageGenerationClaimToken?: string | null })
+      | undefined;
+    if (
+      !entry ||
+      entry.imageGenerationStatus !== "generating" ||
+      entry.imageGenerationClaimToken !== input.claimToken
+    ) {
+      return;
+    }
+    entry.imageGenerationStatus = input.nextAttemptAt ? "pending" : "failed";
+    entry.imageGenerationError = input.error;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: input.nextAttemptAt ?? null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
   }
 
   async listWorkspaceMemberships(
@@ -1203,6 +1326,13 @@ export class InMemoryStore implements Store {
     }
 
     entry.imageUrl = input.imageUrl;
+    entry.imageGenerationStatus = null;
+    entry.imageGenerationError = null;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
     return entry;
   }
 

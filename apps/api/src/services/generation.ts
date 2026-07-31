@@ -1,6 +1,7 @@
 import {
   compareChangelogCategories,
   filterPublishablePullRequests,
+  getChangelogCategoryDefinition,
   getLastCompletedScheduleWindow,
   getPullRequestCategoryOverride,
   validateGeneratedEntry,
@@ -445,6 +446,26 @@ async function generateChangelogForWindowUnlocked(input: {
         }),
       );
     }
+  }
+
+  if (changelog.settings.postImageSettings.enabled) {
+    await Promise.all(
+      entries
+        .filter(
+          (entry) =>
+            entry.status === "published" &&
+            getChangelogCategoryDefinition(
+              entry.category,
+              changelog.settings.categoryDefinitions,
+            ).displayType === "post",
+        )
+        .map((entry) =>
+          input.store.enqueuePostImageGeneration({
+            entryId: entry.id,
+            workspaceId: changelog.workspaceId,
+          }),
+        ),
+    );
   }
 
   await input.store.markGenerated(changelog.id, windowEnd);

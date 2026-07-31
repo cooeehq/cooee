@@ -5,6 +5,7 @@ import {
   PublicChangelogPage,
   getAdminDocumentTitle,
   getNextScheduledRunLabel,
+  getLocalPublicChangelogUrl,
   getPublicChangelogResourceUrls,
   getSurfaceFromPathname,
   shouldShowAdminSessionLoadingPage,
@@ -58,6 +59,37 @@ describe("Cooee admin app", () => {
     expect(html).toContain("Posts per page");
     expect(html).toContain('aria-label="Posts per page"');
     expect(html).toContain('aria-label="Loading held-review count"');
+  });
+
+  test("renders per-changelog branded image settings with responsive pattern choices", () => {
+    const html = renderToStaticMarkup(
+      <App
+        deploymentMode="admin"
+        initialAuthUser={{ name: "Rod ONeill", email: "rod@example.com" }}
+        initialIsSignedIn
+        initialSurface="app"
+        initialView="settings"
+        showOnboarding={false}
+      />,
+    );
+
+    expect(html).toContain('href="#settings-images"');
+    expect(html).toContain("Brand card");
+    expect(html).toContain("Reference style");
+    expect(html).toContain("Illustration");
+    expect(html).toContain("Space");
+    expect(html).toContain("Sky");
+    expect(html).toContain("Cyberpunk");
+    expect(html).toContain("Server room");
+    expect(html).toContain("Road");
+    expect(html).toContain("Soft gradient");
+    expect(html).toContain("Mesh gradient");
+    expect(html).toContain("Soft blobs");
+    expect(html).toContain("Solid brand colour");
+    expect(html).toContain("sm:grid-cols-2");
+    expect(html).toContain("Accent colour");
+    expect(html).toContain("Title overlay");
+    expect(html).toContain("Show the post title on generated images");
   });
 
   test("uses a loading state instead of the sign-in page while checking an admin session", () => {
@@ -181,5 +213,22 @@ describe("Cooee admin app", () => {
       json: "/api/public/changelog/feed.json",
       rss: "/api/public/changelog/feed.xml",
     });
+  });
+
+  test("keeps the View changelog destination on the local app in development", () => {
+    expect(
+      getLocalPublicChangelogUrl(
+        "/changelog/cooee",
+        { hostname: "localhost", origin: "http://localhost:5173" },
+        true,
+      ),
+    ).toBe("http://localhost:5173/changelog/cooee");
+    expect(
+      getLocalPublicChangelogUrl(
+        "/changelog/cooee",
+        { hostname: "app.cooee.sh", origin: "https://app.cooee.sh" },
+        false,
+      ),
+    ).toBeNull();
   });
 });

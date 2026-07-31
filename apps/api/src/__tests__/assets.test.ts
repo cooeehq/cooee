@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createAssetStorage, S3AssetStorage } from "../services/assets";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createAssetStorage,
+  FileSystemAssetStorage,
+  S3AssetStorage,
+} from "../services/assets";
 
 describe("asset storage", () => {
   test("uses Railway CLI bucket credential variable names", () => {
@@ -25,5 +32,45 @@ describe("asset storage", () => {
     });
 
     expect(storage).toBeInstanceOf(S3AssetStorage);
+  });
+
+  test("uses isolated temporary storage in development", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cooee-assets-test-"));
+    try {
+      const storage = createAssetStorage({
+        COOEE_LOCAL_ASSET_DIR: root,
+        NODE_ENV: "development",
+      });
+      expect(storage).toBeInstanceOf(FileSystemAssetStorage);
+
+      await storage!.putObject({
+        body: new TextEncoder().encode("image"),
+        contentType: "image/webp",
+        key: "workspaces/ws_test/changelog-entries/entry_test/image",
+      });
+      expect(
+        await storage!.getObject(
+          "workspaces/ws_test/changelog-entries/entry_test/image",
+        ),
+      ).toEqual({
+        body: new TextEncoder().encode("image"),
+        contentType: "image/webp",
+      });
+
+      await storage!.deleteObject?.(
+        "workspaces/ws_test/changelog-entries/entry_test/image",
+      );
+      expect(
+        await storage!.getObject(
+          "workspaces/ws_test/changelog-entries/entry_test/image",
+        ),
+      ).toBeNull();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("does not silently use temporary storage in production", () => {
+    expect(createAssetStorage({ NODE_ENV: "production" })).toBeNull();
   });
 });

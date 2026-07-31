@@ -56,9 +56,21 @@ export type AiImageGenerator = {
     | "openai-image-model-not-configured";
   generatePostImage(input: {
     category: string;
+    prompt?: string;
     summary: string;
     title: string;
-  }): Promise<{ imageUrl: string }>;
+  }): Promise<AiImageResult>;
+  editPostImage?(input: {
+    image: Uint8Array;
+    contentType: string;
+    prompt: string;
+  }): Promise<AiImageResult>;
+};
+
+export type AiImageResult = {
+  imageUrl: string;
+  requestId?: string;
+  usage?: AiTokenUsage;
 };
 
 export class OpenAiSummarizer implements AiSummarizer {
@@ -266,15 +278,16 @@ export class OpenAiImageGenerator implements AiImageGenerator {
 
   async generatePostImage(input: {
     category: string;
+    prompt?: string;
     summary: string;
     title: string;
-  }): Promise<{ imageUrl: string }> {
+  }): Promise<AiImageResult> {
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: this.input.apiKey });
     const outputFormat = "webp";
     const response = await client.images.generate({
       model: this.input.model,
-      prompt: buildPostImagePrompt(input),
+      prompt: input.prompt ?? buildPostImagePrompt(input),
       n: 1,
       output_format: outputFormat,
       quality: "low",
@@ -283,16 +296,52 @@ export class OpenAiImageGenerator implements AiImageGenerator {
     const image = response.data?.[0];
 
     if (image?.b64_json) {
-      return {
-        imageUrl: `data:image/${outputFormat};base64,${image.b64_json}`,
-      };
+      return toAiImageResult(
+        response,
+        `data:image/${outputFormat};base64,${image.b64_json}`,
+      );
     }
 
     if (image?.url) {
-      return { imageUrl: image.url };
+      return toAiImageResult(response, image.url);
     }
 
     throw new Error("OpenAI did not return an image.");
+  }
+
+  async editPostImage(input: {
+    image: Uint8Array;
+    contentType: string;
+    prompt: string;
+  }): Promise<AiImageResult> {
+    const { default: OpenAI, toFile } = await import("openai");
+    const client = new OpenAI({ apiKey: this.input.apiKey });
+    const response = await client.images.edit({
+      model: this.input.model,
+      image: await toFile(
+        input.image,
+        referenceImageFilename(input.contentType),
+        {
+          type: input.contentType,
+        },
+      ),
+      prompt: input.prompt,
+      input_fidelity: "high",
+      n: 1,
+      output_compression: 85,
+      output_format: "webp",
+      quality: "low",
+      size: "1536x1024",
+    });
+    const image = response.data?.[0];
+    if (image?.b64_json) {
+      return toAiImageResult(
+        response,
+        `data:image/webp;base64,${image.b64_json}`,
+      );
+    }
+    if (image?.url) return toAiImageResult(response, image.url);
+    throw new Error("OpenAI did not return an edited image.");
   }
 }
 
@@ -383,6 +432,39 @@ function buildPostImagePrompt(input: {
     `Title: ${input.title}`,
     `Summary: ${input.summary}`,
   ].join("\n");
+}
+
+function referenceImageFilename(contentType: string): string {
+  if (contentType === "image/png") return "reference.png";
+  if (contentType === "image/webp") return "reference.webp";
+  return "reference.jpg";
+}
+
+function toAiImageResult(
+  response: {
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+    };
+    _request_id?: string | null;
+  },
+  imageUrl: string,
+): AiImageResult {
+  return {
+    imageUrl,
+    ...(response._request_id ? { requestId: response._request_id } : {}),
+    ...(response.usage
+      ? {
+          usage: {
+            inputTokens: response.usage.input_tokens,
+            cachedInputTokens: 0,
+            outputTokens: response.usage.output_tokens,
+            totalTokens: response.usage.total_tokens,
+          },
+        }
+      : {}),
+  };
 }
 
 function createEntryJsonSchema(categoryIds: string[]) {

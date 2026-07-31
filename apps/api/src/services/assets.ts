@@ -4,6 +4,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { isProductionRuntime } from "../config";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export type StoredAsset = {
   body: Uint8Array;
@@ -65,7 +69,12 @@ export function createAssetStorage(
     ) ?? "auto";
 
   if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
-    return null;
+    return isProductionRuntime(env)
+      ? null
+      : new FileSystemAssetStorage(
+          env.COOEE_LOCAL_ASSET_DIR?.trim() ||
+            join(tmpdir(), "cooee-local-assets"),
+        );
   }
 
   return new S3AssetStorage({
@@ -77,6 +86,68 @@ export function createAssetStorage(
     forcePathStyle:
       env.S3_FORCE_PATH_STYLE === "true" || env.AWS_S3_URL_STYLE === "path",
   });
+}
+
+export class FileSystemAssetStorage implements AssetStorage {
+  private readonly root: string;
+
+  constructor(root: string) {
+    this.root = resolve(root);
+  }
+
+  async putObject(input: PutAssetInput): Promise<void> {
+    const path = this.resolveKey(input.key);
+    await mkdir(dirname(path), { recursive: true });
+    await Promise.all([
+      writeFile(path, input.body),
+      writeFile(this.contentTypePath(path), input.contentType, "utf8"),
+    ]);
+  }
+
+  async getObject(key: string): Promise<StoredAsset | null> {
+    const path = this.resolveKey(key);
+    try {
+      const [body, contentType] = await Promise.all([
+        readFile(path),
+        readFile(this.contentTypePath(path), "utf8"),
+      ]);
+      return {
+        body: new Uint8Array(body),
+        contentType: contentType.trim() || "application/octet-stream",
+      };
+    } catch (error) {
+      if (isFileNotFoundError(error)) return null;
+      throw error;
+    }
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    const path = this.resolveKey(key);
+    await Promise.all([
+      rm(path, { force: true }),
+      rm(this.contentTypePath(path), { force: true }),
+    ]);
+  }
+
+  private resolveKey(key: string): string {
+    if (
+      !key ||
+      isAbsolute(key) ||
+      key.split(/[\\/]/).some((segment) => segment === ".." || segment === "")
+    ) {
+      throw new Error("Invalid local asset key.");
+    }
+
+    const path = resolve(this.root, ...key.split("/"));
+    if (!path.startsWith(`${this.root}${sep}`)) {
+      throw new Error("Invalid local asset key.");
+    }
+    return path;
+  }
+
+  private contentTypePath(path: string): string {
+    return `${path}.content-type`;
+  }
 }
 
 function readEnv(
@@ -173,5 +244,14 @@ function isNotFoundError(error: unknown): boolean {
       (error as { name?: string }).name === "NotFound" ||
       (error as { $metadata?: { httpStatusCode?: number } }).$metadata
         ?.httpStatusCode === 404)
+  );
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
   );
 }

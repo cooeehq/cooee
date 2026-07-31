@@ -62,6 +62,7 @@ import {
   aiCreditRecharge,
   compareChangelogCategories,
   defaultChangelogCategoryDefinitions,
+  defaultPostImageSettings,
   formatBillingAmount,
   getBillingCurrencyForCountry,
   getChangelogCategoryDefinition,
@@ -70,12 +71,14 @@ import {
   getNextScheduledRun,
   normalizeChangelogCategoryDefinitions,
   normalizeChangelogCategoryId,
+  normalizePostImageSettings,
   getCountryCodeFromLocale,
 } from "@cooee/shared";
 import type {
   BillingCurrency,
   ChangelogCategoryDefinition,
   ChangelogDisplayType,
+  PostImageSettings,
   PublicFeedPagination,
 } from "@cooee/shared";
 import { AnimatedCooeeLogo } from "@/components/animated-cooee-logo";
@@ -173,6 +176,8 @@ type PublishedEntry = {
   windowEndedAt?: string | null;
   publishedAt?: string | null;
   imageUrl?: string | null;
+  imageGenerationStatus?: "pending" | "generating" | "failed" | null;
+  imageGenerationError?: string | null;
   items?: Array<{
     title: string;
     summary: string;
@@ -274,6 +279,7 @@ type SettingsState = {
   aiPersonality: AiPersonality;
   aiFailClosed: boolean;
   createImagesPerUpdate: boolean;
+  postImageSettings: PostImageSettings;
   scheduleFrequency: ScheduleFrequency;
   scheduleWeekday: number;
   scheduleMonthDay: number;
@@ -476,6 +482,8 @@ type ApiChangelogEntry = {
   status?: "draft" | "held" | "published" | "discarded";
   holdReason?: string | null;
   imageUrl?: string | null;
+  imageGenerationStatus?: "pending" | "generating" | "failed" | null;
+  imageGenerationError?: string | null;
   processedAt?: string | null;
   windowEndedAt?: string | null;
   items?: Array<{
@@ -649,6 +657,7 @@ const defaultSettings: SettingsState = {
   aiPersonality: "product-user",
   aiFailClosed: true,
   createImagesPerUpdate: false,
+  postImageSettings: defaultPostImageSettings,
   scheduleFrequency: "daily",
   scheduleWeekday: 1,
   scheduleMonthDay: 1,
@@ -728,6 +737,10 @@ function mergeSettings(
   incoming?: Partial<SettingsState>,
 ): SettingsState {
   const merged = { ...base, ...incoming };
+  const postImageSettings = normalizePostImageSettings(
+    merged.postImageSettings,
+    { legacyEnabled: merged.createImagesPerUpdate },
+  );
   return {
     ...merged,
     publicAppLabel: normalizePublicAppLabel(merged.publicAppLabel),
@@ -738,6 +751,8 @@ function mergeSettings(
     categoryDefinitions: normalizeChangelogCategoryDefinitions(
       merged.categoryDefinitions,
     ),
+    postImageSettings,
+    createImagesPerUpdate: postImageSettings.enabled,
   };
 }
 
@@ -1206,6 +1221,8 @@ export function App({
   const [postImageGenerationStatus, setPostImageGenerationStatus] = useState<
     "idle" | "running"
   >("idle");
+  const [publishedEntryImageInstructions, setPublishedEntryImageInstructions] =
+    useState("");
   const [postImageGenerationAvailability, setPostImageGenerationAvailability] =
     useState<PostImageGenerationAvailability>({ status: "checking" });
   const [postImageUploadStatus, setPostImageUploadStatus] = useState<
@@ -1302,11 +1319,17 @@ export function App({
   const activePublicChangelogPath = getPublicChangelogPath(
     getActiveChangelogSlug(activeRepository, settings),
   );
-  const activePublicChangelogUrl = getPublicChangelogUrl(
-    activePublicChangelogPath,
-    settings,
-    deploymentMode === "admin" ? publicSiteUrl : undefined,
-  );
+  const activePublicChangelogUrl =
+    getLocalPublicChangelogUrl(
+      activePublicChangelogPath,
+      typeof window === "undefined" ? null : window.location,
+      import.meta.env.DEV,
+    ) ??
+    getPublicChangelogUrl(
+      activePublicChangelogPath,
+      settings,
+      deploymentMode === "admin" ? publicSiteUrl : undefined,
+    );
   const aiCreditUsageLabel = billingUsage
     ? formatHeaderAiCreditUsage(billingUsage)
     : null;
@@ -1874,7 +1897,12 @@ export function App({
       });
 
       if (!response.ok) {
-        throw new Error(`Settings save failed with ${response.status}`);
+        const errorBody = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorBody.error ?? `Settings save failed with ${response.status}`,
+        );
       }
 
       const body = (await response.json()) as {
@@ -1891,13 +1919,14 @@ export function App({
       toast.success("Settings saved.", {
         description: "Your changes were saved automatically.",
       });
-    } catch {
+    } catch (error) {
       if (saveSequence !== settingsAutoSaveSequenceRef.current) {
         return;
       }
 
       toast.error("Could not save settings.", {
-        description: "Try again after checking the API connection.",
+        description:
+          error instanceof Error ? error.message : "Refresh and try again.",
       });
     }
   }
@@ -2621,6 +2650,7 @@ export function App({
     setPublishedEntryRewriteInstructions("");
     setMarketingRegenerationStatus("idle");
     setPostImageGenerationStatus("idle");
+    setPublishedEntryImageInstructions("");
     setPostImageGenerationAvailability({ status: "checking" });
     void loadPostImageGenerationAvailability();
     setPublishedEntryDraft({
@@ -2804,6 +2834,7 @@ export function App({
             category: toApiCategory(publishedEntryDraft.category),
             summary: publishedEntryDraft.summary,
             title: publishedEntryDraft.title,
+            instructions: publishedEntryImageInstructions.trim() || undefined,
           }),
         },
       );
@@ -2829,17 +2860,30 @@ export function App({
 
       const body = (await response.json()) as ApiChangelogEntry;
       const imageUrl = body.imageUrl ?? null;
+      const displayedImageUrl = imageUrl
+        ? `${imageUrl}${imageUrl.includes("?") ? "&" : "?"}v=${Date.now().toString(36)}`
+        : null;
       const entryKey = getPublishedEntryKey(editingPublishedEntry);
       setPublishedEntries((entries) =>
         entries.map((entry) =>
           getPublishedEntryKey(entry) === entryKey
-            ? { ...entry, imageUrl }
+            ? {
+                ...entry,
+                imageUrl: displayedImageUrl,
+                imageGenerationStatus: null,
+                imageGenerationError: null,
+              }
             : entry,
         ),
       );
       setEditingPublishedEntry((current) =>
         current && getPublishedEntryKey(current) === entryKey
-          ? { ...current, imageUrl }
+          ? {
+              ...current,
+              imageUrl: displayedImageUrl,
+              imageGenerationStatus: null,
+              imageGenerationError: null,
+            }
           : current,
       );
       toast.success("Post image generated.", {
@@ -3452,7 +3496,7 @@ export function App({
             className="app-main-panel min-h-[calc(100vh-1rem)] min-w-0 overflow-clip rounded-[1.75rem] border border-border/70 bg-background shadow-[0_18px_48px_-36px_rgb(0_0_0_/_0.42)] sm:min-h-[calc(100vh-1.5rem)]"
             id="main-content"
           >
-            <header className="app-command-bar sticky top-2 z-30 border-b border-border/70 bg-background/92 px-3 py-3 backdrop-blur-xl sm:top-3 sm:px-4 lg:px-5">
+            <header className="app-command-bar sticky top-0 z-30 border-b border-border/70 bg-background/92 px-3 py-3 backdrop-blur-xl sm:px-4 lg:px-5">
               <div className="flex w-full translate-y-px flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
                 <div className="flex min-w-0 items-center gap-3">
                   <h1 className="truncate text-balance text-lg font-semibold tracking-normal">
@@ -3625,6 +3669,7 @@ export function App({
 
               {visibleActiveView === "settings" ? (
                 <SettingsView
+                  changelogId={activeRepository?.changelogId ?? null}
                   customBrandingEnabled={
                     billingUsage?.entitlements.customBranding ?? false
                   }
@@ -3666,6 +3711,14 @@ export function App({
             entryDraft={publishedEntryDraft}
             rewriteInstructions={publishedEntryRewriteInstructions}
             imageUrl={editingPublishedEntry.imageUrl ?? null}
+            imageGenerationError={
+              editingPublishedEntry.imageGenerationError ?? null
+            }
+            imageGenerationStatus={
+              editingPublishedEntry.imageGenerationStatus ?? null
+            }
+            imageInstructions={publishedEntryImageInstructions}
+            imageMode={settings.postImageSettings.mode}
             isGeneratingPostImage={postImageGenerationStatus === "running"}
             postImageGenerationAvailabilityStatus={
               postImageGenerationAvailability.status
@@ -3680,6 +3733,7 @@ export function App({
             onSaveEditedEntry={saveEditedPublishedEntry}
             onUploadPostImage={uploadPublishedEntryPostImage}
             setEntryDraft={setPublishedEntryDraft}
+            setImageInstructions={setPublishedEntryImageInstructions}
             setRewriteInstructions={setPublishedEntryRewriteInstructions}
             sourcePullRequests={editingPublishedEntry.sourcePullRequests ?? []}
           />
@@ -4698,7 +4752,7 @@ export function PublicChangelogPage({
         {showBranding ? (
           <footer className="mt-8 flex justify-center border-t border-border pt-6">
             <a
-              className="home-logo-link inline-flex items-center gap-2 text-sm text-muted-foreground no-underline"
+              className="inline-flex items-center gap-2 text-sm text-muted-foreground no-underline"
               href="https://cooee.sh"
               rel="noreferrer"
               target="_blank"
@@ -6002,6 +6056,10 @@ function OnboardingWizardModal({
                       setSettings((current) => ({
                         ...current,
                         createImagesPerUpdate: checked,
+                        postImageSettings: {
+                          ...current.postImageSettings,
+                          enabled: checked,
+                        },
                       }))
                     }
                   />
@@ -6590,6 +6648,10 @@ function EditPublishedEntrySheet({
   categoryDefinitions,
   entryDraft,
   imageUrl,
+  imageGenerationError,
+  imageGenerationStatus,
+  imageInstructions,
+  imageMode,
   isGeneratingPostImage,
   postImageGenerationAvailabilityStatus,
   rewriteInstructions,
@@ -6601,6 +6663,7 @@ function EditPublishedEntrySheet({
   onSaveEditedEntry,
   onUploadPostImage,
   setEntryDraft,
+  setImageInstructions,
   setRewriteInstructions,
   sourcePullRequests,
 }: {
@@ -6609,6 +6672,10 @@ function EditPublishedEntrySheet({
   categoryDefinitions: ChangelogCategoryDefinition[];
   entryDraft: PublishedEntryDraftState;
   imageUrl: string | null;
+  imageGenerationError: string | null;
+  imageGenerationStatus: "pending" | "generating" | "failed" | null;
+  imageInstructions: string;
+  imageMode: PostImageSettings["mode"];
   isGeneratingPostImage: boolean;
   postImageGenerationAvailabilityStatus: PostImageGenerationAvailability["status"];
   rewriteInstructions: string;
@@ -6620,6 +6687,7 @@ function EditPublishedEntrySheet({
   onSaveEditedEntry: (event: FormEvent<HTMLFormElement>) => void;
   onUploadPostImage: (event: ChangeEvent<HTMLInputElement>) => void;
   setEntryDraft: Dispatch<SetStateAction<PublishedEntryDraftState>>;
+  setImageInstructions: Dispatch<SetStateAction<string>>;
   setRewriteInstructions: Dispatch<SetStateAction<string>>;
   sourcePullRequests: NonNullable<PublishedEntry["sourcePullRequests"]>;
 }) {
@@ -6631,7 +6699,8 @@ function EditPublishedEntrySheet({
   const isPostImageTextMissing =
     !entryDraft.title.trim() || !entryDraft.summary.trim();
   const isPostImageGenerationLocked =
-    postImageGenerationAvailabilityStatus === "checking";
+    imageMode !== "brand-card" &&
+    postImageGenerationAvailabilityStatus !== "available";
   const postDateParts = getPublishedAtInputParts(entryDraft.publishedAt);
   const isPostDateValid = Boolean(
     normalizePublishedEntryDraftDate(entryDraft.publishedAt),
@@ -6823,10 +6892,39 @@ function EditPublishedEntrySheet({
               src={imageUrl}
             />
           ) : (
-            <p className="rounded-md border bg-muted/30 px-3 py-2 text-balance text-sm text-muted-foreground">
-              Generate an image for post-style updates.
-            </p>
+            <div className="grid gap-2 rounded-md border bg-muted/30 px-3 py-2 text-balance text-sm text-muted-foreground">
+              <p>
+                {imageGenerationStatus === "pending"
+                  ? "Image queued. The post is already published and the image will appear when ready."
+                  : imageGenerationStatus === "generating"
+                    ? "Generating the automatic image now."
+                    : imageGenerationStatus === "failed"
+                      ? "Automatic image generation failed. Use Generate image to retry."
+                      : "Generate an image for this Post-style update."}
+              </p>
+              {imageGenerationStatus === "failed" && imageGenerationError ? (
+                <p className="text-xs">{imageGenerationError}</p>
+              ) : null}
+            </div>
           )}
+          {canGeneratePostImage && imageMode !== "brand-card" ? (
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Image instruction (optional)
+              </span>
+              <Textarea
+                maxLength={1000}
+                onChange={(event) =>
+                  setImageInstructions(event.target.value.slice(0, 1000))
+                }
+                placeholder="Add direction for this image only. It will be combined with the saved art direction."
+                value={imageInstructions}
+              />
+              <span className="justify-self-end text-xs text-muted-foreground">
+                {imageInstructions.length}/1,000
+              </span>
+            </label>
+          ) : null}
         </div>
 
         <div className="grid gap-2">
@@ -8103,6 +8201,7 @@ function formatBillingPeriodEnd(value: string | null | undefined): string {
 const settingsNavigationItems = [
   { id: "settings-brand", label: "Brand" },
   { id: "settings-public-page", label: "Public page" },
+  { id: "settings-images", label: "Images" },
   { id: "settings-schedule", label: "Schedule" },
   { id: "settings-ai", label: "AI" },
   { id: "settings-domain", label: "Domain" },
@@ -8110,10 +8209,26 @@ const settingsNavigationItems = [
   { id: "settings-privacy", label: "Privacy" },
 ];
 
+const postImageBackgroundOptions: Array<{
+  label: string;
+  value: PostImageSettings["backgroundPattern"];
+}> = [
+  { value: "space", label: "Space" },
+  { value: "sky", label: "Sky" },
+  { value: "cyberpunk", label: "Cyberpunk" },
+  { value: "server-room", label: "Server room" },
+  { value: "road", label: "Road" },
+  { value: "soft-gradient", label: "Soft gradient" },
+  { value: "mesh-gradient", label: "Mesh gradient" },
+  { value: "soft-blobs", label: "Soft blobs" },
+  { value: "solid", label: "Solid brand colour" },
+];
+
 const settingsFieldLabelClassName =
   "text-balance text-sm font-normal leading-6 text-muted-foreground";
 
 function SettingsView({
+  changelogId,
   customBrandingEnabled,
   customDomainActionStatus,
   defaultAppName,
@@ -8122,6 +8237,7 @@ function SettingsView({
   setSettings,
   settings,
 }: {
+  changelogId: string | null;
   customBrandingEnabled: boolean;
   customDomainActionStatus: CustomDomainActionStatus;
   defaultAppName: string;
@@ -8139,6 +8255,10 @@ function SettingsView({
   const faviconPreviewUrl = settings.faviconUrl ?? settings.faviconDataUrl;
   const [customBrandAssetStatus, setCustomBrandAssetStatus] =
     useState<CustomBrandAssetKind | null>(null);
+  const [referenceUploadStatus, setReferenceUploadStatus] = useState<
+    "idle" | "saving" | "removing"
+  >("idle");
+  const [referencePreviewVersion, setReferencePreviewVersion] = useState(0);
   const cnameTarget = settings.customHostnameCnameTarget || "cloud.cooee.sh";
   const domainStatusLabel = formatCustomHostnameStatus(
     settings.customHostnameStatus,
@@ -8157,11 +8277,89 @@ function SettingsView({
     settingsNavigationItems[0].id,
   );
 
+  function updatePostImageSettings(patch: Partial<PostImageSettings>) {
+    setSettings((current) => {
+      const postImageSettings = normalizePostImageSettings({
+        ...current.postImageSettings,
+        ...patch,
+      });
+      return {
+        ...current,
+        postImageSettings,
+        createImagesPerUpdate: postImageSettings.enabled,
+      };
+    });
+  }
+
+  async function uploadReferenceImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !changelogId) return;
+    const form = new FormData();
+    form.set("image", file);
+    setReferenceUploadStatus("saving");
+    try {
+      const response = await fetch(
+        `/api/admin/changelogs/${encodeURIComponent(changelogId)}/post-image-reference`,
+        { method: "POST", body: form },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        postImageSettings?: PostImageSettings;
+      };
+      if (!response.ok || !body.postImageSettings) {
+        throw new Error(body.error ?? "Reference image upload failed.");
+      }
+      setSettings(
+        (current) => ({
+          ...current,
+          postImageSettings: body.postImageSettings!,
+          createImagesPerUpdate: body.postImageSettings!.enabled,
+        }),
+        { autosave: false },
+      );
+      setReferencePreviewVersion((value) => value + 1);
+      toast.success("Reference image uploaded.");
+    } catch (error) {
+      toast.error("Could not upload reference image.", {
+        description:
+          error instanceof Error ? error.message : "Choose another image.",
+      });
+    } finally {
+      setReferenceUploadStatus("idle");
+      event.target.value = "";
+    }
+  }
+
+  async function removeReferenceImage() {
+    if (!changelogId) return;
+    setReferenceUploadStatus("removing");
+    try {
+      const response = await fetch(
+        `/api/admin/changelogs/${encodeURIComponent(changelogId)}/post-image-reference`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(body.error ?? "Reference image removal failed.");
+      }
+      updatePostImageSettings({ referenceAssetKey: null });
+      toast.success("Reference image removed.");
+    } catch (error) {
+      toast.error("Could not remove reference image.", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setReferenceUploadStatus("idle");
+    }
+  }
+
   useEffect(() => {
     let animationFrameId = 0;
 
     function updateActiveSettingsSection() {
-      const activationOffset = Math.min(window.innerHeight * 0.32, 180);
+      const activationOffset = Math.min(window.innerHeight * 0.42, 360);
       let nextActiveSectionId = settingsNavigationItems[0].id;
 
       for (const item of settingsNavigationItems) {
@@ -8171,8 +8369,16 @@ function SettingsView({
           continue;
         }
 
-        if (section.getBoundingClientRect().top <= activationOffset) {
+        const bounds = section.getBoundingClientRect();
+        if (bounds.top <= activationOffset) {
           nextActiveSectionId = item.id;
+        }
+
+        if (
+          bounds.top <= activationOffset &&
+          bounds.bottom > activationOffset
+        ) {
+          break;
         }
       }
 
@@ -8530,6 +8736,7 @@ function SettingsView({
                 )}
                 href={`#${item.id}`}
                 key={item.id}
+                onClick={() => setActiveSettingsSectionId(item.id)}
               >
                 {item.label}
               </a>
@@ -8958,6 +9165,259 @@ function SettingsView({
           </SettingsSection>
 
           <SettingsSection
+            description="Give every Post-style update a consistent visual language."
+            id="settings-images"
+            title="Images"
+          >
+            <SettingsRow
+              description="New Post-style entries publish immediately, then receive their image in the background."
+              title="Automatic images"
+            >
+              <SettingsSwitch
+                checked={settings.postImageSettings.enabled}
+                label="Create images for new Post updates"
+                onCheckedChange={(enabled) =>
+                  updatePostImageSettings({ enabled })
+                }
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              description="Brand cards are instant and credit-free. Reference and Illustration use AI credits."
+              title="Image mode"
+            >
+              <RadioGroup
+                className="grid gap-3 md:grid-cols-3"
+                onValueChange={(mode) =>
+                  updatePostImageSettings({
+                    mode: mode as PostImageSettings["mode"],
+                  })
+                }
+                value={settings.postImageSettings.mode}
+              >
+                {[
+                  {
+                    value: "brand-card",
+                    label: "Brand card",
+                    detail: "Pattern + exact accent",
+                  },
+                  {
+                    value: "reference",
+                    label: "Reference style",
+                    detail: "Inspired by a master image",
+                  },
+                  {
+                    value: "illustration",
+                    label: "Illustration",
+                    detail: "Post-specific artwork",
+                  },
+                ].map((mode) => (
+                  <label
+                    className={cn(
+                      "grid cursor-pointer gap-3 rounded-2xl border p-3 transition-colors",
+                      settings.postImageSettings.mode === mode.value
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border bg-background hover:bg-muted/50",
+                    )}
+                    key={mode.value}
+                  >
+                    <PostImageModePreview mode={mode.value} />
+                    <span className="flex items-start gap-2">
+                      <RadioGroupItem
+                        aria-label={mode.label}
+                        className="mt-0.5"
+                        value={mode.value}
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">
+                          {mode.label}
+                        </span>
+                        <span
+                          className={cn(
+                            "mt-0.5 block text-xs",
+                            settings.postImageSettings.mode === mode.value
+                              ? "text-background/70"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {mode.detail}
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </RadioGroup>
+            </SettingsRow>
+
+            <SettingsRow
+              description="Colours solid backgrounds and adds a restrained tint and highlight to artwork."
+              title="Accent colour"
+            >
+              <AccentColorControl
+                onChange={(accentColor) =>
+                  updatePostImageSettings({ accentColor })
+                }
+                value={settings.postImageSettings.accentColor}
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              description="Adds the post title with contrast adapted to the selected background."
+              title="Title overlay"
+            >
+              <SettingsSwitch
+                checked={settings.postImageSettings.titleOverlay}
+                label="Show the post title on generated images"
+                onCheckedChange={(titleOverlay) =>
+                  updatePostImageSettings({ titleOverlay })
+                }
+              />
+            </SettingsRow>
+
+            {settings.postImageSettings.mode === "brand-card" ? (
+              <SettingsRow
+                description="Choose an understated greyscale scene or a simple graphic background."
+                title="Background"
+              >
+                <RadioGroup
+                  className="grid gap-3 sm:grid-cols-2"
+                  onValueChange={(backgroundPattern) =>
+                    updatePostImageSettings({
+                      backgroundPattern:
+                        backgroundPattern as PostImageSettings["backgroundPattern"],
+                    })
+                  }
+                  value={settings.postImageSettings.backgroundPattern}
+                >
+                  {postImageBackgroundOptions.map(({ value, label }) => (
+                    <label
+                      className={cn(
+                        "grid cursor-pointer gap-2 rounded-2xl border p-2.5",
+                        settings.postImageSettings.backgroundPattern === value
+                          ? "border-foreground"
+                          : "border-border",
+                      )}
+                      key={value}
+                    >
+                      <PostImagePatternPreview
+                        accent={settings.postImageSettings.accentColor}
+                        pattern={value}
+                      />
+                      <span className="flex items-center gap-2 px-1 pb-0.5 text-sm font-medium">
+                        <RadioGroupItem aria-label={label} value={value} />
+                        {label}
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+              </SettingsRow>
+            ) : null}
+
+            {settings.postImageSettings.mode === "reference" ? (
+              <>
+                <SettingsRow
+                  description="PNG, JPEG, or WebP up to 10MB. Cooee strips metadata and uses its visual language, not its layout."
+                  title="Master reference"
+                >
+                  <div className="grid gap-3">
+                    <Input
+                      accept="image/png,image/jpeg,image/webp"
+                      disabled={
+                        !changelogId || referenceUploadStatus !== "idle"
+                      }
+                      onChange={uploadReferenceImage}
+                      type="file"
+                    />
+                    {settings.postImageSettings.referenceAssetKey &&
+                    changelogId ? (
+                      <div className="grid gap-3 rounded-2xl border bg-background p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
+                        <img
+                          alt="Master reference preview"
+                          className="aspect-[3/2] w-full rounded-xl object-cover"
+                          src={`/api/admin/changelogs/${encodeURIComponent(changelogId)}/post-image-reference?v=${referencePreviewVersion}`}
+                        />
+                        <div className="grid justify-items-start gap-2">
+                          <p className="text-sm text-muted-foreground">
+                            This image guides palette, material, lighting, and
+                            tone.
+                          </p>
+                          <Button
+                            disabled={referenceUploadStatus !== "idle"}
+                            onClick={removeReferenceImage}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {referenceUploadStatus === "removing"
+                              ? "Removing"
+                              : "Remove reference"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </SettingsRow>
+                <ImageDirectionSettingsRow
+                  onChange={(defaultPrompt) =>
+                    updatePostImageSettings({ defaultPrompt })
+                  }
+                  value={settings.postImageSettings.defaultPrompt}
+                />
+              </>
+            ) : null}
+
+            {settings.postImageSettings.mode === "illustration" ? (
+              <>
+                <SettingsRow
+                  description="Pick a repeatable visual treatment, or make the saved direction the primary style."
+                  title="Illustration style"
+                >
+                  <RadioGroup
+                    className="grid gap-2 sm:grid-cols-2"
+                    onValueChange={(illustrationStyle) =>
+                      updatePostImageSettings({
+                        illustrationStyle:
+                          illustrationStyle as PostImageSettings["illustrationStyle"],
+                      })
+                    }
+                    value={settings.postImageSettings.illustrationStyle}
+                  >
+                    {[
+                      ["soft-3d", "Soft 3D"],
+                      ["geometric", "Geometric"],
+                      ["cut-paper", "Cut paper"],
+                      ["technical-sketch", "Technical sketch"],
+                      ["custom", "Custom direction"],
+                    ].map(([value, label]) => (
+                      <label
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm",
+                          settings.postImageSettings.illustrationStyle === value
+                            ? "border-foreground bg-muted/50"
+                            : "border-border",
+                        )}
+                        key={value}
+                      >
+                        <RadioGroupItem value={value} />
+                        {label}
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </SettingsRow>
+                <ImageDirectionSettingsRow
+                  onChange={(defaultPrompt) =>
+                    updatePostImageSettings({ defaultPrompt })
+                  }
+                  required={
+                    settings.postImageSettings.illustrationStyle === "custom"
+                  }
+                  value={settings.postImageSettings.defaultPrompt}
+                />
+              </>
+            ) : null}
+          </SettingsSection>
+
+          <SettingsSection
             description="Tune how Cooee writes draft changelog entries before review."
             id="settings-ai"
             title="AI configuration"
@@ -9020,22 +9480,6 @@ function SettingsView({
                 }
                 options={aiAudienceOptions}
                 value={settings.aiAudience}
-              />
-            </SettingsRow>
-
-            <SettingsRow
-              description="Generate a public image for Post-style updates when image generation is configured."
-              title="Create images for Post updates"
-            >
-              <SettingsSwitch
-                checked={settings.createImagesPerUpdate}
-                label="Create images for Post updates"
-                onCheckedChange={(checked) =>
-                  setSettings((current) => ({
-                    ...current,
-                    createImagesPerUpdate: checked,
-                  }))
-                }
               />
             </SettingsRow>
 
@@ -9317,6 +9761,187 @@ function SettingsSwitch({
         onCheckedChange={onCheckedChange}
       />
     </div>
+  );
+}
+
+function AccentColorControl({
+  onChange,
+  value,
+}: {
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const valid = /^#[0-9a-f]{6}$/i.test(draft);
+  useEffect(() => setDraft(value), [value]);
+
+  function commit() {
+    if (valid) onChange(draft.toUpperCase());
+    else setDraft(value);
+  }
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-[3rem_minmax(0,11rem)] sm:items-center">
+      <Input
+        aria-label="Accent colour picker"
+        className="h-10 w-12 cursor-pointer p-1"
+        onChange={(event) => {
+          setDraft(event.target.value.toUpperCase());
+          onChange(event.target.value.toUpperCase());
+        }}
+        type="color"
+        value={valid ? draft : value}
+      />
+      <Input
+        aria-invalid={!valid}
+        aria-label="Accent colour hex value"
+        className="font-mono uppercase"
+        maxLength={7}
+        onBlur={commit}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          }
+        }}
+        pattern="#[0-9A-Fa-f]{6}"
+        value={draft}
+      />
+      {!valid ? (
+        <p className="text-xs text-destructive sm:col-start-2">
+          Use a six-digit hex colour, such as #10B981.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PostImageModePreview({ mode }: { mode: string }) {
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        "relative aspect-[3/2] overflow-hidden rounded-xl border border-current/15",
+        mode === "brand-card"
+          ? "bg-[oklch(0.94_0.025_155)]"
+          : mode === "reference"
+            ? "bg-[oklch(0.31_0.025_55)]"
+            : "bg-[oklch(0.9_0.04_75)]",
+      )}
+    >
+      {mode === "brand-card" ? (
+        <>
+          <span className="absolute -left-4 top-4 size-20 rounded-full border border-current/20" />
+          <span className="absolute left-8 top-3 size-20 rounded-full border border-current/20" />
+          <span className="absolute bottom-4 right-4 size-4 rounded-full bg-emerald-500" />
+        </>
+      ) : mode === "reference" ? (
+        <>
+          <span className="absolute inset-x-3 top-3 h-2/3 rounded-lg bg-[oklch(0.75_0.08_65)]" />
+          <span className="absolute bottom-3 left-5 h-8 w-12 rotate-[-8deg] rounded-full bg-[oklch(0.55_0.08_35)]" />
+          <span className="absolute bottom-4 right-4 size-9 rounded-full bg-[oklch(0.82_0.06_110)]" />
+        </>
+      ) : (
+        <>
+          <span className="absolute left-[18%] top-[20%] size-14 rotate-12 rounded-2xl bg-[oklch(0.62_0.14_35)]" />
+          <span className="absolute right-[18%] top-[25%] size-12 rounded-full bg-[oklch(0.64_0.12_210)]" />
+          <span className="absolute bottom-[18%] left-[38%] h-10 w-16 -rotate-6 bg-[oklch(0.74_0.13_110)] [clip-path:polygon(50%_0,100%_100%,0_100%)]" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function PostImagePatternPreview({
+  accent,
+  pattern,
+}: {
+  accent: string;
+  pattern: PostImageSettings["backgroundPattern"];
+}) {
+  const environmental = [
+    "space",
+    "sky",
+    "cyberpunk",
+    "server-room",
+    "road",
+  ].includes(pattern);
+  const dark = pattern === "space" || pattern === "cyberpunk";
+  const solid = pattern === "solid";
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        "relative aspect-[3/2] overflow-hidden rounded-xl border",
+        dark
+          ? "border-stone-700 bg-stone-900"
+          : "border-stone-200 bg-stone-100",
+      )}
+      style={{
+        backgroundColor: solid ? accent : undefined,
+        boxShadow: solid ? "inset 0 0 0 1px rgb(255 255 255 / 0.2)" : undefined,
+      }}
+    >
+      {environmental ? (
+        <img
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+          src={`/post-image-backgrounds/${pattern}.webp`}
+        />
+      ) : pattern === "soft-gradient" ? (
+        <div className="absolute inset-0 bg-gradient-to-br from-stone-50 via-stone-300 to-stone-500" />
+      ) : pattern === "mesh-gradient" ? (
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,white_0,transparent_58%),radial-gradient(circle_at_82%_78%,rgb(87_83_78)_0,transparent_62%),rgb(168_162_158)]" />
+      ) : pattern === "soft-blobs" ? (
+        <>
+          <span className="absolute -left-8 -top-8 size-36 rounded-full bg-white blur-2xl" />
+          <span className="absolute -right-6 top-0 size-32 rounded-full bg-stone-500/80 blur-2xl" />
+          <span className="absolute -bottom-12 left-1/3 size-44 rounded-full bg-stone-400 blur-3xl" />
+          <span className="absolute -bottom-8 -left-8 size-28 rounded-full bg-stone-600 blur-2xl" />
+        </>
+      ) : null}
+      {!solid ? (
+        <span
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background: `radial-gradient(circle at 82% 18%, color-mix(in srgb, ${accent} 28%, transparent), transparent 62%), linear-gradient(to top right, color-mix(in srgb, ${accent} 20%, transparent), color-mix(in srgb, ${accent} 8%, transparent) 52%, color-mix(in srgb, ${accent} 16%, transparent)), color-mix(in srgb, ${accent} 38%, transparent)`,
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ImageDirectionSettingsRow({
+  onChange,
+  required = false,
+  value,
+}: {
+  onChange: (value: string) => void;
+  required?: boolean;
+  value: string;
+}) {
+  return (
+    <SettingsRow
+      description="Saved per changelog and combined with each post. Image-specific direction can be added in the editor."
+      htmlFor="settings-image-direction"
+      title={required ? "Custom art direction" : "Art direction"}
+    >
+      <div className="grid gap-1.5">
+        <Textarea
+          id="settings-image-direction"
+          maxLength={1000}
+          onChange={(event) => onChange(event.target.value.slice(0, 1000))}
+          placeholder="For example: quiet studio lighting, tactile recycled materials, generous negative space."
+          required={required}
+          value={value}
+        />
+        <span className="justify-self-end text-xs text-muted-foreground">
+          {value.length}/1,000
+        </span>
+      </div>
+    </SettingsRow>
   );
 }
 
@@ -10220,6 +10845,8 @@ function toPublishedEntry(entry: ApiChangelogEntry): PublishedEntry {
     processedAt: entry.processedAt ?? null,
     windowEndedAt: entry.windowEndedAt ?? null,
     imageUrl: entry.imageUrl ?? null,
+    imageGenerationStatus: entry.imageGenerationStatus ?? null,
+    imageGenerationError: entry.imageGenerationError ?? null,
     items: toUiChangeItems(entry.items),
     publishedAt: entry.publishedAt,
     sourcePullRequests: entry.sourcePullRequests ?? [],
@@ -10609,6 +11236,23 @@ export function getPublicChangelogUrl(
     : publicSiteUrl
       ? `${publicSiteUrl}${path}`
       : path;
+}
+
+export function getLocalPublicChangelogUrl(
+  path: string,
+  location: { hostname?: string; origin?: string } | null,
+  isDevelopment: boolean,
+): string | null {
+  const hostname = location?.hostname?.toLowerCase();
+  const isLocalHostname =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]";
+  const origin = location?.origin?.replace(/\/$/, "");
+
+  return origin && (isDevelopment || isLocalHostname)
+    ? `${origin}${path}`
+    : null;
 }
 
 function getDeploymentMode(): DeploymentMode {
@@ -11830,7 +12474,7 @@ export function buildPublicChangelogPreview({
           ${entryMarkup}
           ${paginationMarkup}
           <footer>
-            <a class="powered-by home-logo-link" href="https://cooee.sh" target="_blank" rel="noreferrer">
+            <a class="powered-by" href="https://cooee.sh" target="_blank" rel="noreferrer">
               <span>Powered by</span>
               <span class="powered-by-logo animated-cooee-logo-asset" data-powered-by-logo aria-label="cooee">
                 <img class="powered-by-logo-fallback" src="/cooee-logo.svg" alt="cooee" />
@@ -12513,6 +13157,15 @@ function renderPublicPaginationScript(
                 logoSvg.setAttribute("class", "powered-by-logo-inline");
                 logoSvg.setAttribute("role", "img");
                 logoSvg.setAttribute("aria-label", "cooee");
+                const logoHitArea = logoSvg.querySelector(".logo-hit-area");
+                let logoAnimationTimeout;
+                logoHitArea?.addEventListener("pointerenter", () => {
+                  logoSvg.setAttribute("data-play-on-mount", "true");
+                  window.clearTimeout(logoAnimationTimeout);
+                  logoAnimationTimeout = window.setTimeout(() => {
+                    logoSvg.removeAttribute("data-play-on-mount");
+                  }, 1650);
+                });
               }
             })
             .catch(() => {});
