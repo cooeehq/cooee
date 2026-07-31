@@ -74,6 +74,10 @@ jobs:
         run: npm pack --dry-run
         working-directory: packages/embed-react
 
+      - name: Verify CLI package contents
+        run: npm pack --dry-run
+        working-directory: packages/cli
+
       - name: Verify React package types
         run: npx --yes @arethetypeswrong/cli@0.18.5 --pack . --profile esm-only
         working-directory: packages/embed-react

@@ -1,5 +1,6 @@
 export type RuntimeConfig = {
   appUrl: string;
+  cliSetupEnabled?: boolean;
   databaseUrl?: string;
   billingEnabled: boolean;
   openAiApiKey?: string;
@@ -127,6 +128,7 @@ export function loadConfig(
 ): RuntimeConfig {
   return {
     appUrl: env.APP_URL ?? `http://localhost:${env.PORT ?? 3000}`,
+    cliSetupEnabled: env.COOEE_CLI_SETUP_ENABLED === "true",
     databaseUrl: env.DATABASE_URL,
     billingEnabled: env.BILLING_ENABLED === "true",
     openAiApiKey: env.OPENAI_API_KEY,

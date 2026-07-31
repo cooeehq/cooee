@@ -1,0 +1,38 @@
+{
+  "name": "cooee-changelog",
+  "version": "0.1.0",
+  "description": "Connect the current GitHub repository to Cooee.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "homepage": "https://cooee.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cooeehq/cooee.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "cooee",
+    "changelog",
+    "github",
+    "release-notes"
+  ],
+  "bin": {
+    "cooee-changelog": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "bun test src",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "bun run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

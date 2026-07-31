@@ -94,6 +94,7 @@ import type {
   BillingNotificationType,
   BillingSubscription,
   ChangelogSettings,
+  CliSetupSession,
   GitHubInstallation,
   GitHubRepository,
   Store,
@@ -133,6 +134,9 @@ const publicFeedCacheHeaders = {
   "cache-control": "public, max-age=60, stale-while-revalidate=300",
 };
 const publicChangelogThemeCookieName = "cooee_public_changelog_theme";
+const cliSetupCookieName = "__Host-cooee-cli-setup";
+const cliSetupSessionLifetimeMs = 15 * 60 * 1000;
+const cliSetupRetentionMs = 24 * 60 * 60 * 1000;
 const logoContentTypes = new Map([
   ["image/gif", "gif"],
   ["image/jpeg", "jpg"],
@@ -263,7 +267,8 @@ export function createApp(options: AppOptions = {}): App {
           if (
             productionRuntime &&
             (url.pathname.startsWith("/api/admin/") ||
-              url.pathname.startsWith("/api/webhooks/")) &&
+              url.pathname.startsWith("/api/webhooks/") ||
+              url.pathname.startsWith("/api/cli/")) &&
             isRateLimited(
               rateLimitBuckets,
               request,
@@ -287,6 +292,137 @@ export function createApp(options: AppOptions = {}): App {
               { ok: ready, service: "cooee-api" },
               { status: ready ? 200 : 503 },
             );
+          }
+
+          if (
+            request.method === "POST" &&
+            url.pathname === "/api/cli/setup-sessions"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const body = (await request.json().catch(() => ({}))) as {
+              repository?: unknown;
+            };
+            const repository = normalizeCliSetupRepository(body.repository);
+            if (!repository) {
+              return json(
+                {
+                  error: "repository must be an owner/repository GitHub name.",
+                },
+                { status: 400 },
+              );
+            }
+            const browserCode = createCliSetupSecret();
+            const pollToken = createCliSetupSecret();
+            const expiresAt = new Date(
+              Date.now() + cliSetupSessionLifetimeMs,
+            ).toISOString();
+            await store.pruneCliSetupSessions(
+              new Date(Date.now() - cliSetupRetentionMs).toISOString(),
+            );
+            const session = await store.createCliSetupSession({
+              browserCodeHash: await hashCliSetupSecret(browserCode),
+              pollTokenHash: await hashCliSetupSecret(pollToken),
+              targetRepository: repository,
+              expiresAt,
+            });
+            return json({
+              expiresAt,
+              pollToken,
+              sessionId: session.id,
+              setupUrl: `${trimTrailingSlash(config.appUrl)}/app/setup?code=${encodeURIComponent(browserCode)}`,
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            /^\/api\/cli\/setup-sessions\/[^/]+$/.test(url.pathname) &&
+            url.pathname !== "/api/cli/setup-sessions/browser" &&
+            url.pathname !== "/api/cli/setup-sessions/install"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const sessionId = url.pathname.split("/").at(-1) ?? "";
+            const pollToken = readBearerToken(
+              request.headers.get("authorization"),
+            );
+            const session = pollToken
+              ? await store.getCliSetupSession(sessionId)
+              : null;
+            if (
+              !session ||
+              !(await secretsMatch(session.pollTokenHash, pollToken))
+            ) {
+              return json(
+                { error: "Setup session not found." },
+                { status: 404 },
+              );
+            }
+            if (isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired.", status: "expired" },
+                { status: 410 },
+              );
+            }
+            return json(serializeCliSetupPollSession(session));
+          }
+
+          if (
+            request.method === "POST" &&
+            url.pathname === "/api/cli/setup-sessions/claim"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const body = (await request.json().catch(() => ({}))) as {
+              code?: unknown;
+            };
+            const code = typeof body.code === "string" ? body.code : "";
+            const session = code
+              ? await store.getCliSetupSessionByBrowserCodeHash(
+                  await hashCliSetupSecret(code),
+                )
+              : null;
+            if (!session || isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired or is invalid." },
+                { status: 410 },
+              );
+            }
+            return json(serializeCliSetupBrowserSession(session), {
+              headers: { "set-cookie": createCliSetupCookie(code) },
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            url.pathname === "/api/cli/setup-sessions/browser"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const session = await getCliSetupSessionFromCookie(request, store);
+            if (!session || isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired or is invalid." },
+                { status: 410 },
+              );
+            }
+            return json(serializeCliSetupBrowserSession(session));
           }
 
           if (
@@ -345,7 +481,9 @@ export function createApp(options: AppOptions = {}): App {
           const requiresAdminSession =
             url.pathname.startsWith("/api/admin/") ||
             url.pathname === "/api/github/callback" ||
-            url.pathname === "/api/onboarding/github";
+            url.pathname === "/api/onboarding/github" ||
+            url.pathname === "/api/cli/setup-sessions/install" ||
+            url.pathname === "/api/cli/setup-sessions/complete";
           let authenticatedEmail: string | null = null;
           let authenticatedUserId: string | null = null;
           let authenticatedWorkspaceRole: "owner" | "member" | null = null;
@@ -442,6 +580,109 @@ export function createApp(options: AppOptions = {}): App {
             }
             url.searchParams.set("workspaceId", membership.workspaceId);
             authenticatedWorkspaceRole = membership.role;
+          }
+
+          if (
+            request.method === "GET" &&
+            url.pathname === "/api/cli/setup-sessions/install"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            if (!authenticatedUserId || !env.BETTER_AUTH_SECRET) {
+              return json(
+                { error: "Sign in before connecting the GitHub App." },
+                { status: 401 },
+              );
+            }
+            const session = await getCliSetupSessionFromCookie(request, store);
+            if (!session || isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired or is invalid." },
+                { status: 410 },
+              );
+            }
+            if (!isGitHubAppConfigured(config)) {
+              return json(
+                { error: "GitHub App is not configured." },
+                { status: 409 },
+              );
+            }
+            const claimed = await store.claimCliSetupSession({
+              id: session.id,
+              userId: authenticatedUserId,
+              workspaceId: getWorkspaceId(url),
+            });
+            if (!claimed) {
+              return json(
+                { error: "This setup session belongs to another account." },
+                { status: 403 },
+              );
+            }
+            const destination = new URL(getGitHubAppInstallUrl(config) ?? "");
+            destination.searchParams.set(
+              "state",
+              await createGitHubInstallationState({
+                secret: env.BETTER_AUTH_SECRET,
+                userId: authenticatedUserId,
+                workspaceId: getWorkspaceId(url),
+                cliSetupSessionId: claimed.id,
+              }),
+            );
+            return Response.redirect(destination, 302);
+          }
+
+          if (
+            request.method === "POST" &&
+            url.pathname === "/api/cli/setup-sessions/complete"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const session = await getCliSetupSessionFromCookie(request, store);
+            const workspaceId = getWorkspaceId(url);
+            if (
+              !session ||
+              isCliSetupSessionExpired(session) ||
+              !authenticatedUserId ||
+              session.userId !== authenticatedUserId ||
+              session.workspaceId !== workspaceId ||
+              !session.changelogId ||
+              !session.changelogUrl
+            ) {
+              return json(
+                { error: "Setup session cannot be completed." },
+                { status: 409 },
+              );
+            }
+            const settings = normalizeWorkspaceSettings(
+              await store.getWorkspaceSettings(workspaceId),
+            );
+            if (!settings.onboardingCompleted) {
+              return json(
+                {
+                  error:
+                    "Finish the onboarding choices before completing setup.",
+                },
+                { status: 409 },
+              );
+            }
+            const completed = await store.updateCliSetupSession({
+              id: session.id,
+              status: "completed",
+              changelogId: session.changelogId,
+              changelogUrl: session.changelogUrl,
+              completedAt: new Date().toISOString(),
+            });
+            return json(serializeCliSetupBrowserSession(completed ?? session), {
+              headers: { "set-cookie": clearCliSetupCookie() },
+            });
           }
 
           if (
@@ -864,16 +1105,18 @@ export function createApp(options: AppOptions = {}): App {
               );
             }
 
+            let installationState: GitHubInstallationState | null = null;
             if (!allowInjectedStoreTestAccess) {
-              const stateValid =
-                authenticatedUserId &&
-                env.BETTER_AUTH_SECRET &&
-                (await verifyGitHubInstallationState({
-                  secret: env.BETTER_AUTH_SECRET,
-                  state: url.searchParams.get("state"),
-                  userId: authenticatedUserId,
-                  workspaceId: getWorkspaceId(url),
-                }));
+              installationState =
+                authenticatedUserId && env.BETTER_AUTH_SECRET
+                  ? await verifyGitHubInstallationState({
+                      secret: env.BETTER_AUTH_SECRET,
+                      state: url.searchParams.get("state"),
+                      userId: authenticatedUserId,
+                      workspaceId: getWorkspaceId(url),
+                    })
+                  : null;
+              const stateValid = Boolean(installationState);
               const installationAccessible =
                 stateValid &&
                 (env.NODE_ENV !== "production" ||
@@ -900,6 +1143,19 @@ export function createApp(options: AppOptions = {}): App {
                 store,
                 workspaceId: getWorkspaceId(url),
               });
+              if (installationState?.cliSetupSessionId) {
+                await connectCliSetupSessionRepository({
+                  appUrl: config.appUrl,
+                  sessionId: installationState.cliSetupSessionId,
+                  store,
+                  userId: authenticatedUserId,
+                  workspaceId: getWorkspaceId(url),
+                });
+                return Response.redirect(
+                  cliSetupCallbackRedirect(callbackAppUrl),
+                  302,
+                );
+              }
               return Response.redirect(
                 githubAppCallbackRedirect(callbackAppUrl, "connected"),
                 302,
@@ -6082,8 +6338,12 @@ function isRateLimited(
     }
   }
   const client = getTrustedClientIp(request, trustedClientIpHeader);
-  const scope = pathname.startsWith("/api/webhooks/") ? "webhook" : "admin";
-  const max = scope === "webhook" ? 600 : 300;
+  const scope = pathname.startsWith("/api/webhooks/")
+    ? "webhook"
+    : pathname.startsWith("/api/cli/")
+      ? "cli"
+      : "admin";
+  const max = scope === "webhook" ? 600 : scope === "cli" ? 30 : 300;
   const key = `${scope}:${client}`;
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
@@ -6135,13 +6395,172 @@ function normalizeCountryCode(value: unknown): string | null {
     : null;
 }
 
+function createCliSetupSecret(): string {
+  return encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+async function hashCliSetupSecret(value: string): Promise<string> {
+  return encodeBase64Url(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+  );
+}
+
+async function secretsMatch(
+  expectedHash: string,
+  candidate: string | null,
+): Promise<boolean> {
+  return (
+    candidate !== null && expectedHash === (await hashCliSetupSecret(candidate))
+  );
+}
+
+function normalizeCliSetupRepository(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const repository = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(
+    repository,
+  )
+    ? repository
+    : null;
+}
+
+function readBearerToken(value: string | null): string | null {
+  const match = /^Bearer\s+(.+)$/.exec(value ?? "");
+  return match?.[1]?.trim() || null;
+}
+
+function readCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const cookie of cookieHeader.split(";")) {
+    const separator = cookie.indexOf("=");
+    if (separator < 1) continue;
+    if (cookie.slice(0, separator).trim() === name) {
+      return cookie.slice(separator + 1).trim() || null;
+    }
+  }
+  return null;
+}
+
+async function getCliSetupSessionFromCookie(
+  request: Request,
+  store: Store,
+): Promise<CliSetupSession | null> {
+  const code = readCookie(request.headers.get("cookie"), cliSetupCookieName);
+  return code
+    ? store.getCliSetupSessionByBrowserCodeHash(await hashCliSetupSecret(code))
+    : null;
+}
+
+function createCliSetupCookie(code: string): string {
+  return `${cliSetupCookieName}=${code}; Path=/; Max-Age=${cliSetupSessionLifetimeMs / 1000}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearCliSetupCookie(): string {
+  return `${cliSetupCookieName}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function isCliSetupSessionExpired(session: CliSetupSession): boolean {
+  return new Date(session.expiresAt).getTime() <= Date.now();
+}
+
+function serializeCliSetupBrowserSession(session: CliSetupSession) {
+  return {
+    error: session.error,
+    expiresAt: session.expiresAt,
+    status: session.status,
+    targetRepository: session.targetRepository,
+  };
+}
+
+function serializeCliSetupPollSession(session: CliSetupSession) {
+  return session.status === "completed"
+    ? {
+        changelogUrl: session.changelogUrl,
+        dashboardUrl: `${trimTrailingSlash("https://app.cooee.sh")}/app`,
+        repository: session.targetRepository,
+        status: session.status,
+      }
+    : {
+        error: session.error,
+        expiresAt: session.expiresAt,
+        status: session.status,
+      };
+}
+
+async function connectCliSetupSessionRepository({
+  appUrl,
+  sessionId,
+  store,
+  userId,
+  workspaceId,
+}: {
+  appUrl: string;
+  sessionId: string;
+  store: Store;
+  userId: string | null;
+  workspaceId: string;
+}): Promise<void> {
+  const session = await store.getCliSetupSession(sessionId);
+  if (
+    !session ||
+    isCliSetupSessionExpired(session) ||
+    !userId ||
+    session.userId !== userId ||
+    session.workspaceId !== workspaceId
+  ) {
+    return;
+  }
+  const repository = (await store.listRepositories(workspaceId)).find(
+    (item) =>
+      item.fullName.toLowerCase() === session.targetRepository.toLowerCase(),
+  );
+  if (!repository) {
+    await store.updateCliSetupSession({
+      id: session.id,
+      status: "repository-not-granted",
+      error: `Grant the Cooee GitHub App access to ${session.targetRepository}.`,
+    });
+    return;
+  }
+  try {
+    const selected = await selectRepositoryForChangelog({
+      appUrl,
+      repositoryId: repository.id,
+      store,
+      workspaceId,
+    });
+    if (!selected) {
+      throw new Error("The selected repository is unavailable.");
+    }
+    await store.updateCliSetupSession({
+      id: session.id,
+      status: "ready-to-complete",
+      changelogId: selected.changelog.id,
+      changelogUrl: selected.changelog.publicUrl,
+    });
+  } catch {
+    await store.updateCliSetupSession({
+      id: session.id,
+      status: "repository-not-granted",
+      error:
+        "Cooee could not connect this repository. Check your plan and GitHub App access.",
+    });
+  }
+}
+
+function cliSetupCallbackRedirect(appUrl: string): string {
+  return `${appUrl.replace(/\/$/, "")}/app/setup`;
+}
+
 type GitHubInstallationState = {
+  cliSetupSessionId?: string;
   expiresAt: number;
   userId: string;
   workspaceId: string;
 };
 
 async function createGitHubInstallationState(input: {
+  cliSetupSessionId?: string;
   secret: string;
   userId: string;
   workspaceId: string;
@@ -6149,6 +6568,7 @@ async function createGitHubInstallationState(input: {
   const payload = encodeBase64Url(
     new TextEncoder().encode(
       JSON.stringify({
+        cliSetupSessionId: input.cliSetupSessionId,
         expiresAt: Date.now() + 10 * 60 * 1000,
         userId: input.userId,
         workspaceId: input.workspaceId,
@@ -6164,9 +6584,9 @@ async function verifyGitHubInstallationState(input: {
   state: string | null;
   userId: string;
   workspaceId: string;
-}): Promise<boolean> {
+}): Promise<GitHubInstallationState | null> {
   const [payload, signature, extra] = input.state?.split(".") ?? [];
-  if (!payload || !signature || extra) return false;
+  if (!payload || !signature || extra) return null;
 
   try {
     const key = await importGitHubInstallationStateKey(input.secret, [
@@ -6178,19 +6598,29 @@ async function verifyGitHubInstallationState(input: {
       decodeBase64Url(signature),
       new TextEncoder().encode(payload),
     );
-    if (!valid) return false;
+    if (!valid) return null;
     const parsed = JSON.parse(
       new TextDecoder().decode(decodeBase64Url(payload)),
     ) as Partial<GitHubInstallationState>;
-    return (
+    const state =
       parsed.userId === input.userId &&
       parsed.workspaceId === input.workspaceId &&
       typeof parsed.expiresAt === "number" &&
       parsed.expiresAt >= Date.now() &&
       parsed.expiresAt <= Date.now() + 10 * 60 * 1000
-    );
+        ? {
+            cliSetupSessionId:
+              typeof parsed.cliSetupSessionId === "string"
+                ? parsed.cliSetupSessionId
+                : undefined,
+            expiresAt: parsed.expiresAt,
+            userId: parsed.userId,
+            workspaceId: parsed.workspaceId,
+          }
+        : null;
+    return state;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -6813,11 +7243,7 @@ async function generateChangelogEntryPostImage({
       });
     }
 
-    const imageUrl = publicPostImageUrl(
-      workspaceId,
-      entryId,
-      generated.body,
-    );
+    const imageUrl = publicPostImageUrl(workspaceId, entryId, generated.body);
     await assetStorage.putObject({
       ...generated,
       key: postImageAssetKey(workspaceId, entryId),

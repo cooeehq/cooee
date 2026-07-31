@@ -199,6 +199,24 @@ Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_SLUG`,
 dashboard installation flow then synchronizes only the repositories granted to
 the app.
 
+## Start a hosted changelog from your terminal
+
+Inside a GitHub repository, run:
+
+```bash
+npx cooee-changelog
+```
+
+The command detects the `origin` remote, opens a short-lived setup session at
+`app.cooee.sh`, and waits while you sign in, grant the Cooee GitHub App access,
+and choose your changelog preferences in the browser. It does not read GitHub
+credentials, source code, or diffs. Use `--repo owner/repository` when there is
+no GitHub `origin`, or `--no-open` to copy the setup URL instead.
+
+This launcher is for Cooee's managed service. Self-hosted installations keep
+using the [Railway setup guide](docs/self-hosting.md) and should leave
+`COOEE_CLI_SETUP_ENABLED=false`.
+
 ## Privacy and security
 
 Cooee sends sanitized PR metadata to the configured AI model by default: title,

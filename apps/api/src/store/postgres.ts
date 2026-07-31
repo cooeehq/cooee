@@ -12,7 +12,9 @@ import type {
   AiUsageEvent,
   BillingNotificationType,
   BillingSubscription,
+  CliSetupSession,
   ComplimentaryAccessGrant,
+  CreateCliSetupSessionInput,
   CreateChangelogInput,
   EnsureGitHubInstallationMembershipsInput,
   GitHubInstallation,
@@ -608,6 +610,90 @@ export class PostgresStore implements Store {
       where stripe_subscription_id = ${stripeSubscriptionId}
         and status not in ('canceled', 'incomplete_expired')
     `;
+  }
+
+  async pruneCliSetupSessions(before: string): Promise<void> {
+    await this.sql`
+      delete from cli_setup_sessions
+      where expires_at < ${new Date(before)}
+    `;
+  }
+
+  async createCliSetupSession(
+    input: CreateCliSetupSessionInput,
+  ): Promise<CliSetupSession> {
+    const rows = await this.sql`
+      insert into cli_setup_sessions (
+        id, browser_code_hash, poll_token_hash, target_repository, expires_at
+      ) values (
+        ${crypto.randomUUID()}, ${input.browserCodeHash}, ${input.pollTokenHash},
+        ${input.targetRepository}, ${new Date(input.expiresAt)}
+      )
+      returning *
+    `;
+    return mapCliSetupSession(rows[0]);
+  }
+
+  async getCliSetupSession(id: string): Promise<CliSetupSession | null> {
+    const rows = await this.sql`
+      select * from cli_setup_sessions where id = ${id} limit 1
+    `;
+    return rows[0] ? mapCliSetupSession(rows[0]) : null;
+  }
+
+  async getCliSetupSessionByBrowserCodeHash(
+    browserCodeHash: string,
+  ): Promise<CliSetupSession | null> {
+    const rows = await this.sql`
+      select * from cli_setup_sessions
+      where browser_code_hash = ${browserCodeHash}
+      limit 1
+    `;
+    return rows[0] ? mapCliSetupSession(rows[0]) : null;
+  }
+
+  async claimCliSetupSession(input: {
+    id: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<CliSetupSession | null> {
+    const rows = await this.sql`
+      update cli_setup_sessions
+      set user_id = ${input.userId},
+        workspace_id = ${input.workspaceId},
+        status = case
+          when status = 'pending' then 'awaiting-installation'
+          else status
+        end,
+        updated_at = now()
+      where id = ${input.id}
+        and expires_at > now()
+        and (user_id is null or user_id = ${input.userId})
+      returning *
+    `;
+    return rows[0] ? mapCliSetupSession(rows[0]) : null;
+  }
+
+  async updateCliSetupSession(input: {
+    id: string;
+    status: CliSetupSession["status"];
+    error?: string | null;
+    changelogId?: string | null;
+    changelogUrl?: string | null;
+    completedAt?: string | null;
+  }): Promise<CliSetupSession | null> {
+    const rows = await this.sql`
+      update cli_setup_sessions
+      set status = ${input.status},
+        error = ${input.error ?? null},
+        changelog_id = coalesce(${input.changelogId ?? null}, changelog_id),
+        changelog_url = coalesce(${input.changelogUrl ?? null}, changelog_url),
+        completed_at = coalesce(${input.completedAt ? new Date(input.completedAt) : null}, completed_at),
+        updated_at = now()
+      where id = ${input.id}
+      returning *
+    `;
+    return rows[0] ? mapCliSetupSession(rows[0]) : null;
   }
 
   async listGitHubInstallations(
@@ -1619,6 +1705,23 @@ function mapGitHubInstallation(row: postgres.Row): GitHubInstallation {
     accountLogin: row.account_login,
     accountType: row.account_type,
     suspendedAt: row.suspended_at ? toIso(row.suspended_at) : null,
+  };
+}
+
+function mapCliSetupSession(row: postgres.Row): CliSetupSession {
+  return {
+    id: row.id,
+    browserCodeHash: row.browser_code_hash,
+    pollTokenHash: row.poll_token_hash,
+    targetRepository: row.target_repository,
+    userId: row.user_id ?? null,
+    workspaceId: row.workspace_id ?? null,
+    changelogId: row.changelog_id ?? null,
+    changelogUrl: row.changelog_url ?? null,
+    status: row.status,
+    error: row.error ?? null,
+    expiresAt: toIso(row.expires_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
   };
 }
 
