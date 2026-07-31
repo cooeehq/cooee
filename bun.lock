@@ -93,7 +93,7 @@
     },
     "packages/cli": {
       "name": "cooee-changelog",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "bin": {
         "cooee-changelog": "./dist/index.js",
       },

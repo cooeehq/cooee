@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { execFile, spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
@@ -248,6 +250,19 @@ Options:
   -h, --help               Show this help`);
 }
 
+export function isMainModule(
+  moduleUrl: string,
+  entryPath: string | undefined,
+  resolveEntryPath: (path: string) => string = realpathSync,
+): boolean {
+  if (!entryPath) return false;
+  try {
+    return fileURLToPath(moduleUrl) === resolveEntryPath(entryPath);
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArguments(process.argv.slice(2));
   if (args.help) {
@@ -310,7 +325,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
     const message =
       error instanceof Error ? error.message : "Cooee setup failed.";
