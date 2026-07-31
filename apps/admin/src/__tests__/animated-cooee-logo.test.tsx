@@ -5,16 +5,15 @@ import { PublicChangelogPage } from "../App";
 import { AnimatedCooeeLogo } from "../components/animated-cooee-logo";
 
 describe("AnimatedCooeeLogo", () => {
-  test("uses the website hover and focus animation rules", () => {
+  test("only uses the resting logo area for pointer-triggered animation", () => {
     const html = renderToStaticMarkup(<AnimatedCooeeLogo />);
     const source = readFileSync(
       new URL("../components/animated-cooee-logo.tsx", import.meta.url),
       "utf8",
     );
 
-    expect(html).toContain(
-      ".home-logo-link:hover .animated-cooee-logo .logo-extra-o-1",
-    );
+    expect(html).not.toContain(".home-logo-link:hover");
+    expect(html).not.toContain(".animated-cooee-logo:hover");
     expect(html).toContain(
       ".home-logo-link:focus-visible .animated-cooee-logo .logo-tail",
     );
@@ -52,6 +51,7 @@ describe("AnimatedCooeeLogo", () => {
     );
 
     expect(svg).toContain("pointer-events: none");
+    expect(svg).not.toContain(".home-logo-link:hover");
     expect(svg).toContain('svg[data-play-on-mount="true"] .logo-tail');
     expect(svg).toContain(
       '<rect class="logo-hit-area" x="0" y="0" width="1070" height="240" fill="none" style="pointer-events:all;"/>',

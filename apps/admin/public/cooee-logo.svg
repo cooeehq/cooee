@@ -24,73 +24,61 @@ svg {
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-1,
-.home-logo-link:hover .logo-extra-o-1,
 .home-logo-link:focus-visible .logo-extra-o-1 {
   animation: logo-o-call-1 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-2,
-.home-logo-link:hover .logo-extra-o-2,
 .home-logo-link:focus-visible .logo-extra-o-2 {
   animation: logo-o-call-2 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-3,
-.home-logo-link:hover .logo-extra-o-3,
 .home-logo-link:focus-visible .logo-extra-o-3 {
   animation: logo-o-call-3 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-4,
-.home-logo-link:hover .logo-extra-o-4,
 .home-logo-link:focus-visible .logo-extra-o-4 {
   animation: logo-o-call-4 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-5,
-.home-logo-link:hover .logo-extra-o-5,
 .home-logo-link:focus-visible .logo-extra-o-5 {
   animation: logo-o-call-5 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-mark {
   animation: logo-o-pop 760ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-1 .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-1 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-1 .logo-extra-o-mark {
   animation-delay: 40ms;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-2 .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-2 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-2 .logo-extra-o-mark {
   animation-delay: 145ms;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-3 .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-3 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-3 .logo-extra-o-mark {
   animation-delay: 250ms;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-4 .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-4 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-4 .logo-extra-o-mark {
   animation-delay: 355ms;
 }
 
 svg[data-play-on-mount="true"] .logo-extra-o-5 .logo-extra-o-mark,
-.home-logo-link:hover .logo-extra-o-5 .logo-extra-o-mark,
 .home-logo-link:focus-visible .logo-extra-o-5 .logo-extra-o-mark {
   animation-delay: 460ms;
 }
 
 svg[data-play-on-mount="true"] .logo-tail,
-.home-logo-link:hover .logo-tail,
 .home-logo-link:focus-visible .logo-tail {
   animation: logo-tail-shout 1650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -145,13 +133,10 @@ svg[data-play-on-mount="true"] .logo-tail,
   .logo-extra-o-mark,
   .logo-tail,
   svg[data-play-on-mount="true"] .logo-extra-o,
-  .home-logo-link:hover .logo-extra-o,
   .home-logo-link:focus-visible .logo-extra-o,
   svg[data-play-on-mount="true"] .logo-extra-o-mark,
-  .home-logo-link:hover .logo-extra-o-mark,
   .home-logo-link:focus-visible .logo-extra-o-mark,
   svg[data-play-on-mount="true"] .logo-tail,
-  .home-logo-link:hover .logo-tail,
   .home-logo-link:focus-visible .logo-tail {
     animation: none;
     opacity: 1;
