@@ -344,6 +344,16 @@ export async function promptForSetupConfiguration(
   }
 }
 
+export async function collectInitialSetupConfiguration(
+  json: boolean,
+  prompt: (
+    initial: SetupConfiguration,
+  ) => Promise<SetupConfiguration> = promptForSetupConfiguration,
+): Promise<SetupConfiguration | null> {
+  if (json) return null;
+  return prompt(normalizeSetupConfiguration({}));
+}
+
 export async function offerSkillInstall(
   prompt = promptForSkillInstall,
   install = runSkillInstaller,
@@ -555,6 +565,14 @@ async function main(): Promise<void> {
   if (!args.json) {
     console.log(`Starting Cooee setup for ${repository}.`);
     console.log(
+      "Choose your changelog defaults before connecting GitHub. Cooee will apply them automatically after approval.",
+    );
+  }
+  const terminalConfiguration = await collectInitialSetupConfiguration(
+    args.json,
+  );
+  if (!args.json) {
+    console.log(
       `Open this URL if your browser does not launch:\n${session.setupUrl}`,
     );
   }
@@ -580,13 +598,10 @@ async function main(): Promise<void> {
   });
   if (result.status === "ready-to-complete") {
     if (!args.json) {
-      console.log("GitHub access confirmed. Finish Cooee setup here:");
+      console.log("GitHub access confirmed. Applying your setup choices…");
     }
-    const initialConfiguration = await getSetupConfiguration(session);
     const configuration =
-      args.json || !stdin.isTTY || !stdout.isTTY
-        ? initialConfiguration
-        : await promptForSetupConfiguration(initialConfiguration);
+      terminalConfiguration ?? (await getSetupConfiguration(session));
     result = await saveSetupConfiguration(session, configuration);
   }
   if (args.json) {

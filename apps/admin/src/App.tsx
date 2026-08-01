@@ -5696,7 +5696,7 @@ function CliSetupPage({
   const description = isComplete
     ? `${setup.targetRepository} is connected. You can close this tab.`
     : isConnected
-      ? "Return to your terminal to choose the schedule, writing style, privacy labels, and backfill."
+      ? "GitHub access is confirmed. Keep the command open while it applies the schedule, writing style, privacy labels, and backfill you chose."
       : needsGitHubAccess
         ? (setup.error ??
           `Let Cooee access ${setup.targetRepository}, then GitHub will return you here.`)
@@ -5738,7 +5738,7 @@ function CliSetupPage({
         ) : null}
         {isConnected ? (
           <p className="mt-8 text-sm text-muted-foreground" role="status">
-            Your terminal is waiting for your choices.
+            Your choices are queued. The command will finish automatically.
           </p>
         ) : null}
       </section>

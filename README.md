@@ -207,10 +207,11 @@ Inside a GitHub repository, run:
 npx cooee-changelog
 ```
 
-The command detects the `origin` remote, opens a short-lived pairing page at
-`app.cooee.sh`, and finishes the setup in your terminal: schedule, writing
-style, privacy labels, backfill, and optional images. GitHub sign-in and GitHub
-App permissions still happen in the browser when needed; the command never
+The command detects the `origin` remote and first collects the setup choices in
+your terminal: schedule, writing style, privacy labels, backfill, and optional
+images. It then opens a short-lived pairing page at `app.cooee.sh`; after GitHub
+sign-in and GitHub App approval when needed, it applies those choices
+automatically. The command never
 reads GitHub credentials, source code, or diffs. If Cooee already has access to
 the repository, it connects automatically. Use `--repo owner/repository` when
 there is no GitHub `origin`, or `--no-open` to copy the pairing URL instead.

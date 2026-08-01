@@ -1,9 +1,10 @@
 # Cooee changelog CLI
 
 Run `npx cooee-changelog` inside a GitHub repository to connect it to hosted
-Cooee. It detects the repository, pairs with your signed-in Cooee account in a
-browser, then asks for the schedule, writing style, privacy labels, backfill,
-and image preference directly in the terminal.
+Cooee. It first asks for the schedule, writing style, privacy labels, backfill,
+and image preference directly in the terminal, then pairs with your signed-in
+Cooee account in a browser. Once GitHub is approved, the command applies the
+choices automatically.
 
 GitHub sign-in and GitHub App repository permissions remain browser-only. The
 CLI never reads GitHub credentials, source code, or diffs. When your Cooee
