@@ -335,12 +335,22 @@ export async function promptForSetupConfiguration(
   initial: SetupConfiguration,
 ): Promise<SetupConfiguration> {
   const readline = createInterface({ input: stdin, output: stdout });
-  try {
-    return collectSetupConfiguration(initial, (question) =>
+  return completePromptBeforeClosing(
+    collectSetupConfiguration(initial, (question) =>
       readline.question(question),
-    );
+    ),
+    () => readline.close(),
+  );
+}
+
+export async function completePromptBeforeClosing<T>(
+  pending: Promise<T>,
+  close: () => void,
+): Promise<T> {
+  try {
+    return await pending;
   } finally {
-    readline.close();
+    close();
   }
 }
 
