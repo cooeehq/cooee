@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  collectInitialSetupConfiguration,
   collectSetupConfiguration,
   createSetupSession,
   discoverRepository,
@@ -139,6 +140,27 @@ test("collects the Cooee choices in the terminal", async () => {
     scheduleMonthDay: 1,
     scheduleWeekday: 5,
   });
+});
+
+test("collects terminal choices before opening the browser and skips them for JSON", async () => {
+  const terminalConfiguration = await collectInitialSetupConfiguration(
+    false,
+    async (initial) => ({ ...initial, scheduleFrequency: "weekly" }),
+  );
+  expect(terminalConfiguration).toMatchObject({
+    scheduleFrequency: "weekly",
+  });
+
+  let prompted = false;
+  const jsonConfiguration = await collectInitialSetupConfiguration(
+    true,
+    async () => {
+      prompted = true;
+      return normalizeSetupConfiguration({});
+    },
+  );
+  expect(jsonConfiguration).toBeNull();
+  expect(prompted).toBe(false);
 });
 
 test("reads and saves only session-scoped configuration with the polling token", async () => {

@@ -6,11 +6,11 @@ If this repository is not connected to Cooee yet, start the hosted setup first:
 npx cooee-changelog
 ```
 
-It uses a short browser pairing step for Cooee sign-in and any required GitHub
-App permission, then asks for the schedule, writing style, privacy labels, and
-backfill in the terminal. It offers to install this skill when setup is
-complete. It never reads your GitHub CLI credentials or changes repository
-files.
+It first asks for the schedule, writing style, privacy labels, and backfill in
+the terminal, then uses a short browser pairing step for Cooee sign-in and any
+required GitHub App permission. After approval, it applies those choices
+automatically and offers to install this skill. It never reads your GitHub CLI
+credentials or changes repository files.
 
 The Cooee PR Labels skill helps Codex, Claude, and other skill-compatible
 coding agents classify a pull request before it merges. It reads the active PR
