@@ -1,6 +1,6 @@
 {
   "name": "cooee-changelog",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Connect the current GitHub repository to Cooee.",
   "license": "MIT",
   "type": "module",
@@ -30,7 +30,7 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "bun test src",
     "typecheck": "tsc -p tsconfig.json",
-    "prepack": "bun run build"
+    "prepack": "bun run build && chmod +x dist/index.js"
   },
   "publishConfig": {
     "access": "public"
