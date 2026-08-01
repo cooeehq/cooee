@@ -27,14 +27,25 @@ export type CliArguments = {
   skipSkill: boolean;
 };
 
-type SetupSession = {
+export type SetupSession = {
   expiresAt: string;
   pollToken: string;
   sessionId: string;
   setupUrl: string;
 };
 
-type SetupStatus = {
+export type SetupConfiguration = {
+  aiPersonality: "product-user" | "concise" | "technical";
+  createImagesPerUpdate: boolean;
+  historicalBackfillDays: number;
+  privacyLabels: string;
+  publishTime: string;
+  scheduleFrequency: "daily" | "weekly" | "monthly" | "on-merge";
+  scheduleMonthDay: number;
+  scheduleWeekday: number;
+};
+
+export type SetupStatus = {
   changelogUrl?: string | null;
   dashboardUrl?: string | null;
   error?: string | null;
@@ -167,10 +178,55 @@ export async function pollSetupSession({
       previousStatus = body.status;
       onStatus?.(body);
     }
-    if (body.status === "completed") return body;
+    if (body.status === "completed" || body.status === "ready-to-complete") {
+      return body;
+    }
     await wait(2_000);
   }
   throw new Error("Cooee setup expired. Run the command again to start over.");
+}
+
+export async function getSetupConfiguration(
+  session: SetupSession,
+  request: typeof fetch = fetch,
+): Promise<SetupConfiguration> {
+  const response = await request(
+    `${appUrl}/api/cli/setup-sessions/${encodeURIComponent(session.sessionId)}/configuration`,
+    { headers: { authorization: `Bearer ${session.pollToken}` } },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    configuration?: Partial<SetupConfiguration>;
+    error?: string;
+  };
+  if (!response.ok || !body.configuration) {
+    throw new Error(body.error ?? "Cooee could not load setup choices.");
+  }
+  return normalizeSetupConfiguration(body.configuration);
+}
+
+export async function saveSetupConfiguration(
+  session: SetupSession,
+  configuration: SetupConfiguration,
+  request: typeof fetch = fetch,
+): Promise<SetupStatus> {
+  const response = await request(
+    `${appUrl}/api/cli/setup-sessions/${encodeURIComponent(session.sessionId)}/configuration`,
+    {
+      body: JSON.stringify({ configuration }),
+      headers: {
+        authorization: `Bearer ${session.pollToken}`,
+        "content-type": "application/json",
+      },
+      method: "PUT",
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as SetupStatus & {
+    error?: string;
+  };
+  if (!response.ok || body.status !== "completed") {
+    throw new Error(body.error ?? "Cooee could not save setup choices.");
+  }
+  return body;
 }
 
 export async function openBrowser(url: string): Promise<boolean> {
@@ -194,6 +250,98 @@ export async function openBrowser(url: string): Promise<boolean> {
       resolve(true);
     });
   });
+}
+
+export async function collectSetupConfiguration(
+  initial: SetupConfiguration,
+  ask: (question: string) => Promise<string>,
+): Promise<SetupConfiguration> {
+  const scheduleFrequency = readScheduleFrequency(
+    await ask(
+      `Publish cadence [daily/weekly/monthly/on-merge] (${initial.scheduleFrequency}): `,
+    ),
+    initial.scheduleFrequency,
+  );
+  const scheduleWeekday =
+    scheduleFrequency === "weekly"
+      ? readBoundedNumber(
+          await ask(
+            `Weekday [Sunday=0, Monday=1] (${initial.scheduleWeekday}): `,
+          ),
+          initial.scheduleWeekday,
+          0,
+          6,
+          "Choose a weekday from 0 to 6.",
+        )
+      : initial.scheduleWeekday;
+  const scheduleMonthDay =
+    scheduleFrequency === "monthly"
+      ? readBoundedNumber(
+          await ask(`Day of the month (${initial.scheduleMonthDay}): `),
+          initial.scheduleMonthDay,
+          1,
+          31,
+          "Choose a day from 1 to 31.",
+        )
+      : initial.scheduleMonthDay;
+  const publishTime =
+    scheduleFrequency === "on-merge"
+      ? initial.publishTime
+      : readPublishTime(
+          await ask(
+            `Publishing time, 24-hour local time (${initial.publishTime}): `,
+          ),
+          initial.publishTime,
+        );
+  const aiPersonality = readAiPersonality(
+    await ask(
+      `Writing style [product-user/concise/technical] (${initial.aiPersonality}): `,
+    ),
+    initial.aiPersonality,
+  );
+  const historicalBackfillDays = readBoundedNumber(
+    await ask(
+      `Backfill merged PRs from the last how many days (${initial.historicalBackfillDays}): `,
+    ),
+    initial.historicalBackfillDays,
+    1,
+    365,
+    "Choose a backfill length from 1 to 365 days.",
+  );
+  const privacyLabels = readLabelList(
+    await ask(`Privacy labels, comma-separated (${initial.privacyLabels}): `),
+    initial.privacyLabels,
+  );
+  const createImagesPerUpdate = readYesNo(
+    await ask(
+      `Create an image for each published update? [y/N] (${initial.createImagesPerUpdate ? "Y/n" : "y/N"}): `,
+    ),
+    initial.createImagesPerUpdate,
+  );
+
+  return {
+    aiPersonality,
+    createImagesPerUpdate,
+    historicalBackfillDays,
+    privacyLabels,
+    publishTime,
+    scheduleFrequency,
+    scheduleMonthDay,
+    scheduleWeekday,
+  };
+}
+
+export async function promptForSetupConfiguration(
+  initial: SetupConfiguration,
+): Promise<SetupConfiguration> {
+  const readline = createInterface({ input: stdin, output: stdout });
+  try {
+    return collectSetupConfiguration(initial, (question) =>
+      readline.question(question),
+    );
+  } finally {
+    readline.close();
+  }
 }
 
 export async function offerSkillInstall(
@@ -229,6 +377,133 @@ async function runSkillInstaller(): Promise<boolean> {
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function normalizeSetupConfiguration(
+  input: Partial<SetupConfiguration>,
+): SetupConfiguration {
+  return {
+    aiPersonality: isAiPersonality(input.aiPersonality)
+      ? input.aiPersonality
+      : "product-user",
+    createImagesPerUpdate: input.createImagesPerUpdate === true,
+    historicalBackfillDays: normalizeBoundedNumber(
+      input.historicalBackfillDays,
+      14,
+      1,
+      365,
+    ),
+    privacyLabels:
+      typeof input.privacyLabels === "string" && input.privacyLabels.trim()
+        ? input.privacyLabels.trim()
+        : "cooee:skip, cooee:internal, security",
+    publishTime:
+      typeof input.publishTime === "string" && isPublishTime(input.publishTime)
+        ? input.publishTime
+        : "09:00",
+    scheduleFrequency: isScheduleFrequency(input.scheduleFrequency)
+      ? input.scheduleFrequency
+      : "daily",
+    scheduleMonthDay: normalizeBoundedNumber(input.scheduleMonthDay, 1, 1, 31),
+    scheduleWeekday: normalizeBoundedNumber(input.scheduleWeekday, 1, 0, 6),
+  };
+}
+
+function readScheduleFrequency(
+  value: string,
+  fallback: SetupConfiguration["scheduleFrequency"],
+): SetupConfiguration["scheduleFrequency"] {
+  const candidate = value.trim().toLowerCase();
+  if (!candidate) return fallback;
+  if (isScheduleFrequency(candidate)) return candidate;
+  throw new Error("Choose daily, weekly, monthly, or on-merge.");
+}
+
+function readAiPersonality(
+  value: string,
+  fallback: SetupConfiguration["aiPersonality"],
+): SetupConfiguration["aiPersonality"] {
+  const candidate = value.trim().toLowerCase();
+  if (!candidate) return fallback;
+  if (isAiPersonality(candidate)) return candidate;
+  throw new Error("Choose product-user, concise, or technical.");
+}
+
+function readBoundedNumber(
+  value: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  error: string,
+): number {
+  if (!value.trim()) return fallback;
+  const candidate = Number(value);
+  if (
+    !Number.isInteger(candidate) ||
+    candidate < minimum ||
+    candidate > maximum
+  ) {
+    throw new Error(error);
+  }
+  return candidate;
+}
+
+function readPublishTime(value: string, fallback: string): string {
+  if (!value.trim()) return fallback;
+  if (!isPublishTime(value.trim())) {
+    throw new Error("Use a 24-hour time such as 09:00.");
+  }
+  return value.trim();
+}
+
+function readLabelList(value: string, fallback: string): string {
+  if (!value.trim()) return fallback;
+  const labels = value
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean);
+  if (labels.length === 0) {
+    throw new Error("Enter at least one privacy label.");
+  }
+  return Array.from(new Set(labels)).join(", ");
+}
+
+function readYesNo(value: string, fallback: boolean): boolean {
+  const candidate = value.trim().toLowerCase();
+  if (!candidate) return fallback;
+  if (["y", "yes"].includes(candidate)) return true;
+  if (["n", "no"].includes(candidate)) return false;
+  throw new Error("Answer yes or no.");
+}
+
+function normalizeBoundedNumber(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+    ? value
+    : fallback;
+}
+
+function isScheduleFrequency(
+  value: unknown,
+): value is SetupConfiguration["scheduleFrequency"] {
+  return ["daily", "weekly", "monthly", "on-merge"].includes(value as string);
+}
+
+function isAiPersonality(
+  value: unknown,
+): value is SetupConfiguration["aiPersonality"] {
+  return ["product-user", "concise", "technical"].includes(value as string);
+}
+
+function isPublishTime(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
 function isGitHubRepository(value: string): boolean {
@@ -285,11 +560,16 @@ async function main(): Promise<void> {
   }
   if (!args.noOpen) await openBrowser(session.setupUrl);
 
-  const result = await pollSetupSession({
+  let result = await pollSetupSession({
     session,
     onStatus: args.json
       ? undefined
       : (status) => {
+          if (status.status === "awaiting-installation") {
+            console.log(
+              "Waiting for GitHub App access. Complete the browser step, then return here.",
+            );
+          }
           if (status.status === "repository-not-granted") {
             console.log(
               status.error ??
@@ -298,6 +578,17 @@ async function main(): Promise<void> {
           }
         },
   });
+  if (result.status === "ready-to-complete") {
+    if (!args.json) {
+      console.log("GitHub access confirmed. Finish Cooee setup here:");
+    }
+    const initialConfiguration = await getSetupConfiguration(session);
+    const configuration =
+      args.json || !stdin.isTTY || !stdout.isTTY
+        ? initialConfiguration
+        : await promptForSetupConfiguration(initialConfiguration);
+    result = await saveSetupConfiguration(session, configuration);
+  }
   if (args.json) {
     console.log(
       JSON.stringify({

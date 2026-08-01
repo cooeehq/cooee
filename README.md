@@ -207,11 +207,13 @@ Inside a GitHub repository, run:
 npx cooee-changelog
 ```
 
-The command detects the `origin` remote, opens a short-lived setup session at
-`app.cooee.sh`, and waits while you sign in, grant the Cooee GitHub App access,
-and choose your changelog preferences in the browser. It does not read GitHub
-credentials, source code, or diffs. Use `--repo owner/repository` when there is
-no GitHub `origin`, or `--no-open` to copy the setup URL instead.
+The command detects the `origin` remote, opens a short-lived pairing page at
+`app.cooee.sh`, and finishes the setup in your terminal: schedule, writing
+style, privacy labels, backfill, and optional images. GitHub sign-in and GitHub
+App permissions still happen in the browser when needed; the command never
+reads GitHub credentials, source code, or diffs. If Cooee already has access to
+the repository, it connects automatically. Use `--repo owner/repository` when
+there is no GitHub `origin`, or `--no-open` to copy the pairing URL instead.
 
 This launcher is for Cooee's managed service. Self-hosted installations keep
 using the [Railway setup guide](docs/self-hosting.md) and should leave

@@ -1464,31 +1464,88 @@ export function App({
   }, [isCliSetupRoute, isSignedIn]);
 
   useEffect(() => {
-    const nextAction = getCliSetupNextAction({
-      isSignedIn,
-      onboardingCompleted: settings.onboardingCompleted,
-      status: cliSetup?.status ?? null,
-      workspaceSettingsLoaded,
-    });
-    if (!nextAction) {
+    if (!isCliSetupRoute || !isSignedIn || cliSetup?.status !== "pending") {
       return;
     }
-    if (nextAction === "complete") {
-      void completeCliSetupSession().catch(() => {
-        toast.error("Repository connected, but Cooee could not confirm setup.", {
-          description: "Return to the terminal after refreshing this page.",
-        });
+
+    let isCurrent = true;
+    const expiresAt = cliSetup.expiresAt;
+    void fetch("/api/cli/setup-sessions/connect", { method: "POST" })
+      .then(async (response) => {
+        const body = (await response
+          .json()
+          .catch(() => ({}))) as Partial<CliSetupBrowserState> & {
+          error?: string;
+        };
+        if (!response.ok || !body.status || !body.targetRepository) {
+          throw new Error(body.error ?? "Cooee could not check GitHub access.");
+        }
+        if (isCurrent) {
+          setCliSetup({
+            error: body.error ?? null,
+            expiresAt: body.expiresAt ?? expiresAt,
+            status: body.status,
+            targetRepository: body.targetRepository,
+          });
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setCliSetup((current) =>
+            current
+              ? {
+                  ...current,
+                  error: "Cooee could not check existing GitHub access.",
+                  status: "repository-not-granted",
+                }
+              : current,
+          );
+        }
       });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [cliSetup, isCliSetupRoute, isSignedIn]);
+
+  useEffect(() => {
+    if (
+      !isCliSetupRoute ||
+      !cliSetup ||
+      cliSetup.status !== "ready-to-complete"
+    ) {
       return;
     }
-    setOnboardingStep(1);
-    setIsOnboardingOpen(true);
-  }, [
-    cliSetup?.status,
-    isSignedIn,
-    settings.onboardingCompleted,
-    workspaceSettingsLoaded,
-  ]);
+
+    let isCurrent = true;
+    const refresh = async () => {
+      const response = await fetch("/api/cli/setup-sessions/browser");
+      const body = (await response
+        .json()
+        .catch(() => ({}))) as Partial<CliSetupBrowserState> & {
+        error?: string;
+      };
+      if (
+        isCurrent &&
+        response.ok &&
+        body.status &&
+        body.targetRepository &&
+        body.expiresAt
+      ) {
+        setCliSetup({
+          error: body.error ?? null,
+          expiresAt: body.expiresAt,
+          status: body.status,
+          targetRepository: body.targetRepository,
+        });
+      }
+    };
+    const interval = window.setInterval(() => void refresh(), 1_500);
+    return () => {
+      isCurrent = false;
+      window.clearInterval(interval);
+    };
+  }, [cliSetup, isCliSetupRoute]);
 
   useEffect(() => {
     if (
@@ -3446,33 +3503,10 @@ export function App({
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
     setIsOnboardingOpen(false);
-    const onboardingSaved = await persistOnboardingCompleted();
-    if (isCliSetupRoute) {
-      try {
-        if (!onboardingSaved) {
-          throw new Error("Cooee could not save onboarding.");
-        }
-        await completeCliSetupSession();
-      } catch {
-        toast.error("Repository connected, but Cooee could not confirm setup.", {
-          description: "Return to the terminal after refreshing this page.",
-        });
-      }
-    }
+    await persistOnboardingCompleted();
     toast.success("Setup saved.", {
       description: "Your onboarding preferences were saved.",
     });
-  }
-
-  async function completeCliSetupSession(): Promise<void> {
-    const response = await fetch("/api/cli/setup-sessions/complete", {
-      method: "POST",
-    });
-    if (!response.ok) {
-      throw new Error("Cooee could not finish the paired setup.");
-    }
-    setCliSetup(null);
-    window.history.replaceState({}, "", "/changelog");
   }
 
   if (surface === "publicChangelog") {
@@ -3519,6 +3553,19 @@ export function App({
     })
   ) {
     return <AdminSessionLoadingPage />;
+  }
+
+  if (isCliSetupRoute && !cliSetup) {
+    return <AdminSessionLoadingPage />;
+  }
+
+  if (isCliSetupRoute && cliSetup) {
+    return (
+      <>
+        <CliSetupPage onReconnect={connectRepository} setup={cliSetup} />
+        <Toaster theme={theme} />
+      </>
+    );
   }
 
   return (
@@ -3729,12 +3776,6 @@ export function App({
             </header>
 
             <div className="app-view px-4 py-7 sm:px-6 sm:py-9 lg:px-8 xl:px-10 xl:py-10">
-              {cliSetup ? (
-                <CliSetupBanner
-                  onReconnect={connectRepository}
-                  setup={cliSetup}
-                />
-              ) : null}
               {visibleActiveView === "dashboard" ? (
                 <DashboardView
                   categoryDefinitions={settings.categoryDefinitions}
@@ -5631,45 +5672,77 @@ function AdminSessionLoadingPage() {
   );
 }
 
-function CliSetupBanner({
+function CliSetupPage({
   onReconnect,
   setup,
 }: {
   onReconnect: () => void;
   setup: CliSetupBrowserState;
 }) {
-  const message =
-    setup.status === "ready-to-complete"
-      ? "Repository connected. Finish the remaining setup choices."
-      : setup.status === "repository-not-granted"
+  const isConnected = setup.status === "ready-to-complete";
+  const isComplete = setup.status === "completed";
+  const needsGitHubAccess = setup.status === "repository-not-granted";
+  const isExpired = setup.status === "expired";
+
+  const title = isComplete
+    ? "Cooee is ready"
+    : isConnected
+      ? "Repository connected"
+      : needsGitHubAccess
+        ? "One GitHub approval needed"
+        : isExpired
+          ? "This setup link has expired"
+          : "Checking GitHub access";
+  const description = isComplete
+    ? `${setup.targetRepository} is connected. You can close this tab.`
+    : isConnected
+      ? "Return to your terminal to choose the schedule, writing style, privacy labels, and backfill."
+      : needsGitHubAccess
         ? (setup.error ??
-          "Grant the Cooee GitHub App access to this repository.")
-        : setup.status === "expired"
-          ? (setup.error ?? "This setup link has expired.")
-          : "Continue the GitHub App setup in this browser.";
+          `Let Cooee access ${setup.targetRepository}, then GitHub will return you here.`)
+        : isExpired
+          ? (setup.error ?? "Run cooee-changelog again to start a new setup.")
+          : "If Cooee already has access, this takes a moment. Otherwise, GitHub will ask for approval next.";
 
   return (
-    <div
-      className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/35 px-4 py-3 text-sm"
-      role="status"
-    >
-      <p className="min-w-0 text-muted-foreground">
-        <span className="font-medium text-foreground">
-          {setup.targetRepository}
-        </span>
-        {" — "}
-        {message}
-      </p>
-      {["pending", "awaiting-installation", "repository-not-granted"].includes(
-        setup.status,
-      ) ? (
-        <Button onClick={onReconnect} size="sm" variant="outline">
-          {setup.status === "repository-not-granted"
-            ? "Review GitHub access"
-            : "Connect GitHub App"}
-        </Button>
-      ) : null}
-    </div>
+    <main className="home-page flex min-h-screen items-center justify-center bg-background p-5 text-foreground sm:p-8">
+      <section className="w-full max-w-xl rounded-[1.75rem] border border-border/70 bg-card p-7 shadow-[0_18px_48px_-36px_rgb(0_0_0_/_0.42)] sm:p-9">
+        <AnimatedCooeeLogo className="brand-logo h-7 w-auto" playOnMount />
+        <div className="mt-12 flex flex-col gap-4">
+          <div className="flex size-11 items-center justify-center rounded-full bg-muted text-foreground">
+            {isComplete || isConnected ? (
+              <CheckCircle2Icon aria-hidden className="size-5" />
+            ) : needsGitHubAccess ? (
+              <GithubIcon aria-hidden className="size-5" />
+            ) : (
+              <LoaderCircleIcon aria-hidden className="size-5 animate-spin" />
+            )}
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">
+              {setup.targetRepository}
+            </p>
+            <h1 className="mt-2 text-balance text-3xl font-semibold tracking-tight">
+              {title}
+            </h1>
+            <p className="mt-3 max-w-lg text-pretty text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
+          </div>
+        </div>
+        {needsGitHubAccess ? (
+          <Button className="mt-8" onClick={onReconnect}>
+            <GithubIcon data-icon="inline-start" aria-hidden />
+            Review GitHub access
+          </Button>
+        ) : null}
+        {isConnected ? (
+          <p className="mt-8 text-sm text-muted-foreground" role="status">
+            Your terminal is waiting for your choices.
+          </p>
+        ) : null}
+      </section>
+    </main>
   );
 }
 
@@ -11843,27 +11916,6 @@ function getCliSetupRoute(): boolean {
 
 export function isCliSetupPath(pathname: string): boolean {
   return pathname.replace(/\/$/, "") === "/app/setup";
-}
-
-export function getCliSetupNextAction({
-  isSignedIn,
-  onboardingCompleted,
-  status,
-  workspaceSettingsLoaded,
-}: {
-  isSignedIn: boolean;
-  onboardingCompleted: boolean;
-  status: string | null;
-  workspaceSettingsLoaded: boolean;
-}): "complete" | "onboard" | null {
-  if (
-    status !== "ready-to-complete" ||
-    !isSignedIn ||
-    !workspaceSettingsLoaded
-  ) {
-    return null;
-  }
-  return onboardingCompleted ? "complete" : "onboard";
 }
 
 export function shouldShowOnboardingAfterSettingsLoaded({

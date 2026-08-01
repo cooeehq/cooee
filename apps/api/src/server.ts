@@ -377,6 +377,129 @@ export function createApp(options: AppOptions = {}): App {
           }
 
           if (
+            (request.method === "GET" || request.method === "PUT") &&
+            /^\/api\/cli\/setup-sessions\/[^/]+\/configuration$/.test(
+              url.pathname,
+            )
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            const sessionId = url.pathname.split("/").at(-2) ?? "";
+            const pollToken = readBearerToken(
+              request.headers.get("authorization"),
+            );
+            const session = pollToken
+              ? await store.getCliSetupSession(sessionId)
+              : null;
+            if (
+              !session ||
+              !(await secretsMatch(session.pollTokenHash, pollToken))
+            ) {
+              return json(
+                { error: "Setup session not found." },
+                { status: 404 },
+              );
+            }
+            if (isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired.", status: "expired" },
+                { status: 410 },
+              );
+            }
+            if (
+              session.status !== "ready-to-complete" ||
+              !session.workspaceId ||
+              !session.changelogId
+            ) {
+              return json(
+                { error: "Finish GitHub setup before configuring Cooee." },
+                { status: 409 },
+              );
+            }
+
+            const changelog = await store.getChangelogById(session.changelogId);
+            if (!changelog || changelog.workspaceId !== session.workspaceId) {
+              return json(
+                { error: "The connected changelog is unavailable." },
+                { status: 409 },
+              );
+            }
+            const repositories = await store.listRepositories(
+              session.workspaceId,
+            );
+            const workspaceSettings = normalizeWorkspaceSettings(
+              await store.getWorkspaceSettings(session.workspaceId),
+              getDefaultAppName(repositories),
+            );
+
+            if (request.method === "GET") {
+              return json({
+                configuration: serializeCliSetupConfiguration({
+                  changelog,
+                  workspaceSettings,
+                }),
+                repository: session.targetRepository,
+                status: session.status,
+              });
+            }
+
+            const body = (await request.json().catch(() => ({}))) as {
+              configuration?: unknown;
+            };
+            const configured = normalizeChangelogSettings({
+              appUrl: config.appUrl,
+              changelog,
+              input: body.configuration,
+              slug: changelog.slug,
+              workspaceSettings,
+            });
+            const savedWorkspaceSettings = await store.updateWorkspaceSettings(
+              session.workspaceId,
+              {
+                ...configured.workspaceSettings,
+                onboardingCompleted: true,
+              },
+            );
+            const updated = await store.updateChangelogSettings({
+              workspaceId: session.workspaceId,
+              changelogId: changelog.id,
+              slug: configured.slug,
+              name: configured.name,
+              description: configured.description,
+              publicUrl: configured.publicUrl,
+              customDomain: configured.customDomain,
+              customHostnameId: changelog.customHostnameId,
+              customHostnameStatus: changelog.customHostnameStatus,
+              customHostnameSslStatus: changelog.customHostnameSslStatus,
+              settings: configured.settings,
+            });
+            if (!updated) {
+              return json(
+                { error: "The connected changelog is unavailable." },
+                { status: 409 },
+              );
+            }
+            const completed = await store.updateCliSetupSession({
+              id: session.id,
+              status: "completed",
+              changelogId: updated.id,
+              changelogUrl: updated.publicUrl,
+              completedAt: new Date().toISOString(),
+            });
+            return json({
+              ...serializeCliSetupPollSession(completed ?? session),
+              configuration: serializeCliSetupConfiguration({
+                changelog: updated,
+                workspaceSettings: savedWorkspaceSettings,
+              }),
+            });
+          }
+
+          if (
             request.method === "POST" &&
             url.pathname === "/api/cli/setup-sessions/claim"
           ) {
@@ -483,6 +606,7 @@ export function createApp(options: AppOptions = {}): App {
             url.pathname.startsWith("/api/admin/") ||
             url.pathname === "/api/github/callback" ||
             url.pathname === "/api/onboarding/github" ||
+            url.pathname === "/api/cli/setup-sessions/connect" ||
             url.pathname === "/api/cli/setup-sessions/install" ||
             url.pathname === "/api/cli/setup-sessions/complete";
           let authenticatedEmail: string | null = null;
@@ -581,6 +705,52 @@ export function createApp(options: AppOptions = {}): App {
             }
             url.searchParams.set("workspaceId", membership.workspaceId);
             authenticatedWorkspaceRole = membership.role;
+          }
+
+          if (
+            request.method === "POST" &&
+            url.pathname === "/api/cli/setup-sessions/connect"
+          ) {
+            if (!config.cliSetupEnabled) {
+              return json(
+                { error: "Hosted CLI setup is unavailable." },
+                { status: 404 },
+              );
+            }
+            if (!authenticatedUserId) {
+              return json(
+                { error: "Sign in before connecting the GitHub App." },
+                { status: 401 },
+              );
+            }
+            const session = await getCliSetupSessionFromCookie(request, store);
+            if (!session || isCliSetupSessionExpired(session)) {
+              return json(
+                { error: "Setup session expired or is invalid." },
+                { status: 410 },
+              );
+            }
+            const workspaceId = getWorkspaceId(url);
+            const claimed = await store.claimCliSetupSession({
+              id: session.id,
+              userId: authenticatedUserId,
+              workspaceId,
+            });
+            if (!claimed) {
+              return json(
+                { error: "This setup session belongs to another account." },
+                { status: 403 },
+              );
+            }
+            await connectCliSetupSessionRepository({
+              appUrl: config.appUrl,
+              sessionId: claimed.id,
+              store,
+              userId: authenticatedUserId,
+              workspaceId,
+            });
+            const updated = await store.getCliSetupSession(claimed.id);
+            return json(serializeCliSetupBrowserSession(updated ?? claimed));
           }
 
           if (
@@ -6486,6 +6656,28 @@ function serializeCliSetupPollSession(session: CliSetupSession) {
         expiresAt: session.expiresAt,
         status: session.status,
       };
+}
+
+function serializeCliSetupConfiguration({
+  changelog,
+  workspaceSettings,
+}: {
+  changelog: StoredChangelog;
+  workspaceSettings: WorkspaceSettings;
+}) {
+  return {
+    aiPersonality: workspaceSettings.aiPersonality,
+    createImagesPerUpdate: changelog.settings.postImageSettings.enabled,
+    historicalBackfillDays: workspaceSettings.historicalBackfillDays,
+    privacyLabels: labelListToString([
+      ...changelog.settings.skipLabels,
+      ...changelog.settings.sensitiveLabels,
+    ]),
+    publishTime: changelog.settings.publishTime,
+    scheduleFrequency: changelog.settings.scheduleFrequency,
+    scheduleMonthDay: changelog.settings.scheduleMonthDay ?? 1,
+    scheduleWeekday: changelog.settings.scheduleWeekday ?? 1,
+  };
 }
 
 async function connectCliSetupSessionRepository({
