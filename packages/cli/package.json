@@ -20,7 +20,7 @@
     "release-notes"
   ],
   "bin": {
-    "cooee-changelog": "./dist/index.js"
+    "cooee-changelog": "dist/index.js"
   },
   "files": [
     "dist",
