@@ -48,9 +48,9 @@ describe("launch security boundaries", () => {
         "x-real-ip",
       ),
     ).toBe("unknown");
-    expect(getTrustedClientIp(new Request("https://cooee.test"), undefined)).toBe(
-      "shared",
-    );
+    expect(
+      getTrustedClientIp(new Request("https://cooee.test"), undefined),
+    ).toBe("shared");
   });
 
   test("production cannot silently use memory storage or unauthenticated admin routes", async () => {
@@ -737,16 +737,23 @@ describe("launch security boundaries", () => {
 
   test("serializes monthly reservations and rejects stale billing events", async () => {
     const store = InMemoryStore.seeded();
+    const now = new Date();
+    const periodStartedAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    ).toISOString();
+    const periodEndedAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    ).toISOString();
     const period = {
-      startedAt: "2026-07-01T00:00:00.000Z",
-      endedAt: "2026-08-01T00:00:00.000Z",
+      startedAt: periodStartedAt,
+      endedAt: periodEndedAt,
     };
     store.processedPullRequestUsage.push({
       workspaceId: "ws_acme",
       repositoryId: "repo_acme",
       pullRequestNumber: 1,
-      periodStartedAt: period.startedAt,
-      processedAt: "2026-07-10T00:00:00.000Z",
+      periodStartedAt,
+      processedAt: now.toISOString(),
     });
     const reservations = await Promise.all([
       store.reserveProcessedPullRequests({

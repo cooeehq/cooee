@@ -4,7 +4,6 @@ import {
   App,
   PublicChangelogPage,
   getAdminDocumentTitle,
-  getCliSetupNextAction,
   isCliSetupPath,
   getNextScheduledRunLabel,
   getLocalPublicChangelogUrl,
@@ -25,25 +24,6 @@ describe("Cooee admin app", () => {
     expect(getSurfaceFromPathname("/application")).toBe("notFound");
     expect(getSurfaceFromPathname("/docs")).toBe("notFound");
     expect(getSurfaceFromPathname("/privacy")).toBe("notFound");
-  });
-
-  test("finishes paired setup immediately for an existing workspace", () => {
-    expect(
-      getCliSetupNextAction({
-        isSignedIn: true,
-        onboardingCompleted: true,
-        status: "ready-to-complete",
-        workspaceSettingsLoaded: true,
-      }),
-    ).toBe("complete");
-    expect(
-      getCliSetupNextAction({
-        isSignedIn: true,
-        onboardingCompleted: false,
-        status: "ready-to-complete",
-        workspaceSettingsLoaded: true,
-      }),
-    ).toBe("onboard");
   });
 
   test("renders the self-hosted sign-in surface without marketing navigation", () => {

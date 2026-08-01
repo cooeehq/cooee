@@ -143,6 +143,123 @@ test("does not rate limit authenticated CLI polling while setup is in progress",
   }
 });
 
+test("reuses existing GitHub access and lets the paired CLI save its choices", async () => {
+  const store = InMemoryStore.seeded();
+  store.memberships.push({
+    id: "membership_owner",
+    role: "owner",
+    userId: "user_1",
+    workspaceId: "ws_acme",
+  });
+  const auth: AuthRuntime = {
+    handler: async () => new Response(null, { status: 404 }),
+    getSession: async () => ({
+      user: { id: "user_1", name: "Mona", email: "mona@example.com" },
+    }),
+    listAccessibleGitHubInstallationIds: async () => [12345],
+    canAccessGitHubInstallation: async () => true,
+  };
+  const app = createApp({
+    auth,
+    env: {
+      APP_URL: "https://app.cooee.sh",
+      COOEE_CLI_SETUP_ENABLED: "true",
+      NODE_ENV: "production",
+    },
+    store,
+  });
+  const created = await app.fetch(
+    new Request("https://app.cooee.sh/api/cli/setup-sessions", {
+      body: JSON.stringify({ repository: "acme/app" }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    }),
+  );
+  const setup = (await created.json()) as {
+    pollToken: string;
+    sessionId: string;
+    setupUrl: string;
+  };
+  const code = new URL(setup.setupUrl).searchParams.get("code") ?? "";
+  const claim = await app.fetch(
+    new Request("https://app.cooee.sh/api/cli/setup-sessions/claim", {
+      body: JSON.stringify({ code }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    }),
+  );
+  const cookie = claim.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+  const connected = await app.fetch(
+    new Request("https://app.cooee.sh/api/cli/setup-sessions/connect", {
+      headers: { cookie },
+      method: "POST",
+    }),
+  );
+  expect(await connected.json()).toMatchObject({
+    status: "ready-to-complete",
+    targetRepository: "acme/app",
+  });
+
+  const configurationUrl = `https://app.cooee.sh/api/cli/setup-sessions/${setup.sessionId}/configuration`;
+  const wrongToken = await app.fetch(
+    new Request(configurationUrl, {
+      headers: { authorization: "Bearer wrong-token" },
+    }),
+  );
+  expect(wrongToken.status).toBe(404);
+
+  const configuration = await app.fetch(
+    new Request(configurationUrl, {
+      headers: { authorization: `Bearer ${setup.pollToken}` },
+    }),
+  );
+  expect(await configuration.json()).toMatchObject({
+    configuration: {
+      historicalBackfillDays: 14,
+      scheduleFrequency: "daily",
+    },
+    status: "ready-to-complete",
+  });
+
+  const saved = await app.fetch(
+    new Request(configurationUrl, {
+      body: JSON.stringify({
+        configuration: {
+          aiPersonality: "technical",
+          createImagesPerUpdate: true,
+          historicalBackfillDays: 30,
+          privacyLabels: "cooee:skip, cooee:private",
+          publishTime: "16:30",
+          scheduleFrequency: "weekly",
+          scheduleMonthDay: 1,
+          scheduleWeekday: 5,
+        },
+      }),
+      headers: {
+        authorization: `Bearer ${setup.pollToken}`,
+        "content-type": "application/json",
+      },
+      method: "PUT",
+    }),
+  );
+  expect(await saved.json()).toMatchObject({
+    repository: "acme/app",
+    status: "completed",
+  });
+  expect(store.workspaceSettings.get("ws_acme")).toMatchObject({
+    aiPersonality: "technical",
+    historicalBackfillDays: 30,
+    onboardingCompleted: true,
+  });
+  expect(store.changelogs[0]?.settings).toMatchObject({
+    publishTime: "16:30",
+    scheduleFrequency: "weekly",
+    scheduleWeekday: 5,
+    skipLabels: ["cooee:skip", "cooee:private"],
+  });
+});
+
 test("binds the GitHub App callback to the paired setup session", async () => {
   const store = new InMemoryStore();
   const auth: AuthRuntime = {
