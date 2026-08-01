@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  completePromptBeforeClosing,
   collectInitialSetupConfiguration,
   collectSetupConfiguration,
   createSetupSession,
@@ -46,6 +47,23 @@ test("runs when npm invokes the bin through a symlink", () => {
       () => "/tmp/cooee-changelog/dist/index.js",
     ),
   ).toBe(true);
+});
+
+test("keeps the prompt open until all answers finish", async () => {
+  let closeCount = 0;
+  let finishPrompt: ((value: string) => void) | undefined;
+  const pending = new Promise<string>((resolve) => {
+    finishPrompt = resolve;
+  });
+  const result = completePromptBeforeClosing(pending, () => {
+    closeCount += 1;
+  });
+
+  await Promise.resolve();
+  expect(closeCount).toBe(0);
+  finishPrompt?.("weekly");
+  expect(await result).toBe("weekly");
+  expect(closeCount).toBe(1);
 });
 
 test("discovers the repository without requiring GitHub CLI credentials", async () => {
