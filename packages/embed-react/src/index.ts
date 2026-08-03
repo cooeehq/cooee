@@ -3,6 +3,7 @@ export type {
   CooeeUpdatesAppearance,
   CooeeUpdatesLabels,
   CooeeUpdatesProps,
+  CooeeUpdatesTheme,
 } from "./CooeeUpdates.js";
 export type {
   ChangelogCategory,

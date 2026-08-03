@@ -8,7 +8,13 @@ export default defineConfig({
       fileName: "index",
     },
     rollupOptions: {
-      external: ["react", "react-dom", "react/jsx-runtime", "marked"],
+      external: [
+        "@base-ui/react/popover",
+        "react",
+        "react-dom",
+        "react/jsx-runtime",
+        "marked",
+      ],
     },
     sourcemap: true,
     target: "es2022",

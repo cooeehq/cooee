@@ -1,10 +1,17 @@
 import * as React from "react";
+import { Popover } from "@base-ui/react/popover";
 import type { PublicFeedEntry } from "./feed-types.js";
 import { renderMarkdown } from "./markdown.js";
 
+const defaultTriggerSelector = "[data-cooee-updates-trigger]";
+const useIsomorphicLayoutEffect =
+  typeof document === "undefined" ? React.useEffect : React.useLayoutEffect;
+
+export type CooeeUpdatesTheme = "light" | "dark" | "system" | "shadcn";
+
 export type CooeeUpdatesAppearance = {
-  /** Follows the OS preference when omitted. */
-  colorScheme?: "light" | "dark" | "system";
+  /** @deprecated Use the top-level `theme` prop. */
+  colorScheme?: Exclude<CooeeUpdatesTheme, "shadcn">;
   /** Background for the trigger. Choose a colour with enough contrast against accentTextColor. */
   accentColor?: string;
   /** Text colour for the trigger. */
@@ -26,9 +33,17 @@ export type CooeeUpdatesLabels = {
 
 export type CooeeUpdatesProps = {
   feedUrl: string;
+  /** Visual theme. `shadcn` consumes the host project's semantic CSS variables. */
+  theme?: CooeeUpdatesTheme;
   maxItems?: number;
   buttonLabel?: string;
   className?: string;
+  /**
+   * CSS selector for an existing element that should open the popup. Defaults
+   * to `[data-cooee-updates-trigger]`. Pass `null` to always render Cooee's
+   * built-in button.
+   */
+  triggerSelector?: string | null;
   appearance?: CooeeUpdatesAppearance;
   labels?: Partial<CooeeUpdatesLabels>;
   /** CSP nonce applied to the component's style block. */
@@ -65,9 +80,11 @@ const defaultLabels: CooeeUpdatesLabels = {
 
 export function CooeeUpdates({
   feedUrl,
+  theme: themeProp,
   maxItems = 5,
   buttonLabel = "Latest updates",
   className,
+  triggerSelector = defaultTriggerSelector,
   appearance,
   labels: labelOverrides,
   styleNonce,
@@ -75,19 +92,121 @@ export function CooeeUpdates({
   const [open, setOpen] = React.useState(false);
   const [retryCount, setRetryCount] = React.useState(0);
   const [unreadCount, setUnreadCount] = React.useState(0);
-  const [state, setState] = React.useState<LoadState>({ status: "loading", entries: [] });
-  const rootRef = React.useRef<HTMLDivElement>(null);
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [state, setState] = React.useState<LoadState>({
+    status: "loading",
+    entries: [],
+  });
+  const [externalTrigger, setExternalTrigger] =
+    React.useState<HTMLElement | null>(null);
+  const triggerRef = React.useRef<HTMLElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
   const reactId = React.useId();
   const instanceId = `cooee-${reactId.replace(/[^A-Za-z0-9_-]/g, "")}`;
   const panelId = `${instanceId}-panel`;
+  const positionerId = `${instanceId}-positioner`;
   const headingId = `${instanceId}-heading`;
   const labels = React.useMemo(
     () => ({ ...defaultLabels, ...labelOverrides }),
     [labelOverrides],
   );
   const itemLimit = normalizeMaxItems(maxItems);
+
+  useIsomorphicLayoutEffect(() => {
+    if (typeof document === "undefined" || triggerSelector === null) {
+      setExternalTrigger(null);
+      return;
+    }
+
+    const resolvedTriggerSelector = triggerSelector;
+    let observer: MutationObserver | undefined;
+
+    function findTrigger() {
+      try {
+        const nextTrigger = document.querySelector<HTMLElement>(
+          resolvedTriggerSelector,
+        );
+        setExternalTrigger((current) =>
+          current === nextTrigger ? current : nextTrigger,
+        );
+      } catch {
+        setExternalTrigger(null);
+      }
+    }
+
+    findTrigger();
+
+    if (typeof MutationObserver !== "undefined") {
+      observer = new MutationObserver(findTrigger);
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    }
+
+    return () => observer?.disconnect();
+  }, [triggerSelector]);
+
+  React.useEffect(() => {
+    if (!externalTrigger) {
+      return;
+    }
+
+    const trigger = externalTrigger;
+    triggerRef.current = trigger;
+    const originalAttributes = captureTriggerAttributes(trigger);
+    const needsButtonSemantics = !isInteractiveElement(trigger);
+
+    if (needsButtonSemantics) {
+      trigger.setAttribute("role", "button");
+      trigger.tabIndex = 0;
+    }
+
+    function toggle(event: Event) {
+      if (trigger.matches("a[href]")) {
+        event.preventDefault();
+      }
+      setOpen((current) => !current);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        !needsButtonSemantics ||
+        (event.key !== "Enter" && event.key !== " ")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      setOpen((current) => !current);
+    }
+
+    trigger.addEventListener("click", toggle);
+    trigger.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      trigger.removeEventListener("click", toggle);
+      trigger.removeEventListener("keydown", handleKeyDown);
+      restoreTriggerAttributes(trigger, originalAttributes);
+      if (triggerRef.current === trigger) {
+        triggerRef.current = null;
+      }
+    };
+  }, [externalTrigger]);
+
+  React.useEffect(() => {
+    if (!externalTrigger) {
+      return;
+    }
+
+    externalTrigger.setAttribute("aria-controls", panelId);
+    externalTrigger.setAttribute("aria-expanded", String(open));
+    externalTrigger.setAttribute("aria-haspopup", "dialog");
+    externalTrigger.setAttribute(
+      "data-cooee-unread-count",
+      String(unreadCount),
+    );
+    externalTrigger.toggleAttribute("data-cooee-has-unread", unreadCount > 0);
+  }, [externalTrigger, open, panelId, unreadCount]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -141,123 +260,110 @@ export function CooeeUpdates({
   }, [feedUrl, itemLimit, retryCount]);
 
   React.useEffect(() => {
-    if (open) {
-      closeRef.current?.focus();
-    }
-  }, [open]);
-
-  React.useEffect(() => {
     if (open && state.status === "success") {
       markSeen(feedUrl, state.latestPublishedAt);
       setUnreadCount(0);
     }
   }, [feedUrl, open, state]);
 
-  React.useEffect(() => {
-    if (!open || typeof document === "undefined") {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setOpen(false);
-        setTimeout(() => {
-          if (rootRef.current?.contains(document.activeElement)) {
-            triggerRef.current?.focus();
-          }
-        }, 0);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  function closePanel(restoreFocus: boolean) {
-    setOpen(false);
-    if (restoreFocus) {
-      triggerRef.current?.focus();
-    }
-  }
-
-  function toggleOpen() {
-    const nextOpen = !open;
-    setOpen(nextOpen);
-  }
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (open && event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closePanel(true);
-    }
-  }
-
-  const scheme = appearance?.colorScheme ?? "system";
-  const instanceStyles = `#${instanceId} {
-    --cooee-accent: ${normalizeCssColor(appearance?.accentColor, "#292524")};
-    --cooee-accent-text: ${normalizeCssColor(appearance?.accentTextColor, "#fafaf9")};
-    --cooee-radius: ${normalizeCornerRadius(appearance?.cornerRadius)}px;
-  }`;
+  const theme = themeProp ?? appearance?.colorScheme ?? "system";
+  const scheme = theme === "shadcn" ? "inherit" : theme;
+  const instanceStyles = buildInstanceStyles(
+    instanceId,
+    positionerId,
+    appearance,
+  );
 
   return (
-    <div
-      className={["cooee-updates", className].filter(Boolean).join(" ")}
-      data-color-scheme={scheme}
-      id={instanceId}
-      onKeyDown={handleKeyDown}
-      ref={rootRef}
-    >
-      <style data-cooee-styles nonce={styleNonce}>{`${embedStyles}\n${instanceStyles}`}</style>
-      <button
-        aria-controls={panelId}
-        aria-expanded={open}
-        className="cooee-updates__trigger"
-        onClick={toggleOpen}
-        ref={triggerRef}
-        type="button"
+    <Popover.Root onOpenChange={setOpen} open={open}>
+      <div
+        className={["cooee-updates", className].filter(Boolean).join(" ")}
+        data-color-scheme={scheme}
+        data-cooee-theme={theme}
+        data-external-trigger={externalTrigger ? "" : undefined}
+        id={instanceId}
       >
-        <span>{buttonLabel}</span>
-        {unreadCount > 0 ? (
-          <>
-            <span aria-hidden="true" className="cooee-updates__count">{unreadCount}</span>
-            <span className="cooee-updates__sr-only">{labels.unread(unreadCount)}</span>
-          </>
-        ) : null}
-      </button>
-
-      <section
-        aria-labelledby={headingId}
-        className="cooee-updates__panel"
-        hidden={!open}
-        id={panelId}
-        role="region"
-      >
-        <header className="cooee-updates__header">
-          <h2 dir="auto" id={headingId}>
-            {state.status === "success" ? state.changelogName : buttonLabel}
-          </h2>
+        <style
+          data-cooee-styles
+          nonce={styleNonce}
+        >{`${embedStyles}\n${instanceStyles}`}</style>
+        {!externalTrigger ? (
           <button
-            aria-label={labels.close}
-            className="cooee-updates__close"
-            onClick={() => closePanel(true)}
-            ref={closeRef}
+            aria-controls={panelId}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            className="cooee-updates__trigger"
+            onClick={() => setOpen((current) => !current)}
+            ref={(element: HTMLButtonElement | null) => {
+              triggerRef.current = element;
+            }}
             type="button"
           >
-            <span aria-hidden="true">×</span>
+            <span>{buttonLabel}</span>
+            {unreadCount > 0 ? (
+              <>
+                <span aria-hidden="true" className="cooee-updates__count">
+                  {unreadCount}
+                </span>
+                <span className="cooee-updates__sr-only">
+                  {labels.unread(unreadCount)}
+                </span>
+              </>
+            ) : null}
           </button>
-        </header>
+        ) : null}
+      </div>
 
-        <UpdatesPanel
-          labels={labels}
-          onRetry={() => {
-            closeRef.current?.focus();
-            setRetryCount((count) => count + 1);
+      <Popover.Portal keepMounted>
+        <Popover.Positioner
+          align="end"
+          anchor={externalTrigger ?? triggerRef}
+          className="cooee-updates cooee-updates__positioner"
+          collisionAvoidance={{
+            side: "flip",
+            align: "shift",
+            fallbackAxisSide: "start",
           }}
-          state={state}
-        />
-      </section>
-    </div>
+          collisionPadding={12}
+          data-color-scheme={scheme}
+          data-cooee-theme={theme}
+          id={positionerId}
+          positionMethod="fixed"
+          side="bottom"
+          sideOffset={8}
+        >
+          <Popover.Popup
+            aria-labelledby={headingId}
+            className="cooee-updates__panel"
+            finalFocus={() => triggerRef.current}
+            id={panelId}
+            initialFocus={closeRef}
+          >
+            <header className="cooee-updates__header">
+              <Popover.Title dir="auto" id={headingId}>
+                {state.status === "success" ? state.changelogName : buttonLabel}
+              </Popover.Title>
+              <Popover.Close
+                aria-label={labels.close}
+                className="cooee-updates__close"
+                ref={closeRef}
+              >
+                <span aria-hidden="true">×</span>
+              </Popover.Close>
+            </header>
+
+            <UpdatesPanel
+              labels={labels}
+              onRetry={() => {
+                closeRef.current?.focus();
+                setRetryCount((count) => count + 1);
+              }}
+              state={state}
+            />
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -274,7 +380,11 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
     return (
       <div aria-live="assertive" className="cooee-updates__status" role="alert">
         <p>{labels.loadError}</p>
-        <button className="cooee-updates__retry" onClick={onRetry} type="button">
+        <button
+          className="cooee-updates__retry"
+          onClick={onRetry}
+          type="button"
+        >
           {labels.retry}
         </button>
       </div>
@@ -308,10 +418,14 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
                 src={entry.imageUrl}
               />
             ) : null}
-            <h3 className="cooee-updates__entry-title" dir="auto">{entry.title}</h3>
+            <h3 className="cooee-updates__entry-title" dir="auto">
+              {entry.title}
+            </h3>
             <div
               className="cooee-updates__entry-summary"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(entry.summary) }}
+              dangerouslySetInnerHTML={{
+                __html: renderMarkdown(entry.summary),
+              }}
               dir="auto"
             />
             {entry.items && entry.items.length > 0 ? (
@@ -322,14 +436,18 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
                     key={`${entry.id}:${item.category}:${item.title}:${index}`}
                   >
                     <div className="cooee-updates__item-header">
-                      <h4 className="cooee-updates__item-title" dir="auto">{item.title}</h4>
+                      <h4 className="cooee-updates__item-title" dir="auto">
+                        {item.title}
+                      </h4>
                       <span className="cooee-updates__item-badge" dir="auto">
                         {formatCategory(item.category)}
                       </span>
                     </div>
                     <div
                       className="cooee-updates__item-summary"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(item.summary) }}
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(item.summary),
+                      }}
                       dir="auto"
                     />
                   </section>
@@ -351,16 +469,26 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
   );
 }
 
-function parsePublicFeed(value: unknown, feedUrl: string): {
+function parsePublicFeed(
+  value: unknown,
+  feedUrl: string,
+): {
   changelogName: string;
   publicUrl: string | null;
   entries: PublicFeedEntry[];
 } {
-  if (!isRecord(value) || !isRecord(value.changelog) || typeof value.changelog.name !== "string") {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.changelog) ||
+    typeof value.changelog.name !== "string"
+  ) {
     throw new Error("Invalid updates feed");
   }
 
-  if (!Array.isArray(value.entries) || !value.entries.every(isPublicFeedEntry)) {
+  if (
+    !Array.isArray(value.entries) ||
+    !value.entries.every(isPublicFeedEntry)
+  ) {
     throw new Error("Invalid updates feed");
   }
 
@@ -394,25 +522,29 @@ function resolveSafeHttpUrl(value: string, baseUrl: string): string | null {
 
 function isPublicFeedEntry(value: unknown): value is PublicFeedEntry {
   if (
-    !isRecord(value)
-    || typeof value.id !== "string"
-    || typeof value.title !== "string"
-    || typeof value.summary !== "string"
-    || typeof value.category !== "string"
-    || typeof value.publishedAt !== "string"
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.title !== "string" ||
+    typeof value.summary !== "string" ||
+    typeof value.category !== "string" ||
+    typeof value.publishedAt !== "string"
   ) {
     return false;
   }
 
-  return value.items === undefined
-    || (Array.isArray(value.items) && value.items.every(isChangeItem));
+  return (
+    value.items === undefined ||
+    (Array.isArray(value.items) && value.items.every(isChangeItem))
+  );
 }
 
 function isChangeItem(value: unknown): boolean {
-  return isRecord(value)
-    && typeof value.title === "string"
-    && typeof value.summary === "string"
-    && typeof value.category === "string";
+  return (
+    isRecord(value) &&
+    typeof value.title === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.category === "string"
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -420,7 +552,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isAbortError(error: unknown): boolean {
-  return (typeof DOMException !== "undefined" && error instanceof DOMException)
+  return typeof DOMException !== "undefined" && error instanceof DOMException
     ? error.name === "AbortError"
     : isRecord(error) && error.name === "AbortError";
 }
@@ -433,16 +565,41 @@ function normalizeMaxItems(value: number): number {
   return Math.min(100, Math.max(0, Math.floor(value)));
 }
 
-function normalizeCornerRadius(value: number | undefined): number {
+function buildInstanceStyles(
+  instanceId: string,
+  positionerId: string,
+  appearance: CooeeUpdatesAppearance | undefined,
+): string {
+  const declarations: string[] = [];
+  const accentColor = normalizeCssColor(appearance?.accentColor);
+  const accentTextColor = normalizeCssColor(appearance?.accentTextColor);
+  const cornerRadius = normalizeCornerRadius(appearance?.cornerRadius);
+
+  if (accentColor) {
+    declarations.push(`--cooee-accent: ${accentColor};`);
+  }
+  if (accentTextColor) {
+    declarations.push(`--cooee-accent-text: ${accentTextColor};`);
+  }
+  if (cornerRadius !== null) {
+    declarations.push(`--cooee-radius: ${cornerRadius}px;`);
+  }
+
+  return declarations.length > 0
+    ? `#${instanceId}, #${positionerId} {\n    ${declarations.join("\n    ")}\n  }`
+    : "";
+}
+
+function normalizeCornerRadius(value: number | undefined): number | null {
   if (value === undefined || !Number.isFinite(value)) {
-    return 10;
+    return null;
   }
 
   return Math.min(24, Math.max(0, value));
 }
 
-function normalizeCssColor(value: string | undefined, fallback: string): string {
-  if (!value) return fallback;
+function normalizeCssColor(value: string | undefined): string | null {
+  if (!value) return null;
   if (
     typeof CSS !== "undefined" &&
     typeof CSS.supports === "function" &&
@@ -450,7 +607,7 @@ function normalizeCssColor(value: string | undefined, fallback: string): string 
   ) {
     return value;
   }
-  return /^#[0-9a-f]{3,8}$/i.test(value.trim()) ? value.trim() : fallback;
+  return /^#[0-9a-f]{3,8}$/i.test(value.trim()) ? value.trim() : null;
 }
 
 function countUnread(feedUrl: string, entries: PublicFeedEntry[]): number {
@@ -492,6 +649,50 @@ function formatCategory(category: string): string {
     : "Update";
 }
 
+type TriggerAttributeSnapshot = Record<
+  | "aria-controls"
+  | "aria-expanded"
+  | "aria-haspopup"
+  | "data-cooee-has-unread"
+  | "data-cooee-unread-count"
+  | "role"
+  | "tabindex",
+  string | null
+>;
+
+function captureTriggerAttributes(
+  element: HTMLElement,
+): TriggerAttributeSnapshot {
+  return {
+    "aria-controls": element.getAttribute("aria-controls"),
+    "aria-expanded": element.getAttribute("aria-expanded"),
+    "aria-haspopup": element.getAttribute("aria-haspopup"),
+    "data-cooee-has-unread": element.getAttribute("data-cooee-has-unread"),
+    "data-cooee-unread-count": element.getAttribute("data-cooee-unread-count"),
+    role: element.getAttribute("role"),
+    tabindex: element.getAttribute("tabindex"),
+  };
+}
+
+function restoreTriggerAttributes(
+  element: HTMLElement,
+  attributes: TriggerAttributeSnapshot,
+) {
+  for (const [name, value] of Object.entries(attributes)) {
+    if (value === null) {
+      element.removeAttribute(name);
+    } else {
+      element.setAttribute(name, value);
+    }
+  }
+}
+
+function isInteractiveElement(element: HTMLElement): boolean {
+  return element.matches(
+    "button, input, select, textarea, summary, a[href], [contenteditable]:not([contenteditable='false']), [role='button']",
+  );
+}
+
 const embedStyles = `
 .cooee-updates {
   --cooee-accent: #292524;
@@ -503,12 +704,28 @@ const embedStyles = `
   --cooee-muted: #57534e;
   --cooee-border: #d6d3d1;
   --cooee-border-subtle: #e7e5e4;
+  --cooee-ring: #2563eb;
   --cooee-shadow: rgba(28, 25, 23, 0.16);
   color-scheme: light;
   display: inline-block;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   max-inline-size: 100%;
   position: relative;
+}
+.cooee-updates[data-cooee-theme="shadcn"] {
+  --cooee-accent: var(--color-primary, hsl(var(--primary)));
+  --cooee-accent-text: var(--color-primary-foreground, hsl(var(--primary-foreground)));
+  --cooee-radius: var(--radius-lg, var(--radius, 10px));
+  --cooee-surface: var(--color-popover, hsl(var(--popover)));
+  --cooee-surface-subtle: var(--color-muted, hsl(var(--muted)));
+  --cooee-text: var(--color-popover-foreground, hsl(var(--popover-foreground)));
+  --cooee-muted: var(--color-muted-foreground, hsl(var(--muted-foreground)));
+  --cooee-border: var(--color-border, hsl(var(--border)));
+  --cooee-border-subtle: color-mix(in oklab, var(--cooee-border) 70%, transparent);
+  --cooee-ring: var(--color-ring, hsl(var(--ring)));
+  --cooee-shadow: color-mix(in oklab, var(--cooee-text) 16%, transparent);
+  color-scheme: inherit;
+  font-family: var(--font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
 .cooee-updates[data-color-scheme="dark"] {
   --cooee-surface: #1c1917;
@@ -556,7 +773,7 @@ const embedStyles = `
 .cooee-updates__close:focus-visible,
 .cooee-updates__retry:focus-visible,
 .cooee-updates a:focus-visible {
-  outline: 3px solid #2563eb;
+  outline: 3px solid var(--cooee-ring);
   outline-offset: 2px;
 }
 .cooee-updates__count {
@@ -578,18 +795,18 @@ const embedStyles = `
   box-shadow: 0 18px 48px var(--cooee-shadow);
   color: var(--cooee-text);
   inline-size: 360px;
-  inset-block-start: calc(100% + 8px);
-  inset-inline-end: 0;
-  max-block-size: min(70vh, 640px);
-  max-inline-size: calc(100vw - 24px);
+  max-block-size: min(70dvh, 640px, var(--available-height));
+  max-inline-size: min(360px, var(--available-width));
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px;
-  position: absolute;
   text-align: start;
+}
+.cooee-updates__positioner {
+  inline-size: auto;
+  max-inline-size: calc(100vw - 24px);
   z-index: 2147483000;
 }
-.cooee-updates__panel[hidden] { display: none; }
 .cooee-updates__header {
   align-items: center;
   border-block-end: 1px solid var(--cooee-border-subtle);
@@ -778,11 +995,8 @@ const embedStyles = `
 }
 @media (max-width: 480px) {
   .cooee-updates__panel {
-    inset: 12px;
-    inline-size: auto;
-    max-block-size: calc(100dvh - 24px);
-    max-inline-size: none;
-    position: fixed;
+    inline-size: min(360px, calc(100vw - 24px));
+    max-block-size: min(calc(100dvh - 24px), var(--available-height));
   }
 }
 @media (prefers-reduced-motion: reduce) {
