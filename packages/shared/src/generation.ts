@@ -101,6 +101,7 @@ export function buildPromptPayload(
       buildAudienceInstruction(options),
       'Use a product-descriptive voice by default. Describe what the product, feature, or workflow does without repeatedly addressing the reader. Use second-person wording such as "you" and "your" only when direct address makes the meaning clearer or is needed to explain an action. Do not substitute third-person audience labels such as users, merchants, customers, store owners, or teams for unnecessary second-person wording unless the change genuinely affects a different group than the reader.',
       "Create one item per unique customer-facing change. Do not combine unrelated changes into one title or summary. Use only the configured category ids.",
+      buildDefaultCategoryInstruction(categories),
       "Treat dismissed learnings as repository-specific publishing guidance. When a current pull request matches a dismissed learning and is not customer-facing, omit it from items and include its number in skippedPullRequestNumbers. Treat relevant learnings as corrections that similar pull requests should remain eligible. Treat merged learnings as guidance to combine directly related pull requests. Every current pull request must appear in exactly one item or in skippedPullRequestNumbers.",
       buildPersonalityInstruction(options),
       buildCategoryOverrideInstruction(pullRequests, categories),
@@ -122,6 +123,18 @@ export function buildPromptPayload(
       return sanitized;
     }),
   };
+}
+
+export function buildDefaultCategoryInstruction(
+  categories: ChangelogCategoryDefinition[],
+): string {
+  const categoryIds = new Set(categories.map((category) => category.id));
+
+  if (!categoryIds.has("feature") || !categoryIds.has("improvement")) {
+    return "";
+  }
+
+  return "Use feature only for a genuinely new user capability or a significant expansion of existing functionality that materially changes what people can do. Use improvement for incremental additions, refinements, or better quality, usability, speed, and reliability in an existing capability or workflow. A small new option, control, view, or step within an existing workflow is an improvement, not a feature. When feature and improvement are both plausible, choose improvement.";
 }
 
 function buildCategoryOverrideInstruction(

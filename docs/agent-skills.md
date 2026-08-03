@@ -9,8 +9,11 @@ npx cooee-changelog
 It first asks for the schedule, writing style, privacy labels, and backfill in
 the terminal, then uses a short browser pairing step for Cooee sign-in and any
 required GitHub App permission. After approval, it applies those choices
-automatically and offers to install this skill. It never reads your GitHub CLI
-credentials or changes repository files.
+automatically and offers to install this skill. It then asks whether to add a
+managed Cooee instruction block to the current repository's `AGENTS.md`, when
+the checkout matches the connected repository. It never reads your GitHub CLI
+credentials, and it changes `AGENTS.md` only after confirmation without
+committing or pushing it.
 
 The Cooee PR Labels skill helps Codex, Claude, and other skill-compatible
 coding agents classify a pull request before it merges. It reads the active PR
@@ -44,6 +47,11 @@ For obvious customer-facing work, the skill adds one of Cooee’s default
 category overrides: `cooee:feature`, `cooee:improvement`, `cooee:fix`, or
 `cooee:maintenance`. Cooee reads that label from the merged PR and uses it as
 the changelog category.
+
+`cooee:feature` is reserved for a genuinely new capability or a significant
+expansion of existing functionality. Incremental additions and refinements to
+existing workflows belong under `cooee:improvement`; when the distinction is
+unclear, prefer Improvement.
 
 The default privacy labels are `cooee:skip` and `cooee:internal`. The skill asks
 before applying either so the developer decides whether Cooee should exclude the
