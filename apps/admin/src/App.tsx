@@ -5681,7 +5681,12 @@ export function PublicChangelogPage({
           ) : null}
 
           {showBranding ? (
-            <footer className="mt-8 flex justify-center border-t border-border pt-6">
+            <footer
+              className={cn(
+                "flex justify-center border-t border-border pt-6",
+                hasLoadMoreControl ? "mt-5" : "mt-8",
+              )}
+            >
               <a
                 className="inline-flex items-center gap-2 text-sm text-muted-foreground no-underline"
                 href="https://cooee.sh"
@@ -5911,7 +5916,9 @@ function PublicChangelogEntry({
   const categories = getPublicEntryCategoryIds(entry).join(" ");
   const summaryMarkup = renderMarkdown(entry.summary);
   const [isCalloutExpanded, setIsCalloutExpanded] = useState(false);
-  const [isCalloutExpandable, setIsCalloutExpandable] = useState(false);
+  const [isCalloutExpandable, setIsCalloutExpandable] = useState<
+    boolean | null
+  >(null);
   const calloutSummaryRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -5930,8 +5937,14 @@ function PublicChangelogEntry({
         return;
       }
 
-      const canExpand =
-        summary.scrollHeight > getPublicCalloutCollapsedHeight() + 1;
+      const lineHeight = Number.parseFloat(
+        window.getComputedStyle(summary).lineHeight,
+      );
+      const canExpand = hasMeaningfulCalloutOverflow(
+        summary.scrollHeight,
+        getPublicCalloutCollapsedHeight(),
+        lineHeight,
+      );
       setIsCalloutExpandable(canExpand);
       if (!canExpand) {
         setIsCalloutExpanded(false);
@@ -6009,7 +6022,9 @@ function PublicChangelogEntry({
         <div
           className={cn(
             "markdown-summary max-w-[68ch] text-balance text-sm leading-relaxed text-foreground/80 [&_a]:font-semibold [&_a]:text-primary [&_ol]:mt-3 [&_p]:m-0 [&_p]:text-balance [&_p+p]:mt-3 [&_ul]:mt-3",
-            !isCalloutExpanded && "max-h-[7.5rem] overflow-hidden",
+            isCalloutExpandable !== false &&
+              !isCalloutExpanded &&
+              "max-h-[7.5rem] overflow-hidden",
           )}
           dangerouslySetInnerHTML={{ __html: summaryMarkup }}
           ref={calloutSummaryRef}
@@ -6020,7 +6035,7 @@ function PublicChangelogEntry({
             isCalloutExpanded ? "Collapse callout text" : "Expand callout text"
           }
           className="-ml-1 mt-3 text-muted-foreground"
-          hidden={!isCalloutExpandable}
+          hidden={isCalloutExpandable !== true}
           onClick={() => setIsCalloutExpanded((current) => !current)}
           size="icon-xs"
           type="button"
@@ -6188,6 +6203,17 @@ function getPublicCalloutCollapsedHeight(): number {
     window.getComputedStyle(document.documentElement).fontSize,
   );
   return Number.isFinite(rootFontSize) ? rootFontSize * 7.5 : 120;
+}
+
+export function hasMeaningfulCalloutOverflow(
+  scrollHeight: number,
+  collapsedHeight: number,
+  lineHeight: number,
+): boolean {
+  const tolerance = Number.isFinite(lineHeight)
+    ? Math.min(lineHeight / 2, 12)
+    : 8;
+  return scrollHeight > collapsedHeight + tolerance;
 }
 
 function PublicChangelogEntryItems({
@@ -13354,8 +13380,10 @@ export function buildPublicChangelogPreview({
             max-height: 120px;
             overflow: hidden;
           }
+          article[data-display-type="callout"][data-callout-expandable="false"] .markdown-summary,
           article[data-display-type="callout"][data-callout-expanded="true"] .markdown-summary {
             max-height: none;
+            overflow: visible;
           }
           .callout-expand[hidden] {
             display: none;
@@ -14694,8 +14722,20 @@ function renderPublicPaginationScript(
         function updateCalloutExpandButton(button) {
           const article = button.closest('article[data-display-type="callout"]');
           const summary = article ? article.querySelector(".markdown-summary") : null;
-          const canExpand = Boolean(summary && summary.scrollHeight > calloutCollapsedHeight + 1);
+          const lineHeight = summary
+            ? Number.parseFloat(window.getComputedStyle(summary).lineHeight)
+            : Number.NaN;
+          const overflowTolerance = Number.isFinite(lineHeight)
+            ? Math.min(lineHeight / 2, 12)
+            : 8;
+          const canExpand = Boolean(
+            summary && summary.scrollHeight > calloutCollapsedHeight + overflowTolerance,
+          );
           button.hidden = !canExpand;
+
+          if (article) {
+            article.dataset.calloutExpandable = String(canExpand);
+          }
 
           if (!article || canExpand) {
             return;

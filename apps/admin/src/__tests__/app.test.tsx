@@ -11,6 +11,7 @@ import {
   getApiUnavailableMessage,
   getPublicChangelogResourceUrls,
   getSurfaceFromPathname,
+  hasMeaningfulCalloutOverflow,
   shouldShowAdminSessionLoadingPage,
 } from "../App";
 
@@ -205,9 +206,16 @@ describe("Cooee admin app", () => {
     expect(html).toContain("Load more...");
     expect(html).toContain("data-public-load-more-control");
     expect(html).not.toContain("data-public-load-more-sentinel");
+    expect(html).toContain("border-border pt-6 mt-5");
     expect(html.indexOf("Load more...")).toBeLessThan(
       html.indexOf("Powered by"),
     );
+  });
+
+  test("only expands callouts for meaningful visible overflow", () => {
+    expect(hasMeaningfulCalloutOverflow(124, 120, 24)).toBe(false);
+    expect(hasMeaningfulCalloutOverflow(132.1, 120, 24)).toBe(true);
+    expect(hasMeaningfulCalloutOverflow(129, 120, Number.NaN)).toBe(true);
   });
 
   test("links article-style updates to their public article URL", () => {
