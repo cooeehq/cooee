@@ -2,6 +2,8 @@
 
 import { execFile, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { lstat, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -18,6 +20,16 @@ const skillInstallCommand = [
   "cooee-pr-labels",
   "-g",
 ];
+const cooeeAgentsInstructionsStart = "<!-- cooee-pr-labels:start -->";
+const cooeeAgentsInstructionsEnd = "<!-- cooee-pr-labels:end -->";
+
+export const cooeeAgentsInstructions = `${cooeeAgentsInstructionsStart}
+## Cooee pull-request labels
+
+When creating, updating, reviewing, or preparing a pull request, use
+\`$cooee-pr-labels\` after the PR exists. Apply the appropriate Cooee category
+before handing the PR back to the user.
+${cooeeAgentsInstructionsEnd}`;
 
 export type CliArguments = {
   help: boolean;
@@ -115,6 +127,99 @@ export async function discoverRepository(
   } catch {
     return null;
   }
+}
+
+export async function discoverLocalRepositoryRoot(
+  repository: string,
+  run = execFileAsync,
+): Promise<string | null> {
+  try {
+    const { stdout: rootOutput } = await run("git", [
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    const root = rootOutput.trim();
+    if (!root) return null;
+    const { stdout: remote } = await run("git", [
+      "-C",
+      root,
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const localRepository = parseGitHubRemote(remote);
+    return localRepository?.toLowerCase() === repository.toLowerCase()
+      ? root
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function upsertCooeeAgentsInstructions(content: string): string {
+  const start = content.indexOf(cooeeAgentsInstructionsStart);
+  const end = content.indexOf(cooeeAgentsInstructionsEnd);
+  const hasStart = start >= 0;
+  const hasEnd = end >= 0;
+  const duplicateStart =
+    hasStart && content.indexOf(cooeeAgentsInstructionsStart, start + 1) >= 0;
+  const duplicateEnd =
+    hasEnd && content.indexOf(cooeeAgentsInstructionsEnd, end + 1) >= 0;
+
+  if (
+    hasStart !== hasEnd ||
+    (hasStart && end < start) ||
+    duplicateStart ||
+    duplicateEnd
+  ) {
+    throw new Error(
+      "AGENTS.md contains an incomplete or duplicate Cooee managed block.",
+    );
+  }
+
+  if (hasStart) {
+    const blockEnd = end + cooeeAgentsInstructionsEnd.length;
+    return `${content.slice(0, start)}${cooeeAgentsInstructions}${content.slice(blockEnd)}`;
+  }
+
+  const separator =
+    content.length === 0
+      ? ""
+      : content.endsWith("\n\n")
+        ? ""
+        : content.endsWith("\n")
+          ? "\n"
+          : "\n\n";
+  return `${content}${separator}${cooeeAgentsInstructions}\n`;
+}
+
+export type AgentsInstructionsUpdate = "created" | "updated" | "unchanged";
+
+export async function writeCooeeAgentsInstructions(
+  repositoryRoot: string,
+): Promise<AgentsInstructionsUpdate> {
+  const agentsPath = join(repositoryRoot, "AGENTS.md");
+  let content = "";
+  let exists = false;
+
+  try {
+    const stats = await lstat(agentsPath);
+    if (stats.isSymbolicLink()) {
+      throw new Error("Refusing to update a symlinked AGENTS.md file.");
+    }
+    if (!stats.isFile()) {
+      throw new Error("AGENTS.md exists but is not a regular file.");
+    }
+    content = await readFile(agentsPath, "utf8");
+    exists = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const updated = upsertCooeeAgentsInstructions(content);
+  if (updated === content) return "unchanged";
+  await writeFile(agentsPath, updated, "utf8");
+  return exists ? "updated" : "created";
 }
 
 export async function createSetupSession(
@@ -385,6 +490,20 @@ async function promptForSkillInstall(): Promise<boolean> {
   }
 }
 
+async function promptForAgentsInstructions(
+  agentsPath: string,
+): Promise<boolean> {
+  const readline = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await readline.question(
+      `Add Cooee PR-label instructions to ${agentsPath}? Compatible coding agents will classify and label PRs after creating them. [y/N] `,
+    );
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
+}
+
 async function runSkillInstaller(): Promise<boolean> {
   return new Promise((resolve) => {
     const child = spawn(skillInstallCommand[0], skillInstallCommand.slice(1), {
@@ -541,7 +660,7 @@ Options:
   --repo owner/repository  Use a repository instead of the Git origin remote
   --no-open                Print the browser URL without opening it
   --json                   Print the final result as JSON
-  --skip-skill             Do not offer the optional PR-labeling skill
+  --skip-skill             Do not offer optional coding-agent PR labeling
   -h, --help               Show this help`);
 }
 
@@ -615,11 +734,22 @@ async function main(): Promise<void> {
     result = await saveSetupConfiguration(session, configuration);
   }
   if (args.json) {
+    const localRepositoryRoot = !args.skipSkill
+      ? await discoverLocalRepositoryRoot(repository)
+      : null;
     console.log(
       JSON.stringify({
         ...result,
         ...(!args.skipSkill
-          ? { optionalSkillInstallCommand: skillInstallCommand.join(" ") }
+          ? {
+              optionalAgentsInstructions: {
+                content: cooeeAgentsInstructions,
+                path: localRepositoryRoot
+                  ? join(localRepositoryRoot, "AGENTS.md")
+                  : null,
+              },
+              optionalSkillInstallCommand: skillInstallCommand.join(" "),
+            }
           : {}),
       }),
     );
@@ -636,8 +766,36 @@ async function main(): Promise<void> {
         `Optional PR-labeling skill: ${skillInstallCommand.join(" ")}`,
       );
     }
+    const localRepositoryRoot = await discoverLocalRepositoryRoot(repository);
+    if (localRepositoryRoot) {
+      const agentsPath = join(localRepositoryRoot, "AGENTS.md");
+      if (await promptForAgentsInstructions(agentsPath)) {
+        try {
+          const update =
+            await writeCooeeAgentsInstructions(localRepositoryRoot);
+          console.log(
+            update === "unchanged"
+              ? `${agentsPath} already contains the current Cooee instructions.`
+              : `${update === "created" ? "Created" : "Updated"} ${agentsPath}. Review and commit it when ready.`,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "The file could not be updated.";
+          console.log(`Could not update ${agentsPath}: ${message}`);
+        }
+      }
+    } else {
+      console.log(
+        `The connected repository is not the current local checkout. Add this block to its AGENTS.md:\n\n${cooeeAgentsInstructions}`,
+      );
+    }
   } else if (!args.skipSkill && !args.json) {
     console.log(`Optional PR-labeling skill: ${skillInstallCommand.join(" ")}`);
+    console.log(
+      `Optional AGENTS.md instructions:\n\n${cooeeAgentsInstructions}`,
+    );
   }
 }
 

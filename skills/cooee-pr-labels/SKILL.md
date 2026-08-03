@@ -28,12 +28,12 @@ needed.
 
 3. Classify a clear customer-facing change and apply the label immediately:
 
-   | Change                                                            | Label               |
-   | ----------------------------------------------------------------- | ------------------- |
-   | New user capability                                               | `cooee:feature`     |
-   | Better existing customer workflow, quality, speed, or reliability | `cooee:improvement` |
-   | Fixes a customer-visible regression or incorrect behaviour        | `cooee:fix`         |
-   | Customer-relevant upkeep with no feature or regression fix        | `cooee:maintenance` |
+   | Change                                                                           | Label               |
+   | -------------------------------------------------------------------------------- | ------------------- |
+   | Genuinely new user capability or significant expansion of existing functionality | `cooee:feature`     |
+   | Incremental addition or refinement to an existing capability or workflow         | `cooee:improvement` |
+   | Fixes a customer-visible regression or incorrect behaviour                       | `cooee:fix`         |
+   | Customer-relevant upkeep with no feature or regression fix                       | `cooee:maintenance` |
 
    ```bash
    bash scripts/cooee-pr-label.sh apply cooee:fix
@@ -64,6 +64,11 @@ needed.
 - Use `cooee:fix`, not `cooee:bugfix`: category overrides must match a Cooee
   category ID. The default IDs are `feature`, `improvement`, `fix`, and
   `maintenance`.
+- Reserve `cooee:feature` for new work or a significant addition that
+  materially changes what users can do. Small options, controls, views, steps,
+  UX refinements, and quality, speed, or reliability gains in existing logic
+  are `cooee:improvement`. When both labels seem plausible, choose
+  `cooee:improvement`.
 - Never apply a category label to a PR marked `cooee:skip`, `cooee:internal`, or
   a configured privacy label without the user explicitly deciding it should be
   publishable.

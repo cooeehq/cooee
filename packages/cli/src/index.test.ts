@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  cooeeAgentsInstructions,
   completePromptBeforeClosing,
   collectInitialSetupConfiguration,
   collectSetupConfiguration,
   createSetupSession,
+  discoverLocalRepositoryRoot,
   discoverRepository,
   getSetupConfiguration,
   isMainModule,
@@ -12,6 +17,8 @@ import {
   parseGitHubRemote,
   pollSetupSession,
   saveSetupConfiguration,
+  upsertCooeeAgentsInstructions,
+  writeCooeeAgentsInstructions,
 } from "./index";
 
 test("parses supported CLI arguments", () => {
@@ -72,6 +79,65 @@ test("discovers the repository without requiring GitHub CLI credentials", async 
     stdout: "ssh://git@github.com/cooeehq/cooee.git\n",
   }));
   expect(repository).toBe("cooeehq/cooee");
+});
+
+test("matches the current checkout before offering an AGENTS.md update", async () => {
+  const run = async (_command: string, args: string[]) => ({
+    stderr: "",
+    stdout: args.includes("--show-toplevel")
+      ? "/tmp/cooee\n"
+      : "git@github.com:cooeehq/cooee.git\n",
+  });
+
+  expect(await discoverLocalRepositoryRoot("CooeeHQ/Cooee", run)).toBe(
+    "/tmp/cooee",
+  );
+  expect(
+    await discoverLocalRepositoryRoot("acme/another-repository", run),
+  ).toBeNull();
+});
+
+test("adds and refreshes one managed Cooee block without replacing instructions", () => {
+  const original = "# Repository instructions\n\nKeep this guidance.\n";
+  const inserted = upsertCooeeAgentsInstructions(original);
+
+  expect(inserted).toStartWith(original);
+  expect(inserted).toContain(cooeeAgentsInstructions);
+  expect(upsertCooeeAgentsInstructions(inserted)).toBe(inserted);
+  expect(() =>
+    upsertCooeeAgentsInstructions(
+      `${original}<!-- cooee-pr-labels:start -->\nIncomplete\n`,
+    ),
+  ).toThrow("incomplete or duplicate");
+});
+
+test("creates and updates AGENTS.md without committing it", async () => {
+  const repositoryRoot = await mkdtemp(join(tmpdir(), "cooee-cli-agents-"));
+  const agentsPath = join(repositoryRoot, "AGENTS.md");
+  try {
+    expect(await writeCooeeAgentsInstructions(repositoryRoot)).toBe("created");
+    expect(await readFile(agentsPath, "utf8")).toBe(
+      `${cooeeAgentsInstructions}\n`,
+    );
+    expect(await writeCooeeAgentsInstructions(repositoryRoot)).toBe(
+      "unchanged",
+    );
+
+    await writeFile(
+      agentsPath,
+      (await readFile(agentsPath, "utf8")).replace(
+        "before handing the PR back to the user.",
+        "Outdated wording.",
+      ),
+      "utf8",
+    );
+    expect(await writeCooeeAgentsInstructions(repositoryRoot)).toBe("updated");
+    expect(await readFile(agentsPath, "utf8")).toContain(
+      "before handing the PR back to the user.",
+    );
+  } finally {
+    await rm(repositoryRoot, { force: true, recursive: true });
+  }
 });
 
 test("polls until setup completes", async () => {

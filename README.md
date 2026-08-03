@@ -211,10 +211,12 @@ The command detects the `origin` remote and first collects the setup choices in
 your terminal: schedule, writing style, privacy labels, backfill, and optional
 images. It then opens a short-lived pairing page at `app.cooee.sh`; after GitHub
 sign-in and GitHub App approval when needed, it applies those choices
-automatically. The command never
-reads GitHub credentials, source code, or diffs. If Cooee already has access to
-the repository, it connects automatically. Use `--repo owner/repository` when
-there is no GitHub `origin`, or `--no-open` to copy the pairing URL instead.
+automatically. It can then install the optional Cooee PR Labels skill and, with
+confirmation, add a managed instruction block to the current checkout's
+`AGENTS.md`. It never reads GitHub credentials, source code, or diffs, and it
+does not commit or push the optional file change. If Cooee already has access
+to the repository, it connects automatically. Use `--repo owner/repository`
+when there is no GitHub `origin`, or `--no-open` to copy the pairing URL instead.
 
 This launcher is for Cooee's managed service. Self-hosted installations keep
 using the [Railway setup guide](docs/self-hosting.md) and should leave

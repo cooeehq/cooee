@@ -18,4 +18,7 @@ GitHub `origin` remote. Self-hosted Cooee installations continue to use the
 After the setup is complete, the CLI offers to install Cooee's optional PR
 Labels skill for Codex, Claude, and other compatible coding agents. The skill
 uses the developer's GitHub CLI access to add labels; the Cooee GitHub App stays
-read-only.
+read-only. When the connected repository matches the current checkout, the CLI
+also offers to add a managed Cooee block to `AGENTS.md`. It preserves the rest
+of the file and leaves the change uncommitted for review. If there is no matching
+checkout, it prints the block instead.

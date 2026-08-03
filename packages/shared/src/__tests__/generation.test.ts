@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { getPullRequestCategoryOverride } from "../categories";
-import { buildPromptPayload, validateGeneratedEntry } from "../generation";
+import {
+  buildDefaultCategoryInstruction,
+  buildPromptPayload,
+  validateGeneratedEntry,
+} from "../generation";
 import type { PullRequestMetadata } from "../types";
 
 const pr: PullRequestMetadata = {
@@ -134,6 +138,29 @@ describe("AI generation contracts", () => {
     expect(payload.instructions).toContain(
       "Do not substitute third-person audience labels such as users, merchants, customers, store owners, or teams",
     );
+  });
+
+  test("reserves feature for new or materially expanded capabilities", () => {
+    const payload = buildPromptPayload([pr]);
+
+    expect(payload.instructions).toContain(
+      "Use feature only for a genuinely new user capability or a significant expansion of existing functionality",
+    );
+    expect(payload.instructions).toContain(
+      "A small new option, control, view, or step within an existing workflow is an improvement, not a feature.",
+    );
+    expect(payload.instructions).toContain(
+      "When feature and improvement are both plausible, choose improvement.",
+    );
+  });
+
+  test("omits default category guidance for custom category sets", () => {
+    expect(
+      buildDefaultCategoryInstruction([
+        { id: "announcement", label: "Announcement", displayType: "post" },
+        { id: "fix", label: "Fix", displayType: "text" },
+      ]),
+    ).toBe("");
   });
 
   test("includes trimmed per-rewrite instructions when provided", () => {

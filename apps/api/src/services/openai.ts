@@ -1,4 +1,5 @@
 import {
+  buildDefaultCategoryInstruction,
   buildImplementationDetailInstruction,
   buildPromptPayload,
   normalizeChangelogCategoryDefinitions,
@@ -226,6 +227,7 @@ export class OpenAiSummarizer implements AiSummarizer {
         : "product-user";
     const implementationDetailInstruction =
       buildImplementationDetailInstruction(options);
+    const categoryInstruction = buildDefaultCategoryInstruction(categories);
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: this.input.apiKey });
     const response = await client.responses.create({
@@ -238,7 +240,7 @@ export class OpenAiSummarizer implements AiSummarizer {
         {
           role: "user",
           content: JSON.stringify({
-            instructions: `Merge these selected changelog posts into one public ${audienceLabel} changelog post. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, or teams unless those are a different group from the reader. Use only the configured category ids.${marketingInstructions} ${implementationDetailInstruction} Avoid private details, authors, trade secrets, code, credentials, and changes that conflict with user feedback learnings.`,
+            instructions: `Merge these selected changelog posts into one public ${audienceLabel} changelog post. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, or teams unless those are a different group from the reader. Use only the configured category ids. ${categoryInstruction}${marketingInstructions} ${implementationDetailInstruction} Avoid private details, authors, trade secrets, code, credentials, and changes that conflict with user feedback learnings.`,
             categories,
             entries,
             ...(options?.learnings?.length
