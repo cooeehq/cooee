@@ -104,8 +104,9 @@
     },
     "packages/embed-react": {
       "name": "@cooeehq/react",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": {
+        "@base-ui/react": "^1.5.0",
         "marked": "^18.0.5",
       },
       "devDependencies": {

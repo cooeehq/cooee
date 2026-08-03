@@ -22,26 +22,53 @@ export function Updates() {
     <CooeeUpdates
       feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
       maxItems={5}
-      appearance={{ colorScheme: "system" }}
+      theme="system"
     />
   );
 }
 ```
+
+### Use your own trigger
+
+Add `data-cooee-updates-trigger` to any element and render `CooeeUpdates`
+anywhere on the same page. The popup is portalled to the document body and
+anchored to that element, automatically flipping and shifting to stay inside
+the viewport.
+
+```tsx
+export function AppHeader() {
+  return (
+    <>
+      <button data-cooee-updates-trigger>What’s new</button>
+
+      <CooeeUpdates feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json" />
+    </>
+  );
+}
+```
+
+Non-interactive elements receive button semantics and keyboard handling while
+the component is mounted. The trigger also receives
+`data-cooee-unread-count="…"` and `data-cooee-has-unread` so you can render an
+indicator with your own CSS. Use `triggerSelector` when you need a different
+selector, or pass `null` to always use Cooee’s built-in button.
 
 The feed must be publicly reachable from the browser and allow requests from
 the site where the component is rendered.
 
 ## Props
 
-| Prop          | Type                          | Default            | Description                                      |
-| ------------- | ----------------------------- | ------------------ | ------------------------------------------------ |
-| `feedUrl`     | `string`                      | required           | URL of the public Cooee JSON feed                |
-| `maxItems`    | `number`                      | `5`                | Entries to show, clamped between 0 and 100       |
-| `buttonLabel` | `string`                      | `"Latest updates"` | Visible label for the trigger                    |
-| `className`   | `string`                      | —                  | Extra class on the component root                |
-| `appearance`  | `CooeeUpdatesAppearance`      | system theme       | Colour scheme, accent colours, and corner radius |
-| `labels`      | `Partial<CooeeUpdatesLabels>` | English defaults   | Localized status and control labels              |
-| `styleNonce`  | `string`                      | —                  | CSP nonce for the component style block          |
+| Prop              | Type                                | Default                        | Description                                           |
+| ----------------- | ----------------------------------- | ------------------------------ | ----------------------------------------------------- |
+| `feedUrl`         | `string`                            | required                       | URL of the public Cooee JSON feed                     |
+| `theme`           | `light \| dark \| system \| shadcn` | `system`                       | Standalone colour mode or host shadcn semantic tokens |
+| `maxItems`        | `number`                            | `5`                            | Entries to show, clamped between 0 and 100            |
+| `buttonLabel`     | `string`                            | `"Latest updates"`             | Visible label for the trigger                         |
+| `className`       | `string`                            | —                              | Extra class on the component root                     |
+| `triggerSelector` | `string \| null`                    | `[data-cooee-updates-trigger]` | Selector for an existing popup trigger                |
+| `appearance`      | `CooeeUpdatesAppearance`            | defaults                       | Optional accent colours and corner radius             |
+| `labels`          | `Partial<CooeeUpdatesLabels>`       | English defaults               | Localized status and control labels                   |
+| `styleNonce`      | `string`                            | —                              | CSP nonce for the component style block               |
 
 Unread state is tracked per feed URL in `localStorage`; opening the popup
 marks everything as seen. When the feed includes post images, the component
@@ -50,11 +77,33 @@ footer link opens the complete public changelog in a new tab.
 
 ### Appearance
 
+Use the top-level `theme` prop to force light or dark mode, follow the operating
+system, or inherit a shadcn/Tailwind design system:
+
+```tsx
+<CooeeUpdates feedUrl={feedUrl} theme="light" />
+<CooeeUpdates feedUrl={feedUrl} theme="dark" />
+<CooeeUpdates feedUrl={feedUrl} theme="system" />
+```
+
+For shadcn/ui projects, `theme="shadcn"` reads the existing semantic variables
+for popovers, text, primary actions, muted content, borders, focus rings, fonts,
+and radius. It follows whatever light/dark mechanism already updates those
+variables, including Tailwind’s `.dark` class or a theme data attribute. No
+Tailwind content configuration or package-specific CSS import is required.
+
+```tsx
+<CooeeUpdates feedUrl={feedUrl} theme="shadcn" />
+```
+
+Modern Tailwind v4 `--color-*` aliases and classic shadcn HSL variables are both
+supported. Custom appearance values still take precedence over theme tokens.
+
 ```tsx
 <CooeeUpdates
   feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
+  theme="dark"
   appearance={{
-    colorScheme: "dark", // "light", "dark", or "system"
     accentColor: "#155e75",
     accentTextColor: "#ffffff",
     cornerRadius: 12,
