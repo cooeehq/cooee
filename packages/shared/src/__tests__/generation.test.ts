@@ -119,20 +119,20 @@ describe("AI generation contracts", () => {
     ).toBeNull();
   });
 
-  test("instructs generated copy to speak directly to the product user", () => {
+  test("keeps generated copy product-descriptive with restrained direct address", () => {
     const payload = buildPromptPayload([pr], {
       aiAudience: "product-users",
       aiPersonality: "product-user",
     });
 
     expect(payload.instructions).toContain(
-      "Address the product user directly as the reader.",
+      "Use a product-descriptive voice by default.",
     );
     expect(payload.instructions).toContain(
-      'Prefer second person wording such as "you" and "your".',
+      'Use second-person wording such as "you" and "your" only when direct address makes the meaning clearer',
     );
     expect(payload.instructions).toContain(
-      "Do not describe the reader in the third person as users, merchants, customers, store owners, teams",
+      "Do not substitute third-person audience labels such as users, merchants, customers, store owners, or teams",
     );
   });
 

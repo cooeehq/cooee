@@ -73,6 +73,13 @@ export type AiImageResult = {
   usage?: AiTokenUsage;
 };
 
+const AI_POST_WRITING_RULES =
+  "Writing rules: No antithesis. No corrective negation. No paragraph pinning. No parataxis. No summary beats. No rhetorical crutches. No negative parallelisms. No negative anaphoras. No contrasting pairs. No rule of three. No em dashes. No throat-clearing openers. No landing sentences. No setup/payoff constructions. No parallel sentence structures within a paragraph. Vary sentence length unpredictably. No stacked noun phrases. No filler intensifiers (genuinely, really, truly, actually). No corporate-register verbs (leverage, underscore, reflect). No nominalization. No hedging qualifiers. Write for the spoken voice. No performed enthusiasm.";
+
+const POST_GENERATOR_SYSTEM_PROMPT = `${AI_POST_WRITING_RULES}\n\nYou are Cooee, a privacy-first changelog writer. Return only valid JSON with title, summary, category, items, skippedPullRequestNumbers, confidence, and sensitive. Items are the authoritative customer-facing posts: create one item for each unique customer-facing change, each with its own title, markdown summary, category, and sourcePullRequestNumbers array containing the PR numbers that directly caused that item. Create a separate item for each PR by default. Combine PRs only when they directly contribute to the same customer-facing change; then include every related PR number in that item's sourcePullRequestNumbers. Dismissed learnings are repository-specific publishing guidance: skip matching non-customer-facing pull requests by putting their numbers in skippedPullRequestNumbers and do not create items for them. Relevant learnings correct prior exclusions. Merged learnings describe changes that belong together. Every input pull request must appear in exactly one item or in skippedPullRequestNumbers. Use top-level title, summary, and category only as fallback metadata when exactly one item cannot be produced. Keep titles plain text. Use concise markdown in summary fields only when it improves readability, such as short bullet lists or emphasis. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. When rewriteInstructions are present, follow them as editing direction without weakening privacy rules or inventing facts.`;
+
+const POST_MERGER_SYSTEM_PROMPT = `${AI_POST_WRITING_RULES}\n\nYou are Cooee, a privacy-first changelog editor. Merge the selected changelog posts into one customer-facing post. Return only valid JSON with title, summary, category, items, confidence, and sensitive. Rewrite the title and markdown summary so they read as one coherent update, not a list of pasted posts. Keep titles plain text. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. Respect learnings as user feedback about what to merge, exclude, or avoid in future changelogs.`;
+
 export class OpenAiSummarizer implements AiSummarizer {
   constructor(
     private readonly input: {
@@ -114,8 +121,7 @@ export class OpenAiSummarizer implements AiSummarizer {
       input: [
         {
           role: "system",
-          content:
-            "You are Cooee, a privacy-first changelog writer. Return only valid JSON with title, summary, category, items, skippedPullRequestNumbers, confidence, and sensitive. Items are the authoritative customer-facing posts: create one item for each unique customer-facing change, each with its own title, markdown summary, category, and sourcePullRequestNumbers array containing the PR numbers that directly caused that item. Create a separate item for each PR by default. Combine PRs only when they directly contribute to the same customer-facing change; then include every related PR number in that item's sourcePullRequestNumbers. Dismissed learnings are repository-specific publishing guidance: skip matching non-customer-facing pull requests by putting their numbers in skippedPullRequestNumbers and do not create items for them. Relevant learnings correct prior exclusions. Merged learnings describe changes that belong together. Every input pull request must appear in exactly one item or in skippedPullRequestNumbers. Use top-level title, summary, and category only as fallback metadata when exactly one item cannot be produced. Keep titles plain text. Use concise markdown in summary fields only when it improves readability, such as short bullet lists or emphasis. Speak directly to the reader as you/your; do not refer to the reader as users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. When rewriteInstructions are present, follow them as editing direction without weakening privacy rules or inventing facts.",
+          content: POST_GENERATOR_SYSTEM_PROMPT,
         },
         {
           role: "user",
@@ -227,13 +233,12 @@ export class OpenAiSummarizer implements AiSummarizer {
       input: [
         {
           role: "system",
-          content:
-            "You are Cooee, a privacy-first changelog editor. Merge the selected changelog posts into one customer-facing post. Return only valid JSON with title, summary, category, items, confidence, and sensitive. Rewrite the title and markdown summary so they read as one coherent update, not a list of pasted posts. Keep titles plain text. Speak directly to the reader as you/your; do not refer to the reader as users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. Respect learnings as user feedback about what to merge, exclude, or avoid in future changelogs.",
+          content: POST_MERGER_SYSTEM_PROMPT,
         },
         {
           role: "user",
           content: JSON.stringify({
-            instructions: `Merge these selected changelog posts into one public ${audienceLabel} changelog post. Speak directly to the reader as you/your, not as users, merchants, customers, store owners, or teams unless those are a different group from the reader. Use only the configured category ids.${marketingInstructions} ${implementationDetailInstruction} Avoid private details, authors, trade secrets, code, credentials, and changes that conflict with user feedback learnings.`,
+            instructions: `Merge these selected changelog posts into one public ${audienceLabel} changelog post. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, or teams unless those are a different group from the reader. Use only the configured category ids.${marketingInstructions} ${implementationDetailInstruction} Avoid private details, authors, trade secrets, code, credentials, and changes that conflict with user feedback learnings.`,
             categories,
             entries,
             ...(options?.learnings?.length
