@@ -1315,17 +1315,19 @@ describe("api routes", () => {
     expect(source).not.toContain('env.OPENAI_IMAGE_MODEL ?? "gpt-image-2"');
   });
 
-  test("OpenAI prompts speak directly to the changelog reader", () => {
+  test("OpenAI prompts default to a product-descriptive voice", () => {
     const source = readFileSync(
       new URL("../services/openai.ts", import.meta.url),
       "utf8",
     );
 
-    expect(source).toContain("Speak directly to the reader as you/your");
+    expect(source).toContain("Keep the voice product-descriptive");
     expect(source).toContain(
-      "do not refer to the reader as users, merchants, customers, store owners, teams",
+      "Use you/your sparingly, only when direct address clarifies an action or outcome",
     );
-    expect(source).toContain("not as users, merchants, customers");
+    expect(source).toContain(
+      "Avoid replacing unnecessary second-person wording with users, merchants, customers",
+    );
   });
 
   test("reports post image generation availability without config details", async () => {

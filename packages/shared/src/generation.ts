@@ -99,7 +99,7 @@ export function buildPromptPayload(
   return {
     instructions: [
       buildAudienceInstruction(options),
-      'Address the product user directly as the reader. Prefer second person wording such as "you" and "your". Do not describe the reader in the third person as users, merchants, customers, store owners, teams, or similar audience labels unless the change genuinely affects a different group than the reader.',
+      'Use a product-descriptive voice by default. Describe what the product, feature, or workflow does without repeatedly addressing the reader. Use second-person wording such as "you" and "your" only when direct address makes the meaning clearer or is needed to explain an action. Do not substitute third-person audience labels such as users, merchants, customers, store owners, or teams for unnecessary second-person wording unless the change genuinely affects a different group than the reader.',
       "Create one item per unique customer-facing change. Do not combine unrelated changes into one title or summary. Use only the configured category ids.",
       "Treat dismissed learnings as repository-specific publishing guidance. When a current pull request matches a dismissed learning and is not customer-facing, omit it from items and include its number in skippedPullRequestNumbers. Treat relevant learnings as corrections that similar pull requests should remain eligible. Treat merged learnings as guidance to combine directly related pull requests. Every current pull request must appear in exactly one item or in skippedPullRequestNumbers.",
       buildPersonalityInstruction(options),
