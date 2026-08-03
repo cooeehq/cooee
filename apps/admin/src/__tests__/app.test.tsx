@@ -7,6 +7,8 @@ import {
   isCliSetupPath,
   getNextScheduledRunLabel,
   getLocalPublicChangelogUrl,
+  getHostedPublicChangelogUrl,
+  getApiUnavailableMessage,
   getPublicChangelogResourceUrls,
   getSurfaceFromPathname,
   shouldShowAdminSessionLoadingPage,
@@ -21,6 +23,9 @@ describe("Cooee admin app", () => {
     expect(getSurfaceFromPathname("/app/setup")).toBe("app");
     expect(isCliSetupPath("/app/setup/")).toBe(true);
     expect(getSurfaceFromPathname("/changelog/acme")).toBe("publicChangelog");
+    expect(getSurfaceFromPathname("/changelog/acme/articles/launch-notes")).toBe(
+      "publicChangelog",
+    );
     expect(getSurfaceFromPathname("/application")).toBe("notFound");
     expect(getSurfaceFromPathname("/docs")).toBe("notFound");
     expect(getSurfaceFromPathname("/privacy")).toBe("notFound");
@@ -205,6 +210,36 @@ describe("Cooee admin app", () => {
     );
   });
 
+  test("links article-style updates to their public article URL", () => {
+    const html = renderToStaticMarkup(
+      <PublicChangelogPage
+        appName="Acme"
+        embedded
+        entries={[
+          {
+            id: "article_1",
+            title: "Launch notes",
+            summary: "A closer look at the launch.",
+            articleSlug: "launch-notes",
+            articleMarkdown: "# The full story",
+            category: "feature",
+            publishedAt: "2026-08-01T00:00:00.000Z",
+            time: "Today",
+          },
+        ]}
+        logoDataUrl={null}
+        publicAppUrl=""
+        publicChangelogSlug="acme"
+        visibleRepositories={[]}
+      />,
+    );
+
+    expect(html).toContain("Read more");
+    expect(html).toContain("/changelog/acme/articles/launch-notes");
+    expect(html).toContain('data-display-type="article"');
+    expect(html).not.toContain("view-transition-name");
+  });
+
   test("builds changelog resource URLs for hosted and custom domains", () => {
     expect(getPublicChangelogResourceUrls("acme app")).toEqual({
       api: "/api/public/openapi.json",
@@ -216,6 +251,19 @@ describe("Cooee admin app", () => {
       json: "/api/public/changelog/feed.json",
       rss: "/api/public/changelog/feed.xml",
     });
+  });
+
+  test("uses the app host for hosted public changelogs", () => {
+    expect(getHostedPublicChangelogUrl()).toBe("https://app.cooee.sh");
+  });
+
+  test("explains when the Cooee API cannot be reached", () => {
+    expect(getApiUnavailableMessage(true)).toBe(
+      "Cooee’s local API isn’t running. Start it with bun run dev, then refresh this page.",
+    );
+    expect(getApiUnavailableMessage(false)).toBe(
+      "Cooee couldn’t reach its API. Refresh the page and try again.",
+    );
   });
 
   test("keeps the View changelog destination on the local app in development", () => {

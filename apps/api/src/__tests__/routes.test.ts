@@ -247,6 +247,60 @@ describe("api routes", () => {
     expect(await rssHead.text()).toBe("");
   });
 
+  test("publishes long-form articles at stable public slugs", async () => {
+    const store = InMemoryStore.seeded();
+    const app = createApp({ store });
+    const created = await app.fetch(
+      new Request(
+        "http://cooee.test/api/admin/changelogs/cl_acme/entries",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "A closer look at workspace exports",
+            summary: "Exports are now easier to share.",
+            category: "feature",
+            articleMarkdown:
+              "# Workspace exports\n\n![Export preview](https://images.example.test/exports.png)\n\n| Format | Ready |\n| --- | --- |\n| CSV | Yes |",
+          }),
+        },
+      ),
+    );
+
+    expect(created.status).toBe(201);
+    const createdBody = await created.json();
+    expect(createdBody.articleSlug).toBe("a-closer-look-at-workspace-exports");
+    expect(createdBody.articleMarkdown).toContain("Workspace exports");
+
+    const feed = await app.fetch(
+      new Request("http://cooee.test/api/public/changelogs/acme-app/feed.json"),
+    );
+    expect(feed.status).toBe(200);
+    const feedBody = await feed.json();
+    const feedEntry = feedBody.entries.find(
+      (entry: { id: string }) => entry.id === createdBody.id,
+    );
+    expect(feedEntry).toMatchObject({
+      articleSlug: "a-closer-look-at-workspace-exports",
+    });
+    expect(feedEntry.articleMarkdown).toBeUndefined();
+
+    const article = await app.fetch(
+      new Request(
+        "http://cooee.test/api/public/changelogs/acme-app/articles/a-closer-look-at-workspace-exports",
+      ),
+    );
+    expect(article.status).toBe(200);
+    expect(await article.json()).toMatchObject({
+      changelog: { slug: "acme-app" },
+      entry: {
+        id: createdBody.id,
+        articleSlug: "a-closer-look-at-workspace-exports",
+        articleMarkdown: expect.stringContaining("Workspace exports"),
+      },
+    });
+  });
+
   test("validates public feed queries and preserves not-found responses", async () => {
     const app = createApp({ store: InMemoryStore.seeded() });
 
@@ -1223,7 +1277,7 @@ describe("api routes", () => {
     expect(storedImage?.contentType).toBe("image/webp");
     expect(await sharp(storedImage!.body).metadata()).toMatchObject({
       format: "webp",
-      height: 1024,
+      height: 864,
       width: 1536,
     });
 
@@ -1400,6 +1454,21 @@ describe("api routes", () => {
     expect(new Uint8Array(await canonicalPublicImage.arrayBuffer())).toEqual(
       imageBytes,
     );
+
+    const removal = await app.fetch(
+      new Request(
+        "http://cooee.test/api/admin/changelog-entries/entry_saved_filters/image",
+        { method: "DELETE" },
+      ),
+    );
+
+    expect(removal.status).toBe(200);
+    expect(await removal.json()).toMatchObject({
+      id: "entry_saved_filters",
+      imageUrl: null,
+    });
+    expect(store.entries[0].imageUrl).toBeNull();
+    expect(assetStorage.objects.size).toBe(0);
   });
 
   test("uploads, previews, replaces, and removes a private style reference", async () => {

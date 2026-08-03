@@ -1389,6 +1389,8 @@ export class InMemoryStore implements Store {
     entry.title = input.title;
     entry.summary = input.summary;
     entry.category = input.category;
+    entry.articleSlug = input.articleSlug ?? null;
+    entry.articleMarkdown = input.articleMarkdown ?? null;
     if (input.publishedAt) {
       entry.publishedAt = input.publishedAt;
     }

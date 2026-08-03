@@ -80,6 +80,7 @@ function toPublicEntry(
     category: entry.category,
     publishedAt: entry.publishedAt,
     ...(entry.imageUrl ? { imageUrl: entry.imageUrl } : {}),
+    ...(entry.articleSlug ? { articleSlug: entry.articleSlug } : {}),
     ...(entry.items && entry.items.length > 0
       ? {
           items: [...entry.items].sort((left, right) =>

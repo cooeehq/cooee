@@ -1,5 +1,6 @@
 import { marked, Renderer } from "marked";
 import TurndownService from "turndown";
+import { gfm } from "turndown-plugin-gfm";
 
 const renderer = new Renderer();
 
@@ -28,7 +29,15 @@ renderer.link = ({ href, title, tokens }) => {
   const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
   return `<a href="${escapeAttribute(safeHref)}"${titleAttribute} rel="nofollow noreferrer" target="_blank">${label}</a>`;
 };
-renderer.image = ({ text }) => escapeHtml(text);
+renderer.image = ({ href, text, title }) => {
+  const safeHref = normalizeSafeImageHref(href);
+  if (!safeHref) {
+    return escapeHtml(text);
+  }
+
+  const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<img src="${escapeAttribute(safeHref)}" alt="${escapeAttribute(text)}"${titleAttribute} loading="lazy" />`;
+};
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -38,6 +47,7 @@ const turndown = new TurndownService({
   linkStyle: "inlined",
   strongDelimiter: "**",
 });
+turndown.use(gfm);
 
 export function renderMarkdown(markdown: string): string {
   return marked(markdown, {
@@ -74,6 +84,15 @@ function normalizeSafeHref(href: string): string | null {
     }
 
     return href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSafeImageHref(href: string): string | null {
+  try {
+    const url = new URL(href, "https://cooee.local");
+    return ["http:", "https:"].includes(url.protocol) ? href : null;
   } catch {
     return null;
   }

@@ -197,6 +197,43 @@
     margin-top: 0.625rem;
   }
 
+  .markdown-summary img,
+  .markdown-editor-content img {
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    display: block;
+    height: auto;
+    margin-top: 1rem;
+    max-width: 100%;
+  }
+
+  .markdown-summary table,
+  .markdown-editor-content table {
+    border-collapse: collapse;
+    display: block;
+    margin-top: 1rem;
+    max-width: 100%;
+    overflow-x: auto;
+    width: 100%;
+  }
+
+  .markdown-summary th,
+  .markdown-summary td,
+  .markdown-editor-content th,
+  .markdown-editor-content td {
+    border: 1px solid var(--border);
+    min-width: 7rem;
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .markdown-summary th,
+  .markdown-editor-content th {
+    background: var(--muted);
+    font-weight: 600;
+  }
+
   .markdown-summary ul,
   .markdown-editor-content ul {
     list-style: disc;

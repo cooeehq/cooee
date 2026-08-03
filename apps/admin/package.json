@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@cooee/shared": "workspace:*"
+    "@cooee/shared": "workspace:*",
+    "framer-motion": "^12.42.2"
   }
 }

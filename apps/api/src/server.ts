@@ -18,6 +18,7 @@ import {
   normalizePostImageSettings,
   parsePublicFeedQuery,
   publicApiOpenApiDocument,
+  publicArticleSchema,
   publicFeedSchema,
   serializePublicFeed,
   validateGeneratedEntry,
@@ -1427,11 +1428,20 @@ export function createApp(options: AppOptions = {}): App {
             }
             const publishedAt =
               normalized.publishedAt ?? new Date().toISOString();
+            const article = await resolveArticleFields({
+              articleMarkdown: normalized.articleMarkdown,
+              articleSlug: normalized.articleSlug,
+              category: normalized.category,
+              categoryDefinitions: changelog.settings.categoryDefinitions,
+              entries: await store.listEntries(changelog.id),
+              title: normalized.title,
+            });
             const entry = await store.createEntry({
               changelogId: changelog.id,
               title: normalized.title,
               summary: normalized.summary,
               category: normalized.category,
+              ...article,
               status: "published",
               publishedAt,
               windowEndedAt: publishedAt,
@@ -1444,7 +1454,7 @@ export function createApp(options: AppOptions = {}): App {
             );
             const createdEntry =
               changelog.settings.postImageSettings.enabled &&
-              categoryDefinition.displayType === "post"
+              isPostLikeDisplayType(categoryDefinition.displayType)
                 ? ((await store.enqueuePostImageGeneration({
                     entryId: entry.id,
                     workspaceId,
@@ -1631,6 +1641,10 @@ export function createApp(options: AppOptions = {}): App {
             /^\/api\/public\/changelogs\/([^/]+)\/feed\.json$/.exec(
               url.pathname,
             );
+          const publicArticleMatch =
+            /^\/api\/public\/changelogs\/([^/]+)\/articles\/([^/]+)$/.exec(
+              url.pathname,
+            );
           const rssFeedMatch =
             /^\/api\/public\/changelogs\/([^/]+)\/feed\.xml$/.exec(
               url.pathname,
@@ -1641,6 +1655,22 @@ export function createApp(options: AppOptions = {}): App {
           ) {
             return publicCorsResponse(new Response(null, { status: 204 }));
           }
+          if (
+            (request.method === "GET" || request.method === "HEAD") &&
+            publicArticleMatch
+          ) {
+            return publicCorsResponse(
+              respondToHead(
+                request,
+                await publicArticle(
+                  store,
+                  decodeURIComponent(publicArticleMatch[1]),
+                  decodeURIComponent(publicArticleMatch[2]),
+                ),
+              ),
+            );
+          }
+
           if (
             (request.method === "GET" || request.method === "HEAD") &&
             feedMatch
@@ -1697,6 +1727,28 @@ export function createApp(options: AppOptions = {}): App {
               query.data.limit,
             );
             return publicCorsResponse(respondToHead(request, response));
+          }
+
+          if (
+            (request.method === "GET" || request.method === "HEAD") &&
+            /^\/api\/public\/changelog\/articles\/([^/]+)$/.test(
+              url.pathname,
+            )
+          ) {
+            const articleMatch =
+              /^\/api\/public\/changelog\/articles\/([^/]+)$/.exec(
+                url.pathname,
+              );
+            return publicCorsResponse(
+              respondToHead(
+                request,
+                await publicArticleByHost(
+                  store,
+                  request,
+                  decodeURIComponent(articleMatch?.[1] ?? ""),
+                ),
+              ),
+            );
           }
 
           if (
@@ -2104,8 +2156,35 @@ export function createApp(options: AppOptions = {}): App {
                 );
               }
 
+              const selected = await findWorkspaceEntry({
+                entryId,
+                store,
+                workspaceId,
+              });
+              if (!selected) {
+                return json(
+                  { error: "Changelog entry not found" },
+                  { status: 404 },
+                );
+              }
+              const article = await resolveArticleFields({
+                articleMarkdown:
+                  input.articleMarkdown === undefined
+                    ? (selected.entry.articleMarkdown ?? null)
+                    : input.articleMarkdown,
+                articleSlug:
+                  input.articleSlug === undefined
+                    ? (selected.entry.articleSlug ?? null)
+                    : input.articleSlug,
+                category: input.category,
+                categoryDefinitions: selected.changelog.settings.categoryDefinitions,
+                entries: await store.listEntries(selected.changelog.id),
+                entryId,
+                title: input.title,
+              });
               const updated = await store.updateEntry({
                 ...input,
+                ...article,
                 entryId,
                 workspaceId,
               });
@@ -2139,7 +2218,8 @@ export function createApp(options: AppOptions = {}): App {
               : null;
             const publishedEntry =
               selected?.changelog.settings.postImageSettings.enabled &&
-              categoryDefinition?.displayType === "post" &&
+              categoryDefinition &&
+              isPostLikeDisplayType(categoryDefinition.displayType) &&
               !entry.imageUrl
                 ? ((await store.enqueuePostImageGeneration({
                     entryId,
@@ -2334,6 +2414,14 @@ export function createApp(options: AppOptions = {}): App {
               workspaceId: getWorkspaceId(url),
             });
           }
+          if (request.method === "DELETE" && changelogEntryUploadImageMatch) {
+            return deleteChangelogEntryImage({
+              assetStorage,
+              entryId: decodeURIComponent(changelogEntryUploadImageMatch[1]),
+              store,
+              workspaceId: getWorkspaceId(url),
+            });
+          }
 
           const changelogEntryMatch =
             /^\/api\/admin\/changelog-entries\/([^/]+)$/.exec(url.pathname);
@@ -2351,9 +2439,34 @@ export function createApp(options: AppOptions = {}): App {
               );
             }
 
+            const entryId = decodeURIComponent(changelogEntryMatch[1]);
+            const selected = await findWorkspaceEntry({
+              entryId,
+              store,
+              workspaceId: getWorkspaceId(url),
+            });
+            if (!selected) {
+              return json({ error: "Changelog entry not found" }, { status: 404 });
+            }
+            const article = await resolveArticleFields({
+              articleMarkdown:
+                input.articleMarkdown === undefined
+                  ? (selected.entry.articleMarkdown ?? null)
+                  : input.articleMarkdown,
+              articleSlug:
+                input.articleSlug === undefined
+                  ? (selected.entry.articleSlug ?? null)
+                  : input.articleSlug,
+              category: input.category,
+              categoryDefinitions: selected.changelog.settings.categoryDefinitions,
+              entries: await store.listEntries(selected.changelog.id),
+              entryId,
+              title: input.title,
+            });
             const updated = await store.updateEntry({
               ...input,
-              entryId: decodeURIComponent(changelogEntryMatch[1]),
+              ...article,
+              entryId,
               workspaceId: getWorkspaceId(url),
             });
 
@@ -4116,6 +4229,8 @@ function serializeAdminChangelogEntry(entry: StoredEntry) {
     processedAt: entry.processedAt ?? null,
     windowEndedAt: entry.windowEndedAt,
     imageUrl: entry.imageUrl ?? null,
+    articleSlug: entry.articleSlug ?? null,
+    articleMarkdown: entry.articleMarkdown ?? null,
     imageGenerationStatus: entry.imageGenerationStatus ?? null,
     imageGenerationError: entry.imageGenerationError ?? null,
     imageGenerationAttemptCount: entry.imageGenerationAttemptCount ?? 0,
@@ -5113,7 +5228,7 @@ async function uploadChangelogEntryImage({
     selected.changelog.settings.categoryDefinitions,
   );
 
-  if (categoryDefinition.displayType !== "post") {
+  if (!isPostLikeDisplayType(categoryDefinition.displayType)) {
     return json(
       { error: "Entry category is not configured as a post" },
       { status: 409 },
@@ -5153,6 +5268,58 @@ async function uploadChangelogEntryImage({
 
   if (!entry) {
     return json({ error: "Changelog entry not found" }, { status: 404 });
+  }
+
+  return json(serializeAdminChangelogEntry(entry));
+}
+
+async function deleteChangelogEntryImage({
+  assetStorage,
+  entryId,
+  store,
+  workspaceId,
+}: {
+  assetStorage: AssetStorage | null;
+  entryId: string;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  const selected = await findWorkspaceEntry({ entryId, store, workspaceId });
+  if (!selected) {
+    return json({ error: "Changelog entry not found" }, { status: 404 });
+  }
+
+  const categoryDefinition = getChangelogCategoryDefinition(
+    selected.entry.category,
+    selected.changelog.settings.categoryDefinitions,
+  );
+  if (!isPostLikeDisplayType(categoryDefinition.displayType)) {
+    return json(
+      { error: "Entry category is not configured as a post" },
+      { status: 409 },
+    );
+  }
+
+  const previousImageUrl = selected.entry.imageUrl;
+  const entry = await store.updateEntryImage({
+    entryId,
+    imageUrl: null,
+    workspaceId,
+  });
+  if (!entry) {
+    return json({ error: "Changelog entry not found" }, { status: 404 });
+  }
+
+  if (
+    assetStorage?.deleteObject &&
+    isPublicPostImageUrl(previousImageUrl, workspaceId, entryId)
+  ) {
+    try {
+      await assetStorage.deleteObject(postImageAssetKey(workspaceId, entryId));
+    } catch {
+      // The entry no longer exposes the asset. Leave any unreachable storage
+      // cleanup to the provider rather than failing the editor action.
+    }
   }
 
   return json(serializeAdminChangelogEntry(entry));
@@ -5587,6 +5754,20 @@ async function publicFeed(
   return publicFeedForChangelog(store, changelog, searchParams, limit);
 }
 
+async function publicArticle(
+  store: Store,
+  changelogSlug: string,
+  articleSlug: string,
+): Promise<Response> {
+  const changelog = await store.getChangelogBySlug(changelogSlug);
+
+  if (!changelog) {
+    return json({ error: "Changelog not found" }, { status: 404 });
+  }
+
+  return publicArticleForChangelog(store, changelog, articleSlug);
+}
+
 async function publicFeedByHost(
   store: Store,
   request: Request,
@@ -5601,6 +5782,21 @@ async function publicFeedByHost(
   }
 
   return publicFeedForChangelog(store, changelog, searchParams, limit);
+}
+
+async function publicArticleByHost(
+  store: Store,
+  request: Request,
+  articleSlug: string,
+): Promise<Response> {
+  const host = requestHost(request);
+  const changelog = host ? await store.getChangelogByCustomDomain(host) : null;
+
+  if (!changelog) {
+    return json({ error: "Changelog not found" }, { status: 404 });
+  }
+
+  return publicArticleForChangelog(store, changelog, articleSlug);
 }
 
 async function publicRssFeed(
@@ -5716,6 +5912,74 @@ async function publicFeedForChangelog(
   );
 
   return json(feed, { headers: publicFeedCacheHeaders });
+}
+
+async function publicArticleForChangelog(
+  store: Store,
+  changelog: StoredChangelog,
+  articleSlug: string,
+): Promise<Response> {
+  // Build the public changelog metadata through the same path as feeds so the
+  // article page receives identical branding and privacy behaviour.
+  const feedResponse = await publicFeedForChangelog(
+    store,
+    changelog,
+    new URLSearchParams(),
+    1,
+  );
+  if (!feedResponse.ok) {
+    return feedResponse;
+  }
+
+  const feed = publicFeedSchema.parse(await feedResponse.json());
+  const entry = (await store.listEntries(changelog.id)).find(
+    (candidate) =>
+      candidate.status === "published" &&
+      candidate.articleSlug === articleSlug &&
+      Boolean(candidate.articleMarkdown?.trim()) &&
+      Boolean(candidate.publishedAt),
+  );
+
+  if (!entry?.articleSlug || !entry.articleMarkdown || !entry.publishedAt) {
+    return json({ error: "Article not found" }, { status: 404 });
+  }
+
+  const publicUrl = feed.changelog.publicUrl;
+  const [publicEntry] = serializePublicFeed({
+    changelog: feed.changelog,
+    entries: [
+      {
+        ...entry,
+        imageUrl: resolvePublicAssetUrl(
+          entry.imageUrl
+            ? publicChangelogPostImageUrl(
+                changelog.slug,
+                entry.id,
+                entry.imageUrl,
+              )
+            : null,
+          publicUrl,
+        ),
+      },
+    ],
+    includePullRequestLinks: changelog.settings.includePullRequestLinks,
+  }).entries;
+
+  if (!publicEntry) {
+    return json({ error: "Article not found" }, { status: 404 });
+  }
+
+  return json(
+    publicArticleSchema.parse({
+      changelog: feed.changelog,
+      entry: {
+        ...publicEntry,
+        articleSlug: entry.articleSlug,
+        articleMarkdown: entry.articleMarkdown,
+      },
+    }),
+    { headers: publicFeedCacheHeaders },
+  );
 }
 
 function resolvePublicAssetUrl(
@@ -6277,6 +6541,10 @@ function normalizePublicChangelogTheme(value: unknown): "light" | "dark" {
   return value === "dark" ? "dark" : "light";
 }
 
+function isPostLikeDisplayType(displayType: string): boolean {
+  return displayType === "post" || displayType === "article";
+}
+
 function normalizePublicChangelogAppName(appName: string): string {
   return appName.trim();
 }
@@ -6443,7 +6711,7 @@ function secureResponse(response: Response): Response {
   ).toString("base64");
   headers.set(
     "content-security-policy",
-    `default-src 'self'; base-uri 'self'; connect-src 'self' https://*.posthog.com; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'nonce-${cspNonce}' https://static.cloudflareinsights.com https://*.posthog.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; worker-src 'self' blob: data:; upgrade-insecure-requests`,
+    `default-src 'self'; base-uri 'self'; connect-src 'self' https://*.posthog.com; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' https: data: blob:; object-src 'none'; script-src 'self' 'nonce-${cspNonce}' https://static.cloudflareinsights.com https://*.posthog.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; worker-src 'self' blob: data:; upgrade-insecure-requests`,
   );
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "strict-origin-when-cross-origin");
@@ -6982,24 +7250,119 @@ function normalizeEntryUpdate(input: Record<string, unknown>): {
   summary: string;
   category: ChangelogCategory;
   publishedAt?: string;
+  articleMarkdown?: string | null;
+  articleSlug?: string | null;
 } | null {
   const title = typeof input.title === "string" ? input.title.trim() : "";
   const summary = typeof input.summary === "string" ? input.summary.trim() : "";
   const category = normalizeChangelogCategory(input.category);
   const publishedAt = normalizeOptionalPublishedAt(input.publishedAt);
+  const hasArticleMarkdown = Object.hasOwn(input, "articleMarkdown");
+  const hasArticleSlug = Object.hasOwn(input, "articleSlug");
+  const articleMarkdown = hasArticleMarkdown
+    ? normalizeArticleMarkdown(input.articleMarkdown)
+    : undefined;
+  const articleSlug = hasArticleSlug
+    ? normalizeOptionalArticleSlug(input.articleSlug)
+    : undefined;
 
   if (
     !title ||
     !summary ||
     !category ||
-    ("publishedAt" in input && !publishedAt)
+    ("publishedAt" in input && !publishedAt) ||
+    (hasArticleMarkdown && articleMarkdown === undefined) ||
+    (hasArticleSlug && articleSlug === undefined)
   ) {
     return null;
   }
 
-  return publishedAt
-    ? { title, summary, category, publishedAt }
-    : { title, summary, category };
+  return {
+    title,
+    summary,
+    category,
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(hasArticleMarkdown ? { articleMarkdown } : {}),
+    ...(hasArticleSlug ? { articleSlug } : {}),
+  };
+}
+
+function normalizeArticleMarkdown(value: unknown): string | null | undefined {
+  if (value === null || value === "") {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const markdown = value.trim();
+  return markdown ? markdown.slice(0, 100_000) : null;
+}
+
+function normalizeOptionalArticleSlug(value: unknown): string | null | undefined {
+  if (value === null || value === "") {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return normalizeArticleSlug(value) || null;
+}
+
+async function resolveArticleFields(input: {
+  articleMarkdown: string | null | undefined;
+  articleSlug: string | null | undefined;
+  category: ChangelogCategory;
+  categoryDefinitions: StoredChangelog["settings"]["categoryDefinitions"];
+  entries: StoredEntry[];
+  entryId?: string;
+  title: string;
+}): Promise<{ articleMarkdown: string | null; articleSlug: string | null }> {
+  const displayType = getChangelogCategoryDefinition(
+    input.category,
+    input.categoryDefinitions,
+  ).displayType;
+  const markdown = input.articleMarkdown?.trim() ?? "";
+
+  if (displayType !== "article" || !markdown) {
+    return { articleMarkdown: null, articleSlug: null };
+  }
+
+  const baseSlug =
+    normalizeArticleSlug(input.articleSlug ?? "") ||
+    normalizeArticleSlug(input.title) ||
+    "article";
+  const usedSlugs = new Set(
+    input.entries
+      .filter((entry) => entry.id !== input.entryId)
+      .map((entry) => entry.articleSlug)
+      .filter((slug): slug is string => Boolean(slug)),
+  );
+
+  let articleSlug = baseSlug;
+  let suffix = 2;
+  while (usedSlugs.has(articleSlug)) {
+    const suffixValue = `-${suffix}`;
+    articleSlug = `${baseSlug.slice(0, Math.max(1, 80 - suffixValue.length))}${suffixValue}`;
+    suffix += 1;
+  }
+
+  return { articleMarkdown: markdown, articleSlug };
+}
+
+function normalizeArticleSlug(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
 
 function normalizeOptionalPublishedAt(value: unknown): string | null {
@@ -7285,6 +7648,8 @@ async function regenerateHeldChangelogEntry({
     title: selectedItem.title,
     summary: selectedItem.summary,
     category: selectedItem.category,
+    articleSlug: selectedEntry.articleSlug ?? null,
+    articleMarkdown: selectedEntry.articleMarkdown ?? null,
   });
 
   return entry ? { status: "ok", entry } : { status: "not-found" };
@@ -7398,7 +7763,7 @@ async function generateChangelogEntryPostImage({
     selectedChangelog.settings.categoryDefinitions,
   );
 
-  if (categoryDefinition.displayType !== "post") {
+  if (!isPostLikeDisplayType(categoryDefinition.displayType)) {
     return { status: "not-post-category" };
   }
 

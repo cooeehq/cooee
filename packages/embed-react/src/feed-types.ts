@@ -5,7 +5,7 @@
 
 export type ChangelogCategory = string;
 
-export type ChangelogDisplayType = "post" | "callout" | "text";
+export type ChangelogDisplayType = "article" | "post" | "callout" | "text";
 export type ChangelogPublicTheme = "light" | "dark";
 export type ChangelogLogoAlignment = "left" | "center" | "right";
 
@@ -45,6 +45,7 @@ export type PublicFeedEntry = {
   category: ChangelogCategory;
   publishedAt: string;
   imageUrl?: string | null;
+  articleSlug?: string | null;
   items?: ChangelogChangeItem[];
   sourcePullRequests?: Array<{
     number: number;

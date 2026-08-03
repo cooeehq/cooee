@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { play } from "cuelume";
+import { motion, useReducedMotion } from "framer-motion";
 import type { DateRange } from "react-day-picker";
 import {
   type ChangeEvent,
@@ -54,6 +55,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -176,6 +178,8 @@ type PublishedEntry = {
   windowEndedAt?: string | null;
   publishedAt?: string | null;
   imageUrl?: string | null;
+  articleSlug?: string | null;
+  articleMarkdown?: string | null;
   imageGenerationStatus?: "pending" | "generating" | "failed" | null;
   imageGenerationError?: string | null;
   items?: Array<{
@@ -227,7 +231,10 @@ type SurfaceId = "login" | "app" | "publicChangelog" | "notFound";
 export type DeploymentMode = "admin";
 type ThemeMode = "light" | "dark";
 type PublicLogoAlignment = "left" | "center" | "right";
-type ManualUpdateState = Pick<PublishedEntry, "title" | "summary" | "category">;
+type ManualUpdateState = Pick<
+  PublishedEntry,
+  "title" | "summary" | "category" | "articleMarkdown" | "articleSlug"
+>;
 type PublishedEntryDraftState = ManualUpdateState & {
   publishedAt: string | null;
 };
@@ -489,6 +496,8 @@ type ApiChangelogEntry = {
   status?: "draft" | "held" | "published" | "discarded";
   holdReason?: string | null;
   imageUrl?: string | null;
+  articleSlug?: string | null;
+  articleMarkdown?: string | null;
   imageGenerationStatus?: "pending" | "generating" | "failed" | null;
   imageGenerationError?: string | null;
   processedAt?: string | null;
@@ -533,6 +542,14 @@ type ApiPublicChangelogFeed = {
   };
   entries?: ApiChangelogEntry[];
   pagination?: PublicFeedPagination;
+};
+
+type ApiPublicArticle = {
+  changelog: NonNullable<ApiPublicChangelogFeed["changelog"]>;
+  entry: ApiChangelogEntry & {
+    articleSlug: string;
+    articleMarkdown: string;
+  };
 };
 
 type PublicChangelogPaginationState = Pick<
@@ -612,7 +629,6 @@ const activeRepositoryDisplayNameStorageKey =
   "cooee:active-repository-display-name";
 const onboardingCompletedStorageKey = "cooee:onboarding-completed";
 const publicChangelogThemeStorageKey = "cooee:public-changelog-theme";
-const publicChangelogThemeCookieName = "cooee_public_changelog_theme";
 const defaultPublicAppLabel = "Open app";
 const backfillActivitySteps = [
   {
@@ -734,6 +750,7 @@ const timeZoneOptions: SelectOption[] = [
   { label: "UTC", value: "UTC" },
 ];
 const changelogDisplayTypeOptions: SelectOption[] = [
+  { label: "Article", value: "article" },
   { label: "Post", value: "post" },
   { label: "Callout", value: "callout" },
   { label: "Text", value: "text" },
@@ -980,24 +997,6 @@ function getRememberedPublicChangelogTheme(fallback: ThemeMode): ThemeMode {
   }
 }
 
-function persistPublicChangelogTheme(theme: ThemeMode) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(publicChangelogThemeStorageKey, theme);
-  } catch {
-    // Visitors can still toggle for the current page load when storage is blocked.
-  }
-
-  try {
-    document.cookie = `${publicChangelogThemeCookieName}=${theme}; Max-Age=31536000; Path=/; SameSite=Lax`;
-  } catch {
-    // Server-side rendering can use the cookie on the next request when cookies are available.
-  }
-}
-
 function getConfiguredAppName(
   settings: Pick<SettingsState, "appName">,
   defaultAppName: string,
@@ -1208,13 +1207,17 @@ export function App({
   const [manualUpdate, setManualUpdate] = useState<ManualUpdateState>({
     title: "",
     summary: "",
-    category: "improvement",
+    category: "feature",
+    articleMarkdown: "",
+    articleSlug: "",
   });
   const [publishedEntryDraft, setPublishedEntryDraft] =
     useState<PublishedEntryDraftState>({
       title: "",
       summary: "",
-      category: "improvement",
+      category: "feature",
+      articleMarkdown: "",
+      articleSlug: "",
       publishedAt: null,
     });
   const [
@@ -1234,6 +1237,12 @@ export function App({
     useState<PostImageGenerationAvailability>({ status: "checking" });
   const [postImageUploadStatus, setPostImageUploadStatus] = useState<
     "idle" | "running"
+  >("idle");
+  const [postImageRemovalStatus, setPostImageRemovalStatus] = useState<
+    "idle" | "running"
+  >("idle");
+  const [publishedEntrySaveStatus, setPublishedEntrySaveStatus] = useState<
+    "idle" | "saving"
   >("idle");
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
   const [billingUsage, setBillingUsage] = useState<BillingUsageDetails | null>(
@@ -1337,7 +1346,7 @@ export function App({
     getPublicChangelogUrl(
       activePublicChangelogPath,
       settings,
-      deploymentMode === "admin" ? publicSiteUrl : undefined,
+      deploymentMode === "admin" ? getHostedPublicChangelogUrl() : undefined,
     );
   const aiCreditUsageLabel = billingUsage
     ? formatHeaderAiCreditUsage(billingUsage)
@@ -1865,10 +1874,10 @@ export function App({
         );
       }
 
-      const body = (await response.json()) as Omit<
-        GitHubConnectionState,
-        "loading" | "error"
-      >;
+      const body =
+        await readCooeeApiJson<
+          Omit<GitHubConnectionState, "loading" | "error">
+        >(response);
       const repositories = getAdminRepositoriesFromConnection(body);
       const nextActiveRepositoryId =
         activeRepositoryId &&
@@ -2786,6 +2795,8 @@ export function App({
             title,
             summary,
             category: manualUpdate.category,
+            articleMarkdown: manualUpdate.articleMarkdown ?? "",
+            articleSlug: manualUpdate.articleSlug ?? "",
           }),
         },
       );
@@ -2800,7 +2811,9 @@ export function App({
       setManualUpdate({
         title: "",
         summary: "",
-        category: "improvement",
+        category: "feature",
+        articleMarkdown: "",
+        articleSlug: "",
       });
       setLogEvents((events) => [
         {
@@ -2822,6 +2835,7 @@ export function App({
 
   function openEditPublishedEntry(entry: PublishedEntry) {
     setEditingPublishedEntry(entry);
+    setPublishedEntrySaveStatus("idle");
     setPublishedEntryRewriteInstructions("");
     setMarketingRegenerationStatus("idle");
     setPostImageGenerationStatus("idle");
@@ -2832,6 +2846,8 @@ export function App({
       title: entry.title,
       summary: entry.summary,
       category: entry.category,
+      articleMarkdown: entry.articleMarkdown ?? "",
+      articleSlug: entry.articleSlug ?? "",
       publishedAt: entry.publishedAt ?? new Date().toISOString(),
     });
   }
@@ -2857,6 +2873,8 @@ export function App({
         title: body.title,
         summary: body.summary,
         category: toUiCategory(body.category),
+        articleMarkdown: publishedEntryDraft.articleMarkdown,
+        articleSlug: publishedEntryDraft.articleSlug,
         publishedAt: publishedEntryDraft.publishedAt,
       });
       setPublishedEntryRewriteInstructions("");
@@ -2926,6 +2944,8 @@ export function App({
         title: body.title,
         summary: body.summary,
         category: toUiCategory(body.category),
+        articleMarkdown: entry.articleMarkdown ?? "",
+        articleSlug: entry.articleSlug ?? "",
         publishedAt: entry.publishedAt ?? new Date().toISOString(),
       });
       toast.success("Post rewritten.", {
@@ -3143,10 +3163,68 @@ export function App({
     }
   }
 
+  async function removePublishedEntryPostImage() {
+    if (
+      !editingPublishedEntry ||
+      !isPersistedPublishedEntry(editingPublishedEntry)
+    ) {
+      return;
+    }
+
+    try {
+      setPostImageRemovalStatus("running");
+      const response = await fetch(
+        `/api/admin/changelog-entries/${encodeURIComponent(editingPublishedEntry.id)}/image`,
+        { method: "DELETE" },
+      );
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          body.error ?? `Post image removal failed with ${response.status}`,
+        );
+      }
+
+      const body = (await response.json()) as ApiChangelogEntry;
+      const entryKey = getPublishedEntryKey(editingPublishedEntry);
+      setPublishedEntries((entries) =>
+        entries.map((entry) =>
+          getPublishedEntryKey(entry) === entryKey
+            ? {
+                ...entry,
+                imageUrl: body.imageUrl ?? null,
+                imageGenerationStatus: null,
+                imageGenerationError: null,
+              }
+            : entry,
+        ),
+      );
+      setEditingPublishedEntry((current) =>
+        current && getPublishedEntryKey(current) === entryKey
+          ? {
+              ...current,
+              imageUrl: body.imageUrl ?? null,
+              imageGenerationStatus: null,
+              imageGenerationError: null,
+            }
+          : current,
+      );
+      toast.success("Post image removed.");
+    } catch (error) {
+      toast.error("Could not remove post image.", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setPostImageRemovalStatus("idle");
+    }
+  }
+
   async function saveEditedPublishedEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editingPublishedEntry) {
+    if (!editingPublishedEntry || publishedEntrySaveStatus === "saving") {
       return;
     }
 
@@ -3166,16 +3244,16 @@ export function App({
       title,
       summary,
       category: publishedEntryDraft.category,
+      articleMarkdown: publishedEntryDraft.articleMarkdown ?? "",
+      articleSlug: publishedEntryDraft.articleSlug ?? "",
       publishedAt,
       time: formatPublishedEntryTime(publishedAt),
     };
 
-    setPublishedEntries((entries) =>
-      replacePublishedEntry(entries, previousEntryKey, optimisticEntry),
-    );
-    setEditingPublishedEntry(null);
+    setPublishedEntrySaveStatus("saving");
 
     try {
+      let savedEntry = optimisticEntry;
       if (isPersistedPublishedEntry(previousEntry)) {
         const response = await fetch(
           `/api/admin/changelog-entries/${encodeURIComponent(previousEntry.id)}`,
@@ -3186,35 +3264,41 @@ export function App({
               title,
               summary,
               category: toApiCategory(publishedEntryDraft.category),
+              articleMarkdown: publishedEntryDraft.articleMarkdown ?? "",
+              articleSlug: publishedEntryDraft.articleSlug ?? "",
               publishedAt,
             }),
           },
         );
 
         if (!response.ok) {
-          throw new Error(`Changelog update failed with ${response.status}`);
+          const errorBody = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(
+            errorBody?.error ??
+              "Cooee couldn’t save this post. Try again in a moment.",
+          );
         }
 
-        const body = (await response.json()) as ApiChangelogEntry;
-        const confirmedEntry = toPublishedEntry(body);
-        setPublishedEntries((entries) =>
-          replacePublishedEntry(entries, previousEntryKey, confirmedEntry),
-        );
+        const body = await readCooeeApiJson<ApiChangelogEntry>(response);
+        savedEntry = toPublishedEntry(body);
       }
 
-      toast.success("Changelog post updated.");
-    } catch {
       setPublishedEntries((entries) =>
-        replacePublishedEntry(entries, previousEntryKey, previousEntry),
+        replacePublishedEntry(entries, previousEntryKey, savedEntry),
       );
-      setEditingPublishedEntry(previousEntry);
-      setPublishedEntryDraft({
-        title,
-        summary,
-        category: publishedEntryDraft.category,
-        publishedAt,
+      setEditingPublishedEntry(null);
+      toast.success("Changelog post updated.");
+    } catch (error) {
+      toast.error("Could not save changes.", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Your edits are still here. Try again in a moment.",
       });
-      toast.error("Could not update changelog post.");
+    } finally {
+      setPublishedEntrySaveStatus("idle");
     }
   }
 
@@ -3512,7 +3596,10 @@ export function App({
   if (surface === "publicChangelog") {
     return (
       <>
-        <PublicChangelogRoute slug={getCurrentPublicChangelogSlug()} />
+        <PublicChangelogRoute
+          articleSlug={getCurrentPublicArticleSlug()}
+          slug={getCurrentPublicChangelogSlug()}
+        />
         <Toaster theme={theme} />
       </>
     );
@@ -3888,10 +3975,12 @@ export function App({
           <EditPublishedEntrySheet
             canGeneratePostImage={
               isPersistedPublishedEntry(editingPublishedEntry) &&
-              getChangelogCategoryDisplayType(
-                publishedEntryDraft.category,
-                settings.categoryDefinitions,
-              ) === "post"
+              isPostLikeDisplayType(
+                getChangelogCategoryDisplayType(
+                  publishedEntryDraft.category,
+                  settings.categoryDefinitions,
+                ),
+              )
             }
             canRegenerateMarketingCopy={isPersistedPublishedEntry(
               editingPublishedEntry,
@@ -3915,9 +4004,12 @@ export function App({
             isRegeneratingMarketingCopy={
               marketingRegenerationStatus === "running"
             }
+            isSaving={publishedEntrySaveStatus === "saving"}
+            isRemovingPostImage={postImageRemovalStatus === "running"}
             isUploadingPostImage={postImageUploadStatus === "running"}
             onClose={() => setEditingPublishedEntry(null)}
             onGeneratePostImage={generatePublishedEntryPostImage}
+            onRemovePostImage={removePublishedEntryPostImage}
             onRegenerateMarketingCopy={regeneratePublishedEntryMarketingCopy}
             onSaveEditedEntry={saveEditedPublishedEntry}
             onUploadPostImage={uploadPublishedEntryPostImage}
@@ -4192,7 +4284,157 @@ function getAuthUserInitials(value: string): string {
     .join("");
 }
 
-function PublicChangelogRoute({ slug }: { slug: string | null }) {
+type ArticleCardOrigin = {
+  articleViewportTop: number;
+  element: HTMLElement;
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+};
+
+type ArticleCardTransform = {
+  scaleX: number;
+  scaleY: number;
+  x: number;
+  y: number;
+};
+
+const publicArticleOpenDuration = 380;
+const publicArticleCloseDuration = 280;
+const publicArticleMotionEase = [0.22, 1, 0.36, 1] as const;
+const publicArticleInitialTransform: ArticleCardTransform = {
+  scaleX: 0.985,
+  scaleY: 0.985,
+  x: 0,
+  y: 12,
+};
+
+function getPublicArticleViewportTop(): number {
+  if (typeof window === "undefined") {
+    return 12;
+  }
+
+  const viewportInset = window.innerWidth >= 640 ? 24 : 12;
+  const chrome = document.querySelector<HTMLElement>(
+    "[data-public-changelog-chrome]",
+  );
+  const chromeBottom = chrome?.getBoundingClientRect().bottom ?? viewportInset;
+
+  return Math.max(chromeBottom, viewportInset);
+}
+
+function PublicChangelogRoute({
+  slug,
+  articleSlug,
+}: {
+  slug: string | null;
+  articleSlug: string | null;
+}) {
+  const [activeArticleSlug, setActiveArticleSlug] = useState(articleSlug);
+  const [articleCardOrigin, setArticleCardOrigin] =
+    useState<ArticleCardOrigin | null>(null);
+  const [isClosingArticle, setIsClosingArticle] = useState(false);
+
+  const closeArticle = useCallback(
+    (updateHistory: boolean) => {
+      if (!activeArticleSlug || isClosingArticle) {
+        return;
+      }
+
+      if (updateHistory) {
+        window.history.replaceState(null, "", getPublicChangelogRootPath(slug));
+      }
+      setIsClosingArticle(true);
+    },
+    [activeArticleSlug, isClosingArticle, slug],
+  );
+
+  const finishArticleClose = useCallback(() => {
+    if (!isClosingArticle) {
+      return;
+    }
+
+    setActiveArticleSlug(null);
+    setArticleCardOrigin(null);
+    setIsClosingArticle(false);
+  }, [isClosingArticle]);
+
+  useEffect(() => {
+    setActiveArticleSlug(articleSlug);
+    setArticleCardOrigin(null);
+    setIsClosingArticle(false);
+  }, [articleSlug]);
+
+  const syncArticleRoute = useEffectEvent(() => {
+    const nextArticleSlug = getCurrentPublicArticleSlug();
+    if (nextArticleSlug) {
+      setArticleCardOrigin(null);
+      setIsClosingArticle(false);
+      setActiveArticleSlug(nextArticleSlug);
+    } else {
+      closeArticle(false);
+    }
+  });
+
+  useEffect(() => {
+    window.addEventListener("popstate", syncArticleRoute);
+    return () => {
+      window.removeEventListener("popstate", syncArticleRoute);
+    };
+  }, [syncArticleRoute]);
+
+  function navigateToArticle(
+    nextArticleSlug: string,
+    cardOrigin: ArticleCardOrigin | null,
+  ) {
+    const href = getPublicArticlePath(slug, nextArticleSlug);
+    window.history.pushState(null, "", href);
+    setArticleCardOrigin(cardOrigin);
+    setIsClosingArticle(false);
+    setActiveArticleSlug(nextArticleSlug);
+  }
+
+  function navigateToChangelog() {
+    closeArticle(true);
+  }
+
+  return (
+    <>
+      <PublicChangelogFeedRoute
+        isArticleOpen={Boolean(activeArticleSlug) && !isClosingArticle}
+        onBackToChangelog={navigateToChangelog}
+        onOpenArticle={navigateToArticle}
+        slug={slug}
+      />
+      {activeArticleSlug ? (
+        <PublicArticleRoute
+          articleSlug={activeArticleSlug}
+          cardOrigin={articleCardOrigin}
+          isClosing={isClosingArticle}
+          onBackToChangelog={navigateToChangelog}
+          onCloseComplete={finishArticleClose}
+          slug={slug}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function PublicChangelogFeedRoute({
+  isArticleOpen,
+  slug,
+  onBackToChangelog,
+  onOpenArticle,
+}: {
+  isArticleOpen: boolean;
+  slug: string | null;
+  onBackToChangelog: () => void;
+  onOpenArticle: (
+    articleSlug: string,
+    cardOrigin: ArticleCardOrigin | null,
+  ) => void;
+}) {
   const [state, setState] = useState<PublicChangelogLoadState>({
     status: "loading",
   });
@@ -4385,6 +4627,7 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
         categoryDefinitions={state.categoryDefinitions}
         entries={state.entries}
         groupEntriesByCategory={state.groupEntriesByCategory}
+        isArticleOpen={isArticleOpen}
         logoDataUrl={state.logoUrl}
         lightLogoDataUrl={state.lightLogoUrl}
         publicTheme={state.publicTheme}
@@ -4394,8 +4637,11 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
         publicResourceUrls={getPublicChangelogResourceUrls(slug)}
         hasMoreEntries={state.pagination.hasMore}
         isLoadingMoreEntries={state.isLoadingMoreEntries}
+        onBackToChangelog={onBackToChangelog}
         loadMoreError={state.loadMoreError}
         onLoadMoreEntries={loadOlderPublicChangelogEntries}
+        onOpenArticle={onOpenArticle}
+        publicChangelogSlug={slug}
         visibleRepositories={[]}
       />
     );
@@ -4428,6 +4674,440 @@ function PublicChangelogRoute({ slug }: { slug: string | null }) {
   );
 }
 
+function PublicArticleRoute({
+  articleSlug,
+  cardOrigin,
+  isClosing,
+  onBackToChangelog,
+  onCloseComplete,
+  slug,
+}: {
+  articleSlug: string;
+  cardOrigin: ArticleCardOrigin | null;
+  isClosing: boolean;
+  onBackToChangelog: () => void;
+  onCloseComplete: () => void;
+  slug: string | null;
+}) {
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error" }
+    | { status: "ready"; article: ApiPublicArticle }
+  >({ status: "loading" });
+  const [isArticleImageReady, setIsArticleImageReady] = useState(false);
+
+  useEffect(() => {
+    let ignore = false;
+    setState({ status: "loading" });
+    setIsArticleImageReady(false);
+
+    async function loadArticle() {
+      try {
+        const response = await fetch(
+          getPublicArticleApiPath(slug, articleSlug),
+          {
+            cache: "no-store",
+          },
+        );
+        if (!response.ok) {
+          throw new Error(`Article failed with ${response.status}`);
+        }
+        const article = (await response.json()) as ApiPublicArticle;
+        if (!ignore) {
+          setState({ status: "ready", article });
+        }
+      } catch {
+        if (!ignore) {
+          setState({ status: "error" });
+        }
+      }
+    }
+
+    void loadArticle();
+    return () => {
+      ignore = true;
+    };
+  }, [articleSlug, slug]);
+
+  useEffect(() => {
+    if (state.status !== "ready") {
+      return;
+    }
+
+    const currentUrl = new URL(
+      getPublicArticlePath(slug, articleSlug),
+      window.location.origin,
+    ).toString();
+    applyPublicChangelogSeoMetadata({
+      appName: state.article.entry.title,
+      description: state.article.entry.summary,
+      faviconUrl: state.article.changelog.faviconUrl ?? null,
+      publicUrl: currentUrl,
+      rssUrl: getPublicChangelogResourceUrls(slug).rss,
+    });
+  }, [articleSlug, slug, state]);
+
+  let renderContent: ReactNode;
+  if (state.status === "loading") {
+    renderContent = (
+      <div className="flex min-h-full items-center justify-center bg-transparent p-8 text-muted-foreground">
+        <LoaderCircleIcon
+          aria-label="Loading article"
+          className="size-5 animate-spin"
+        />
+      </div>
+    );
+  } else if (state.status === "error") {
+    renderContent = (
+      <div className="flex min-h-full items-center bg-transparent p-6 text-foreground sm:p-10">
+        <section className="w-full border-t border-border pt-8">
+          <h1 className="text-2xl font-semibold tracking-normal sm:text-3xl">
+            Article not found
+          </h1>
+          <a
+            className="mt-4 inline-flex text-sm font-semibold underline underline-offset-4"
+            href={getPublicChangelogRootPath(slug)}
+            onClick={(event) => {
+              event.preventDefault();
+              onBackToChangelog();
+            }}
+          >
+            Back to changelog
+          </a>
+        </section>
+      </div>
+    );
+  } else {
+    const changelog = state.article.changelog;
+    renderContent = (
+      <PublicArticlePage
+        article={toPublishedEntry(state.article.entry)}
+        categoryDefinitions={normalizeChangelogCategoryDefinitions(
+          changelog.categoryDefinitions,
+        )}
+        onImageReady={() => setIsArticleImageReady(true)}
+        publicTheme={normalizeThemeMode(changelog.publicTheme)}
+      />
+    );
+  }
+
+  const isContentReady =
+    state.status !== "loading" &&
+    (state.status !== "ready" ||
+      !state.article.entry.imageUrl ||
+      isArticleImageReady);
+
+  return (
+    <PublicArticleOverlay
+      cardOrigin={cardOrigin}
+      isContentReady={isContentReady}
+      isClosing={isClosing}
+      onCloseComplete={onCloseComplete}
+    >
+      {renderContent}
+    </PublicArticleOverlay>
+  );
+}
+
+function PublicArticleOverlay({
+  cardOrigin,
+  children,
+  isContentReady,
+  isClosing,
+  onCloseComplete,
+}: {
+  cardOrigin: ArticleCardOrigin | null;
+  children: ReactNode;
+  isContentReady: boolean;
+  isClosing: boolean;
+  onCloseComplete: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const cardPreviewRef = useRef<HTMLDivElement | null>(null);
+  const shouldReduceMotion = useReducedMotion();
+  const [initialTransform, setInitialTransform] =
+    useState<ArticleCardTransform | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpansionComplete, setIsExpansionComplete] = useState(false);
+  const [articleViewportTop, setArticleViewportTop] = useState(
+    () => cardOrigin?.articleViewportTop ?? getPublicArticleViewportTop(),
+  );
+
+  useLayoutEffect(() => {
+    function updateArticleViewportTop() {
+      const nextTop = getPublicArticleViewportTop();
+      setArticleViewportTop((currentTop) =>
+        currentTop === nextTop ? currentTop : nextTop,
+      );
+    }
+
+    updateArticleViewportTop();
+    window.addEventListener("resize", updateArticleViewportTop);
+    const observer =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(updateArticleViewportTop);
+    observer?.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      window.removeEventListener("resize", updateArticleViewportTop);
+      observer?.disconnect();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) {
+      return;
+    }
+
+    setIsExpanded(false);
+    setIsExpansionComplete(false);
+    if (cardOrigin) {
+      const destination = panel.getBoundingClientRect();
+      const scaleX = Math.max(cardOrigin.width / destination.width, 0.01);
+      const scaleY = Math.max(cardOrigin.height / destination.height, 0.01);
+      const translateX = cardOrigin.left - destination.left;
+      const translateY = cardOrigin.top - destination.top;
+      setInitialTransform({
+        scaleX,
+        scaleY,
+        x: translateX,
+        y: translateY,
+      });
+    } else {
+      setInitialTransform(publicArticleInitialTransform);
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setIsExpanded(true);
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [cardOrigin]);
+
+  useLayoutEffect(() => {
+    const preview = cardPreviewRef.current;
+    if (!preview) {
+      return;
+    }
+
+    preview.replaceChildren();
+    if (!cardOrigin) {
+      return;
+    }
+
+    const clone = cardOrigin.element.cloneNode(true) as HTMLElement;
+    clone.removeAttribute("id");
+    clone.setAttribute("aria-hidden", "true");
+    clone.inert = true;
+    clone
+      .querySelectorAll<HTMLElement>("a, button, input, select, textarea")
+      .forEach((element) => element.setAttribute("tabindex", "-1"));
+    preview.append(clone);
+
+    return () => {
+      preview.replaceChildren();
+    };
+  }, [cardOrigin]);
+
+  useEffect(() => {
+    if (isClosing) {
+      setIsExpanded(false);
+    }
+  }, [isClosing]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isExpanded && !isClosing) {
+      panelRef.current?.focus({ preventScroll: true });
+    }
+  }, [isClosing, isExpanded]);
+
+  const isOpen = isExpanded && !isClosing;
+  const isReaderVisible = isOpen && (isContentReady || cardOrigin === null);
+  const isCardPreviewVisible =
+    !isClosing && (!isOpen || !isContentReady || !isExpansionComplete);
+  const collapsedTransform = initialTransform ?? publicArticleInitialTransform;
+  const shellIsVisible = Boolean(cardOrigin) && (isOpen || isClosing);
+  const shellTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : {
+        duration:
+          (isClosing ? publicArticleCloseDuration : publicArticleOpenDuration) /
+          1000,
+        ease: publicArticleMotionEase,
+      };
+  const readerTransition = { duration: 0 };
+  const cardPreviewTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : {
+        default: {
+          duration: publicArticleOpenDuration / 1000,
+          ease: publicArticleMotionEase,
+        },
+        opacity: {
+          duration: 0,
+        },
+      };
+  function handleShellAnimationComplete() {
+    if (isClosing && cardOrigin) {
+      onCloseComplete();
+    }
+  }
+
+  function handleReaderAnimationComplete() {
+    if (isClosing && !cardOrigin) {
+      onCloseComplete();
+    }
+  }
+
+  function handleCardPreviewAnimationComplete() {
+    if (isOpen) {
+      setIsExpansionComplete(true);
+    }
+  }
+
+  return (
+    <div
+      className="pointer-events-none fixed inset-0 z-50"
+      data-public-article-overlay=""
+    >
+      {cardOrigin ? (
+        <motion.div
+          aria-hidden="true"
+          animate={{
+            opacity: isCardPreviewVisible ? 1 : 0,
+            scaleX: isOpen ? 1 / collapsedTransform.scaleX : 1,
+            scaleY: isOpen ? 1 / collapsedTransform.scaleY : 1,
+            x: isOpen ? -collapsedTransform.x : 0,
+            y: isOpen ? -collapsedTransform.y : 0,
+          }}
+          className="pointer-events-none fixed overflow-hidden"
+          initial={false}
+          onAnimationComplete={handleCardPreviewAnimationComplete}
+          style={{
+            height: cardOrigin.height,
+            left: cardOrigin.left,
+            top: cardOrigin.top,
+            transformOrigin: "top left",
+            width: cardOrigin.width,
+            willChange: "transform, opacity",
+          }}
+          transition={cardPreviewTransition}
+        >
+          <div className="h-full w-full" ref={cardPreviewRef} />
+        </motion.div>
+      ) : null}
+      <motion.div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-x-6 bottom-3 mx-auto max-w-4xl sm:bottom-6"
+        animate={{
+          opacity: shellIsVisible ? 1 : 0,
+          scaleX: isOpen ? 1 : collapsedTransform.scaleX,
+          scaleY: isOpen ? 1 : collapsedTransform.scaleY,
+          x: isOpen ? 0 : collapsedTransform.x,
+          y: isOpen ? 0 : collapsedTransform.y,
+        }}
+        initial={false}
+        onAnimationComplete={handleShellAnimationComplete}
+        style={{
+          top: articleViewportTop,
+          transformOrigin: "top left",
+          willChange: "transform, opacity",
+        }}
+        transition={shellTransition}
+      >
+        <div className="h-full rounded-[2.5rem] border border-border/70 bg-white/90 dark:bg-card sm:rounded-[3rem]" />
+      </motion.div>
+      <motion.div
+        aria-hidden={!isReaderVisible}
+        aria-label="Article"
+        animate={{
+          opacity: isReaderVisible ? 1 : 0,
+        }}
+        className="fixed inset-x-6 bottom-3 mx-auto max-w-4xl overflow-hidden rounded-[2.5rem] border border-border/70 bg-white/90 text-card-foreground outline-none dark:bg-card sm:bottom-6 sm:rounded-[3rem]"
+        initial={false}
+        onAnimationComplete={handleReaderAnimationComplete}
+        role="region"
+        ref={panelRef}
+        style={{
+          pointerEvents: isReaderVisible ? "auto" : "none",
+          top: articleViewportTop,
+          willChange: "transform, opacity",
+        }}
+        tabIndex={-1}
+        transition={readerTransition}
+      >
+        <div className="h-full overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {children}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function PublicArticlePage({
+  article,
+  categoryDefinitions,
+  onImageReady,
+  publicTheme,
+}: {
+  article: PublishedEntry;
+  categoryDefinitions: ChangelogCategoryDefinition[];
+  onImageReady: () => void;
+  publicTheme: ThemeMode;
+}) {
+  const currentTheme = getRememberedPublicChangelogTheme(publicTheme);
+  const articleMarkup = renderMarkdown(article.articleMarkdown ?? "");
+
+  return (
+    <div
+      className="min-h-full bg-transparent text-foreground"
+      data-theme={currentTheme}
+    >
+      <article
+        className="mx-auto max-w-4xl p-6 pb-10 sm:p-8 sm:pb-14"
+        id="article-content"
+      >
+        {article.imageUrl ? (
+          <PublicEntryImage
+            onLoadStateChange={onImageReady}
+            src={article.imageUrl}
+          />
+        ) : null}
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <PublicChangelogCategoryBadge
+            category={article.category}
+            categoryDefinitions={categoryDefinitions}
+            publicTheme={currentTheme}
+          />
+          <time className="text-sm text-muted-foreground">
+            {formatPublishedEntryTime(article.publishedAt)}
+          </time>
+        </div>
+        <h1 className="max-w-[18ch] text-balance text-3xl font-semibold leading-[1.05] tracking-normal text-foreground sm:text-4xl">
+          {article.title}
+        </h1>
+        <div
+          className="markdown-summary mt-4 max-w-[82ch] text-balance text-base leading-relaxed text-muted-foreground [&_a]:font-semibold [&_a]:text-primary [&_ol]:mt-4 [&_p]:m-0 [&_p+p]:mt-4 [&_ul]:mt-4"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(article.summary) }}
+        />
+        <div
+          className="markdown-summary article-markdown mt-8 max-w-[82ch] text-[1.05rem] leading-8 text-foreground [&_a]:font-semibold [&_a]:text-primary [&_h1]:mt-10 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mt-10 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mt-8 [&_h3]:text-xl [&_h3]:font-semibold [&_ol]:mt-5 [&_p]:m-0 [&_p+p]:mt-5 [&_ul]:mt-5"
+          dangerouslySetInnerHTML={{ __html: articleMarkup }}
+        />
+      </article>
+    </div>
+  );
+}
+
 export function PublicChangelogPage({
   appName,
   categoryDefinitions = defaultChangelogCategoryDefinitions,
@@ -4435,12 +5115,16 @@ export function PublicChangelogPage({
   entries,
   groupEntriesByCategory = true,
   hasMoreEntries = false,
+  isArticleOpen = false,
   isLoadingMoreEntries = false,
   lightLogoDataUrl = null,
   loadMoreError = null,
   logoDataUrl,
+  onBackToChangelog,
   onLoadMoreEntries,
+  onOpenArticle,
   onThemeChange,
+  publicChangelogSlug = null,
   publicTheme = "light",
   publicLogoAlignment = "left",
   publicAppLabel = defaultPublicAppLabel,
@@ -4455,12 +5139,19 @@ export function PublicChangelogPage({
   entries: PublishedEntry[];
   groupEntriesByCategory?: boolean;
   hasMoreEntries?: boolean;
+  isArticleOpen?: boolean;
   isLoadingMoreEntries?: boolean;
   lightLogoDataUrl?: string | null;
   loadMoreError?: string | null;
   logoDataUrl: string | null;
+  onBackToChangelog?: () => void;
   onLoadMoreEntries?: () => void;
+  onOpenArticle?: (
+    articleSlug: string,
+    cardOrigin: ArticleCardOrigin | null,
+  ) => void;
   onThemeChange?: (theme: ThemeMode) => void;
+  publicChangelogSlug?: string | null;
   publicTheme?: ThemeMode;
   publicLogoAlignment?: PublicLogoAlignment;
   publicAppLabel?: string;
@@ -4474,6 +5165,7 @@ export function PublicChangelogPage({
   visibleRepositories: PublicPreviewRepository[];
 }) {
   const escapedAppName = appName.trim() || "Cooee";
+  const shouldReduceMotion = useReducedMotion();
   const configuredPublicTheme = normalizeThemeMode(publicTheme);
   const logoAlignment = normalizePublicLogoAlignment(publicLogoAlignment);
   const [currentPublicTheme, setCurrentPublicTheme] = useState<ThemeMode>(() =>
@@ -4481,12 +5173,10 @@ export function PublicChangelogPage({
       ? configuredPublicTheme
       : getRememberedPublicChangelogTheme(configuredPublicTheme),
   );
-  const nextPublicTheme = currentPublicTheme === "dark" ? "light" : "dark";
   const activeLogoUrl =
     currentPublicTheme === "light"
       ? lightLogoDataUrl || logoDataUrl
       : logoDataUrl || lightLogoDataUrl;
-  const publicThemeToggleLabel = `Switch to ${nextPublicTheme} mode`;
   const resolvedCategoryDefinitions =
     normalizeChangelogCategoryDefinitions(categoryDefinitions);
   const publicCategories = resolvedCategoryDefinitions.map(
@@ -4560,13 +5250,6 @@ export function PublicChangelogPage({
     onThemeChange?.(currentPublicTheme);
   }, [currentPublicTheme, onThemeChange]);
 
-  function updatePublicTheme(theme: ThemeMode) {
-    setCurrentPublicTheme(theme);
-    if (!embedded) {
-      persistPublicChangelogTheme(theme);
-    }
-  }
-
   function togglePublicCategoryFilter(category: PublishedEntry["category"]) {
     setSelectedPublicCategories((current) => {
       const isAllSelected = publicCategories.every((item) => current.has(item));
@@ -4609,348 +5292,408 @@ export function PublicChangelogPage({
       ) : null}
       <PublicChangelogContentRoot
         className={cn(
-          "mx-auto max-w-3xl px-6",
+          "px-6",
           embedded ? "py-10 max-sm:py-8" : "py-16 max-sm:py-10",
         )}
         id={embedded ? undefined : "main-content"}
       >
-        <header className="mb-9 border-b border-border pb-6">
-          {showBranding && activeLogoUrl ? (
+        <motion.div
+          animate={{ maxWidth: isArticleOpen ? "56rem" : "48rem" }}
+          className="mx-auto w-full"
+          data-public-changelog-chrome=""
+          initial={false}
+          transition={
+            shouldReduceMotion
+              ? { duration: 0 }
+              : {
+                  duration:
+                    (isArticleOpen
+                      ? publicArticleOpenDuration
+                      : publicArticleCloseDuration) / 1000,
+                  ease: publicArticleMotionEase,
+                }
+          }
+        >
+          <header className="relative mb-9 pb-6">
+            {showBranding && activeLogoUrl ? (
+              <div
+                className={cn(
+                  "mb-8 flex items-center",
+                  logoAlignment === "center" && "justify-center",
+                  logoAlignment === "right" && "justify-end",
+                  logoAlignment === "left" && "justify-start",
+                )}
+                data-public-logo-alignment={logoAlignment}
+              >
+                <img
+                  className="block h-9 max-w-[180px] object-contain"
+                  src={activeLogoUrl}
+                  alt={`${escapedAppName} logo`}
+                />
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h1 className="text-balance text-3xl font-semibold leading-tight tracking-normal text-foreground">
+                {escapedAppName} changelog
+              </h1>
+              <div
+                className="flex flex-wrap items-center gap-2"
+                data-public-header-actions
+              >
+                {isArticleOpen && onBackToChangelog ? (
+                  <Button
+                    className="rounded-full"
+                    onClick={onBackToChangelog}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <ChevronLeftIcon data-icon="inline-start" aria-hidden />
+                    Back
+                  </Button>
+                ) : null}
+                {publicResourceUrls ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          aria-label="Changelog feeds"
+                          className="rounded-full"
+                          size="icon-sm"
+                          title="Changelog feeds"
+                          type="button"
+                          variant="outline"
+                        />
+                      }
+                    >
+                      <Share2Icon aria-hidden />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem
+                          render={
+                            <a
+                              href={publicResourceUrls.json}
+                              rel="noreferrer"
+                              target="_blank"
+                            />
+                          }
+                        >
+                          <ParenthesesIcon
+                            data-icon="inline-start"
+                            aria-hidden
+                          />
+                          JSON feed
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          render={
+                            <a
+                              href={publicResourceUrls.rss}
+                              rel="noreferrer"
+                              target="_blank"
+                            />
+                          }
+                        >
+                          <RssIcon data-icon="inline-start" aria-hidden />
+                          RSS feed
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          render={
+                            <a
+                              href={publicResourceUrls.api}
+                              rel="noreferrer"
+                              target="_blank"
+                            />
+                          }
+                        >
+                          <CodeXmlIcon data-icon="inline-start" aria-hidden />
+                          API
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+                <Button
+                  className="rounded-full"
+                  aria-controls="public-changelog-filters"
+                  aria-label={publicFilterToggleLabel}
+                  aria-expanded={isPublicFiltersOpen}
+                  data-public-filter-toggle
+                  onClick={() => setIsPublicFiltersOpen((open) => !open)}
+                  size="icon-sm"
+                  type="button"
+                  variant={hasFilters ? "default" : "outline"}
+                >
+                  <ListFilterIcon data-icon="inline-start" aria-hidden />
+                  <span className="sr-only">{publicFilterToggleLabel}</span>
+                </Button>
+                {appUrl ? (
+                  <a
+                    className={cn(
+                      buttonVariants({ size: "sm", variant: "outline" }),
+                      "rounded-full text-sm",
+                    )}
+                    data-public-app-link
+                    href={appUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {appLabel}
+                  </a>
+                ) : null}
+              </div>
+            </div>
+            {isPublicFiltersOpen ? (
+              <section
+                aria-label="Filter changelog updates"
+                className="mt-8 grid gap-3 rounded-2xl border border-border/70 bg-card/80 p-4 text-card-foreground shadow-xs"
+                id="public-changelog-filters"
+              >
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem_auto] md:items-end">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                      Search
+                    </span>
+                    <Input
+                      className="h-9 text-sm"
+                      onChange={(event) =>
+                        setPublicEntrySearch(event.target.value)
+                      }
+                      placeholder="Title or summary"
+                      type="search"
+                      value={publicEntrySearch}
+                    />
+                  </label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                      Date range
+                    </span>
+                    <Popover
+                      open={isPublicDateRangeOpen}
+                      onOpenChange={setIsPublicDateRangeOpen}
+                    >
+                      <PopoverTrigger
+                        render={
+                          <Button
+                            className={cn(
+                              "h-9 justify-start overflow-hidden px-3 text-left text-sm font-normal",
+                              !selectedPublicDateRange &&
+                                "text-muted-foreground",
+                            )}
+                            type="button"
+                            variant="outline"
+                          />
+                        }
+                      >
+                        <CalendarIcon data-icon="inline-start" aria-hidden />
+                        <span className="truncate">
+                          {formatDateRangeLabel(selectedPublicDateRange)}
+                        </span>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-auto p-0">
+                        <Calendar
+                          mode="range"
+                          numberOfMonths={2}
+                          onSelect={setDraftPublicDateRange}
+                          selected={draftPublicDateRange}
+                        />
+                        <div className="flex items-center justify-end gap-2 border-t p-2">
+                          <Button
+                            onClick={() => setDraftPublicDateRange(undefined)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            Clear dates
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              setPublicEntryDateFrom(
+                                formatDateFilterValue(
+                                  draftPublicDateRange?.from,
+                                ),
+                              );
+                              setPublicEntryDateTo(
+                                formatDateFilterValue(
+                                  draftPublicDateRange?.to ??
+                                    draftPublicDateRange?.from,
+                                ),
+                              );
+                              setIsPublicDateRangeOpen(false);
+                            }}
+                            size="sm"
+                            type="button"
+                          >
+                            Apply
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <Button
+                    className="h-9 text-sm"
+                    disabled={!hasFilters}
+                    onClick={clearPublicFilters}
+                    type="button"
+                    variant="outline"
+                  >
+                    Clear
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    className="h-8 text-xs"
+                    onClick={() =>
+                      setSelectedPublicCategories(new Set(publicCategories))
+                    }
+                    size="sm"
+                    type="button"
+                    variant={
+                      selectedCategoryKey === allPublicCategoryFilterKey
+                        ? "default"
+                        : "outline"
+                    }
+                  >
+                    All types
+                  </Button>
+                  {resolvedCategoryDefinitions.map((definition) => (
+                    <Button
+                      className={cn(
+                        "h-8 text-xs",
+                        getPublicCategoryBadgeToneClass(
+                          definition.id,
+                          currentPublicTheme,
+                        ),
+                        !selectedPublicCategories.has(definition.id) &&
+                          selectedCategoryKey !== allPublicCategoryFilterKey &&
+                          "opacity-40",
+                      )}
+                      key={definition.id}
+                      onClick={() => togglePublicCategoryFilter(definition.id)}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      {definition.label}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            <motion.div
+              aria-hidden="true"
+              animate={{ opacity: isArticleOpen ? 0 : 1 }}
+              className="absolute inset-x-0 bottom-0 h-px bg-border"
+              initial={false}
+              transition={
+                shouldReduceMotion
+                  ? { duration: 0 }
+                  : {
+                      duration: 180 / 1000,
+                      ease: publicArticleMotionEase,
+                    }
+              }
+            />
+          </header>
+        </motion.div>
+
+        <motion.div
+          aria-hidden={isArticleOpen || undefined}
+          animate={{ opacity: isArticleOpen ? 0 : 1 }}
+          className="mx-auto max-w-3xl"
+          initial={false}
+          style={{
+            pointerEvents: isArticleOpen ? "none" : "auto",
+            willChange: "opacity",
+          }}
+          transition={
+            shouldReduceMotion
+              ? { duration: 0 }
+              : {
+                  duration: 180 / 1000,
+                  ease: publicArticleMotionEase,
+                }
+          }
+        >
+          {entries.length === 0 ? (
+            <section className="text-balance rounded-2xl border border-dashed border-border/70 bg-card/50 p-6 text-center text-muted-foreground">
+              No updates published yet.
+            </section>
+          ) : dateGroups.length === 0 ? (
+            <section className="text-balance rounded-2xl border border-dashed border-border/70 bg-card/50 p-6 text-center text-muted-foreground">
+              No updates match your filters.
+            </section>
+          ) : (
+            <section aria-label="Changelog updates">
+              {dateGroups.map((group, groupIndex) => (
+                <PublicChangelogDateGroup
+                  categoryDefinitions={resolvedCategoryDefinitions}
+                  groupEntriesByCategory={groupEntriesByCategory}
+                  group={group}
+                  isLastGroup={groupIndex === dateGroups.length - 1}
+                  key={group.date}
+                  onOpenArticle={onOpenArticle}
+                  publicChangelogSlug={publicChangelogSlug}
+                  publicTheme={currentPublicTheme}
+                />
+              ))}
+            </section>
+          )}
+
+          {hasLoadMoreControl ? (
             <div
-              className={cn(
-                "mb-8 flex items-center",
-                logoAlignment === "center" && "justify-center",
-                logoAlignment === "right" && "justify-end",
-                logoAlignment === "left" && "justify-start",
-              )}
-              data-public-logo-alignment={logoAlignment}
+              className="mt-1 flex flex-col items-center gap-3 border-t border-border pt-5"
+              data-public-load-more-control
             >
-              <img
-                className="block h-9 max-w-[180px] object-contain"
-                src={activeLogoUrl}
-                alt={`${escapedAppName} logo`}
-              />
+              <Button
+                className="rounded-full text-sm"
+                disabled={isLoadingMoreEntries}
+                onClick={onLoadMoreEntries}
+                type="button"
+                variant="outline"
+              >
+                {isLoadingMoreEntries ? (
+                  <span
+                    className="inline-flex items-center gap-2"
+                    role="status"
+                  >
+                    <LoaderCircleIcon
+                      aria-hidden
+                      className="size-4 animate-spin"
+                      data-public-load-more-spinner
+                    />
+                    Loading older updates
+                  </span>
+                ) : (
+                  "Load more..."
+                )}
+              </Button>
+              {loadMoreError ? (
+                <p
+                  className="text-center text-sm text-muted-foreground"
+                  role="status"
+                >
+                  {loadMoreError}
+                </p>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-balance text-3xl font-semibold leading-tight tracking-normal text-foreground">
-              {escapedAppName} changelog
-            </h1>
-            <div
-              className="flex flex-wrap items-center gap-2"
-              data-public-header-actions
-            >
-              <Button
-                className="rounded-full"
-                aria-label={publicThemeToggleLabel}
-                onClick={() => updatePublicTheme(nextPublicTheme)}
-                size="icon-sm"
-                type="button"
-                variant="outline"
+          {showBranding ? (
+            <footer className="mt-8 flex justify-center border-t border-border pt-6">
+              <a
+                className="inline-flex items-center gap-2 text-sm text-muted-foreground no-underline"
+                href="https://cooee.sh"
+                rel="noreferrer"
+                target="_blank"
               >
-                {currentPublicTheme === "dark" ? (
-                  <SunIcon data-icon="inline-start" aria-hidden />
-                ) : (
-                  <MoonIcon data-icon="inline-start" aria-hidden />
-                )}
-                <span className="sr-only">{publicThemeToggleLabel}</span>
-              </Button>
-              {publicResourceUrls ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        aria-label="Changelog feeds"
-                        className="rounded-full"
-                        size="icon-sm"
-                        title="Changelog feeds"
-                        type="button"
-                        variant="outline"
-                      />
-                    }
-                  >
-                    <Share2Icon aria-hidden />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        render={
-                          <a
-                            href={publicResourceUrls.json}
-                            rel="noreferrer"
-                            target="_blank"
-                          />
-                        }
-                      >
-                        <ParenthesesIcon data-icon="inline-start" aria-hidden />
-                        JSON feed
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        render={
-                          <a
-                            href={publicResourceUrls.rss}
-                            rel="noreferrer"
-                            target="_blank"
-                          />
-                        }
-                      >
-                        <RssIcon data-icon="inline-start" aria-hidden />
-                        RSS feed
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        render={
-                          <a
-                            href={publicResourceUrls.api}
-                            rel="noreferrer"
-                            target="_blank"
-                          />
-                        }
-                      >
-                        <CodeXmlIcon data-icon="inline-start" aria-hidden />
-                        API
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-              <Button
-                className="rounded-full"
-                aria-controls="public-changelog-filters"
-                aria-label={publicFilterToggleLabel}
-                aria-expanded={isPublicFiltersOpen}
-                data-public-filter-toggle
-                onClick={() => setIsPublicFiltersOpen((open) => !open)}
-                size="icon-sm"
-                type="button"
-                variant={hasFilters ? "default" : "outline"}
-              >
-                <ListFilterIcon data-icon="inline-start" aria-hidden />
-                <span className="sr-only">{publicFilterToggleLabel}</span>
-              </Button>
-              {appUrl ? (
-                <a
-                  className={cn(
-                    buttonVariants({ size: "sm", variant: "outline" }),
-                    "rounded-full text-sm",
-                  )}
-                  data-public-app-link
-                  href={appUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {appLabel}
-                </a>
-              ) : null}
-            </div>
-          </div>
-        </header>
-
-        {isPublicFiltersOpen ? (
-          <section
-            aria-label="Filter changelog updates"
-            className="mb-8 grid gap-3 rounded-2xl border border-border/70 bg-card/80 p-4 text-card-foreground shadow-xs"
-            id="public-changelog-filters"
-          >
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem_auto] md:items-end">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-                  Search
-                </span>
-                <Input
-                  className="h-9 text-sm"
-                  onChange={(event) => setPublicEntrySearch(event.target.value)}
-                  placeholder="Title or summary"
-                  type="search"
-                  value={publicEntrySearch}
-                />
-              </label>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-                  Date range
-                </span>
-                <Popover
-                  open={isPublicDateRangeOpen}
-                  onOpenChange={setIsPublicDateRangeOpen}
-                >
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        className={cn(
-                          "h-9 justify-start overflow-hidden px-3 text-left text-sm font-normal",
-                          !selectedPublicDateRange && "text-muted-foreground",
-                        )}
-                        type="button"
-                        variant="outline"
-                      />
-                    }
-                  >
-                    <CalendarIcon data-icon="inline-start" aria-hidden />
-                    <span className="truncate">
-                      {formatDateRangeLabel(selectedPublicDateRange)}
-                    </span>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-auto p-0">
-                    <Calendar
-                      mode="range"
-                      numberOfMonths={2}
-                      onSelect={setDraftPublicDateRange}
-                      selected={draftPublicDateRange}
-                    />
-                    <div className="flex items-center justify-end gap-2 border-t p-2">
-                      <Button
-                        onClick={() => setDraftPublicDateRange(undefined)}
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                      >
-                        Clear dates
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          setPublicEntryDateFrom(
-                            formatDateFilterValue(draftPublicDateRange?.from),
-                          );
-                          setPublicEntryDateTo(
-                            formatDateFilterValue(
-                              draftPublicDateRange?.to ??
-                                draftPublicDateRange?.from,
-                            ),
-                          );
-                          setIsPublicDateRangeOpen(false);
-                        }}
-                        size="sm"
-                        type="button"
-                      >
-                        Apply
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-              <Button
-                className="h-9 text-sm"
-                disabled={!hasFilters}
-                onClick={clearPublicFilters}
-                type="button"
-                variant="outline"
-              >
-                Clear
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                className="h-8 text-xs"
-                onClick={() =>
-                  setSelectedPublicCategories(new Set(publicCategories))
-                }
-                size="sm"
-                type="button"
-                variant={
-                  selectedCategoryKey === allPublicCategoryFilterKey
-                    ? "default"
-                    : "outline"
-                }
-              >
-                All types
-              </Button>
-              {resolvedCategoryDefinitions.map((definition) => (
-                <Button
-                  className={cn(
-                    "h-8 text-xs",
-                    getPublicCategoryBadgeToneClass(
-                      definition.id,
-                      currentPublicTheme,
-                    ),
-                    !selectedPublicCategories.has(definition.id) &&
-                      selectedCategoryKey !== allPublicCategoryFilterKey &&
-                      "opacity-40",
-                  )}
-                  key={definition.id}
-                  onClick={() => togglePublicCategoryFilter(definition.id)}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {definition.label}
-                </Button>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {entries.length === 0 ? (
-          <section className="text-balance rounded-2xl border border-dashed border-border/70 bg-card/50 p-6 text-center text-muted-foreground">
-            No updates published yet.
-          </section>
-        ) : dateGroups.length === 0 ? (
-          <section className="text-balance rounded-2xl border border-dashed border-border/70 bg-card/50 p-6 text-center text-muted-foreground">
-            No updates match your filters.
-          </section>
-        ) : (
-          <section aria-label="Changelog updates">
-            {dateGroups.map((group, groupIndex) => (
-              <PublicChangelogDateGroup
-                categoryDefinitions={resolvedCategoryDefinitions}
-                groupEntriesByCategory={groupEntriesByCategory}
-                group={group}
-                isLastGroup={groupIndex === dateGroups.length - 1}
-                key={group.date}
-                publicTheme={currentPublicTheme}
-              />
-            ))}
-          </section>
-        )}
-
-        {hasLoadMoreControl ? (
-          <div
-            className="mt-1 flex flex-col items-center gap-3 border-t border-border pt-5"
-            data-public-load-more-control
-          >
-            <Button
-              className="rounded-full text-sm"
-              disabled={isLoadingMoreEntries}
-              onClick={onLoadMoreEntries}
-              type="button"
-              variant="outline"
-            >
-              {isLoadingMoreEntries ? (
-                <span className="inline-flex items-center gap-2" role="status">
-                  <LoaderCircleIcon
-                    aria-hidden
-                    className="size-4 animate-spin"
-                    data-public-load-more-spinner
-                  />
-                  Loading older updates
-                </span>
-              ) : (
-                "Load more..."
-              )}
-            </Button>
-            {loadMoreError ? (
-              <p
-                className="text-center text-sm text-muted-foreground"
-                role="status"
-              >
-                {loadMoreError}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showBranding ? (
-          <footer className="mt-8 flex justify-center border-t border-border pt-6">
-            <a
-              className="inline-flex items-center gap-2 text-sm text-muted-foreground no-underline"
-              href="https://cooee.sh"
-              rel="noreferrer"
-              target="_blank"
-            >
-              <span>Powered by</span>
-              <AnimatedCooeeLogo className="brand-logo h-[15px] w-auto" />
-            </a>
-          </footer>
-        ) : null}
+                <span>Powered by</span>
+                <AnimatedCooeeLogo className="brand-logo h-[15px] w-auto" />
+              </a>
+            </footer>
+          ) : null}
+        </motion.div>
       </PublicChangelogContentRoot>
     </div>
   );
@@ -4996,12 +5739,19 @@ function PublicChangelogDateGroup({
   groupEntriesByCategory,
   group,
   isLastGroup,
+  onOpenArticle,
+  publicChangelogSlug,
   publicTheme,
 }: {
   categoryDefinitions: ChangelogCategoryDefinition[];
   groupEntriesByCategory: boolean;
   group: PublicDateGroup;
   isLastGroup: boolean;
+  onOpenArticle?: (
+    articleSlug: string,
+    cardOrigin: ArticleCardOrigin | null,
+  ) => void;
+  publicChangelogSlug: string | null;
   publicTheme: ThemeMode;
 }) {
   const entrySegments = groupPublicEntrySegments(
@@ -5072,6 +5822,8 @@ function PublicChangelogDateGroup({
             anchorId={consumeAnchorId(segment.entry.category)}
             categoryDefinitions={categoryDefinitions}
             entry={segment.entry}
+            onOpenArticle={onOpenArticle}
+            publicChangelogSlug={publicChangelogSlug}
             publicTheme={publicTheme}
             key={
               segment.entry.id ??
@@ -5109,6 +5861,8 @@ function PublicChangelogDateGroup({
               <PublicChangelogEntry
                 categoryDefinitions={categoryDefinitions}
                 entry={entry}
+                onOpenArticle={onOpenArticle}
+                publicChangelogSlug={publicChangelogSlug}
                 publicTheme={publicTheme}
                 key={entry.id ?? `${group.date}-${entry.title}-${index}`}
               />
@@ -5136,11 +5890,18 @@ function PublicChangelogEntry({
   anchorId,
   categoryDefinitions,
   entry,
+  onOpenArticle,
+  publicChangelogSlug,
   publicTheme,
 }: {
   anchorId?: string;
   categoryDefinitions: ChangelogCategoryDefinition[];
   entry: PublishedEntry;
+  onOpenArticle?: (
+    articleSlug: string,
+    cardOrigin: ArticleCardOrigin | null,
+  ) => void;
+  publicChangelogSlug: string | null;
   publicTheme: ThemeMode;
 }) {
   const displayType = getChangelogCategoryDisplayType(
@@ -5283,6 +6044,78 @@ function PublicChangelogEntry({
     );
   }
 
+  if (displayType === "article") {
+    const articleHref = entry.articleSlug
+      ? getPublicArticlePath(publicChangelogSlug, entry.articleSlug)
+      : null;
+
+    return (
+      <article
+        className={cn(
+          "rounded-3xl border border-border/70 bg-white/90 p-5 text-card-foreground shadow-xs sm:p-9 dark:bg-card [&+&]:mt-3",
+          anchorId && "scroll-mt-24",
+        )}
+        data-categories={categories}
+        data-display-type="article"
+        data-public-entry=""
+        data-search={publicEntrySearchText(entry)}
+        id={anchorId}
+      >
+        {entry.imageUrl ? (
+          <PublicEntryImage loading="lazy" src={entry.imageUrl} />
+        ) : null}
+        <div className="mb-4">
+          <h3 className="m-0 text-balance text-xl font-semibold leading-tight tracking-normal text-foreground sm:text-2xl">
+            {entry.title}
+          </h3>
+        </div>
+        <div
+          className="markdown-summary max-w-[68ch] text-balance text-base leading-relaxed text-foreground/80 [&_a]:font-semibold [&_a]:text-primary [&_ol]:mt-4 [&_p]:m-0 [&_p]:text-balance [&_p+p]:mt-4 [&_ul]:mt-4"
+          dangerouslySetInnerHTML={{ __html: summaryMarkup }}
+        />
+        {articleHref ? (
+          <a
+            className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
+            href={articleHref}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              const card = event.currentTarget.closest<HTMLElement>(
+                "[data-public-entry]",
+              );
+              const cardRect = card?.getBoundingClientRect();
+              onOpenArticle?.(
+                entry.articleSlug!,
+                card && cardRect
+                  ? {
+                      articleViewportTop: getPublicArticleViewportTop(),
+                      height: cardRect.height,
+                      left: cardRect.left,
+                      element: card,
+                      top: cardRect.top,
+                      width: cardRect.width,
+                    }
+                  : null,
+              );
+            }}
+          >
+            Read more
+            <ChevronRightIcon aria-hidden className="size-4" />
+          </a>
+        ) : null}
+      </article>
+    );
+  }
+
   return (
     <article
       className={cn(
@@ -5296,12 +6129,7 @@ function PublicChangelogEntry({
       id={anchorId}
     >
       {entry.imageUrl ? (
-        <img
-          alt=""
-          className="mb-5 aspect-[3/2] w-full rounded-2xl border border-border/70 object-cover"
-          loading="lazy"
-          src={entry.imageUrl}
-        />
+        <PublicEntryImage loading="lazy" src={entry.imageUrl} />
       ) : null}
       <div className="mb-4">
         <h3 className="m-0 text-balance text-xl font-semibold leading-tight tracking-normal text-foreground sm:text-2xl">
@@ -5318,6 +6146,36 @@ function PublicChangelogEntry({
         publicTheme={publicTheme}
       />
     </article>
+  );
+}
+
+function PublicEntryImage({
+  loading,
+  onLoadStateChange,
+  src,
+}: {
+  loading?: "eager" | "lazy";
+  onLoadStateChange?: () => void;
+  src: string;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+  if (failedSrc === src) {
+    return null;
+  }
+
+  return (
+    <img
+      alt=""
+      className="mb-5 aspect-video w-full rounded-2xl border border-border/70 object-cover"
+      loading={loading}
+      onError={() => {
+        setFailedSrc(src);
+        onLoadStateChange?.();
+      }}
+      onLoad={onLoadStateChange}
+      src={src}
+    />
   );
 }
 
@@ -6609,12 +7467,14 @@ function PostEditorSheet({
   children,
   description,
   footer,
+  isBusy = false,
   onClose,
   title,
 }: {
   children: ReactNode;
   description: string;
   footer: ReactNode;
+  isBusy?: boolean;
   onClose: () => void;
   title: string;
 }) {
@@ -6623,7 +7483,7 @@ function PostEditorSheet({
       direction="right"
       modal
       onOpenChange={(open) => {
-        if (!open) {
+        if (!open && !isBusy) {
           onClose();
         }
       }}
@@ -6642,6 +7502,7 @@ function PostEditorSheet({
           <Button
             aria-label={`Close ${title.toLowerCase()}`}
             className="size-8 shrink-0"
+            disabled={isBusy}
             onClick={onClose}
             size="sm"
             variant="outline"
@@ -6817,8 +7678,61 @@ function ManualUpdateSheet({
             />
           </Suspense>
         </div>
+        {selectedCategory.displayType === "article" ? (
+          <ArticleContentFields
+            markdown={manualUpdate.articleMarkdown ?? ""}
+            onMarkdownChange={(articleMarkdown) =>
+              setManualUpdate((current) => ({ ...current, articleMarkdown }))
+            }
+            onSlugChange={(articleSlug) =>
+              setManualUpdate((current) => ({ ...current, articleSlug }))
+            }
+            slug={manualUpdate.articleSlug ?? ""}
+          />
+        ) : null}
       </form>
     </PostEditorSheet>
+  );
+}
+
+function ArticleContentFields({
+  markdown,
+  onMarkdownChange,
+  onSlugChange,
+  slug,
+}: {
+  markdown: string;
+  onMarkdownChange: (markdown: string) => void;
+  onSlugChange: (slug: string) => void;
+  slug: string;
+}) {
+  return (
+    <section className="grid gap-3 border-t border-border pt-5">
+      <div className="grid gap-1">
+        <span className="text-sm font-medium">Article</span>
+        <p className="text-sm leading-6 text-muted-foreground">
+          Add the full story for a Read more link. Images and tables are
+          supported; leave this blank for a standard update card.
+        </p>
+      </div>
+      <Suspense fallback={<MarkdownEditorLoadingState />}>
+        <MarkdownEditor
+          ariaLabel="Article content"
+          markdown={markdown}
+          onChange={onMarkdownChange}
+        />
+      </Suspense>
+      <label className="grid gap-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
+          Article URL (optional)
+        </span>
+        <Input
+          onChange={(event) => onSlugChange(event.target.value)}
+          placeholder="Generated from the title"
+          value={slug}
+        />
+      </label>
+    </section>
   );
 }
 
@@ -6828,7 +7742,8 @@ function CategoryModeSummary({
   category: ChangelogCategoryDefinition;
 }) {
   const isMarketingPost =
-    category.displayType === "post" && category.marketingCopy === true;
+    isPostLikeDisplayType(category.displayType) &&
+    category.marketingCopy === true;
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -6922,9 +7837,12 @@ function EditPublishedEntrySheet({
   postImageGenerationAvailabilityStatus,
   rewriteInstructions,
   isRegeneratingMarketingCopy,
+  isSaving,
+  isRemovingPostImage,
   isUploadingPostImage,
   onClose,
   onGeneratePostImage,
+  onRemovePostImage,
   onRegenerateMarketingCopy,
   onSaveEditedEntry,
   onUploadPostImage,
@@ -6946,9 +7864,12 @@ function EditPublishedEntrySheet({
   postImageGenerationAvailabilityStatus: PostImageGenerationAvailability["status"];
   rewriteInstructions: string;
   isRegeneratingMarketingCopy: boolean;
+  isSaving: boolean;
+  isRemovingPostImage: boolean;
   isUploadingPostImage: boolean;
   onClose: () => void;
   onGeneratePostImage: () => void;
+  onRemovePostImage: () => void;
   onRegenerateMarketingCopy: () => void;
   onSaveEditedEntry: (event: FormEvent<HTMLFormElement>) => void;
   onUploadPostImage: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -7009,14 +7930,20 @@ function EditPublishedEntrySheet({
 
   return (
     <PostEditorSheet
-      description="Update the customer-facing title, summary, and category."
+      description="Update the customer-facing title, summary, category, and article."
       footer={
         <>
-          <Button onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={isSaving}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             Cancel
           </Button>
           <Button
             disabled={
+              isSaving ||
               !entryDraft.title.trim() ||
               !entryDraft.summary.trim() ||
               !isPostDateValid
@@ -7024,11 +7951,20 @@ function EditPublishedEntrySheet({
             form={formId}
             type="submit"
           >
-            <PencilIcon data-icon="inline-start" aria-hidden />
-            Save changes
+            {isSaving ? (
+              <LoaderCircleIcon
+                aria-hidden
+                className="animate-spin"
+                data-icon="inline-start"
+              />
+            ) : (
+              <PencilIcon data-icon="inline-start" aria-hidden />
+            )}
+            {isSaving ? "Saving…" : "Save changes"}
           </Button>
         </>
       }
+      isBusy={isSaving}
       onClose={onClose}
       title="Edit post"
     >
@@ -7110,15 +8046,20 @@ function EditPublishedEntrySheet({
                       className: "h-8 gap-1.5 px-2.5 text-xs",
                       variant: "outline",
                     }),
-                    isUploadingPostImage && "pointer-events-none opacity-50",
+                    (isUploadingPostImage || isRemovingPostImage) &&
+                      "pointer-events-none opacity-50",
                   )}
                 >
                   <UploadIcon data-icon="inline-start" aria-hidden />
-                  {isUploadingPostImage ? "Uploading" : "Upload image"}
+                  {isUploadingPostImage
+                    ? "Uploading"
+                    : imageUrl
+                      ? "Replace image"
+                      : "Upload image"}
                   <Input
                     accept="image/png,image/jpeg,image/webp,image/gif"
                     className="sr-only"
-                    disabled={isUploadingPostImage}
+                    disabled={isUploadingPostImage || isRemovingPostImage}
                     onChange={onUploadPostImage}
                     type="file"
                   />
@@ -7128,6 +8069,7 @@ function EditPublishedEntrySheet({
                   disabled={
                     isGeneratingPostImage ||
                     isUploadingPostImage ||
+                    isRemovingPostImage ||
                     isPostImageTextMissing ||
                     isPostImageGenerationLocked
                   }
@@ -7146,17 +8088,39 @@ function EditPublishedEntrySheet({
                       : "Generation unavailable"
                     : isGeneratingPostImage
                       ? "Generating"
-                      : "Generate image"}
+                      : imageUrl
+                        ? "Regenerate image"
+                        : "Generate image"}
                 </Button>
+                {imageUrl ? (
+                  <Button
+                    className="h-8 gap-1.5 px-2.5 text-xs"
+                    disabled={
+                      isGeneratingPostImage ||
+                      isUploadingPostImage ||
+                      isRemovingPostImage
+                    }
+                    onClick={onRemovePostImage}
+                    type="button"
+                    variant="outline"
+                  >
+                    {isRemovingPostImage ? (
+                      <LoaderCircleIcon
+                        aria-hidden
+                        className="animate-spin"
+                        data-icon="inline-start"
+                      />
+                    ) : (
+                      <Trash2Icon data-icon="inline-start" aria-hidden />
+                    )}
+                    {isRemovingPostImage ? "Removing" : "Remove image"}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>
           {imageUrl ? (
-            <img
-              alt="Generated post image preview"
-              className="aspect-[3/2] w-full rounded-md border object-cover"
-              src={imageUrl}
-            />
+            <PostImageEditorPreview src={imageUrl} />
           ) : (
             <div className="grid gap-2 rounded-md border bg-muted/30 px-3 py-2 text-balance text-sm text-muted-foreground">
               <p>
@@ -7166,7 +8130,7 @@ function EditPublishedEntrySheet({
                     ? "Generating the automatic image now."
                     : imageGenerationStatus === "failed"
                       ? "Automatic image generation failed. Use Generate image to retry."
-                      : "Generate an image for this Post-style update."}
+                      : "Add a cover image for this update."}
               </p>
               {imageGenerationStatus === "failed" && imageGenerationError ? (
                 <p className="text-xs">{imageGenerationError}</p>
@@ -7237,8 +8201,44 @@ function EditPublishedEntrySheet({
             />
           </Suspense>
         </div>
+        {selectedCategory.displayType === "article" ? (
+          <ArticleContentFields
+            markdown={entryDraft.articleMarkdown ?? ""}
+            onMarkdownChange={(articleMarkdown) =>
+              setEntryDraft((current) => ({ ...current, articleMarkdown }))
+            }
+            onSlugChange={(articleSlug) =>
+              setEntryDraft((current) => ({ ...current, articleSlug }))
+            }
+            slug={entryDraft.articleSlug ?? ""}
+          />
+        ) : null}
       </form>
     </PostEditorSheet>
+  );
+}
+
+function PostImageEditorPreview({ src }: { src: string }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+  if (failedSrc === src) {
+    return (
+      <div className="grid gap-1 rounded-md border border-dashed bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">
+          This image is unavailable.
+        </p>
+        <p>Replace it with a new upload, regenerate it, or remove it.</p>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      alt="Generated post image preview"
+      className="aspect-video w-full rounded-md border object-cover"
+      onError={() => setFailedSrc(src)}
+      src={src}
+    />
   );
 }
 
@@ -8900,7 +9900,7 @@ function SettingsView({
             : definition.id;
         const displayType = patch.displayType ?? definition.displayType;
         const marketingCopy =
-          displayType === "post"
+          displayType === "post" || displayType === "article"
             ? (patch.marketingCopy ?? definition.marketingCopy ?? false)
             : false;
 
@@ -9599,7 +10599,7 @@ function SettingsView({
                       <div className="grid gap-3 rounded-2xl border bg-background p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
                         <img
                           alt="Master reference preview"
-                          className="aspect-[3/2] w-full rounded-xl object-cover"
+                          className="aspect-video w-full rounded-xl object-cover"
                           src={`/api/admin/changelogs/${encodeURIComponent(changelogId)}/post-image-reference?v=${referencePreviewVersion}`}
                         />
                         <div className="grid justify-items-start gap-2">
@@ -9882,7 +10882,7 @@ function SettingsView({
             </SettingsRow>
 
             <SettingsRow
-              description="Post is best for major features, Callout for short improvements, and Text for simple fixes."
+              description="Article is best for major features, Post for visual updates, Callout for short improvements, and Text for simple fixes."
               title="Category display"
             >
               <div className="grid gap-3">
@@ -9953,7 +10953,7 @@ function SettingsView({
                         options={changelogDisplayTypeOptions}
                         value={category.displayType}
                       />
-                      {category.displayType === "post" ? (
+                      {isPostLikeDisplayType(category.displayType) ? (
                         <label className="flex min-h-10 items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2">
                           <span>
                             <span className={settingsFieldLabelClassName}>
@@ -10088,7 +11088,7 @@ function PostImageModePreview({ mode }: { mode: string }) {
     <div
       aria-hidden
       className={cn(
-        "relative aspect-[3/2] overflow-hidden rounded-xl border border-current/15",
+        "relative aspect-video overflow-hidden rounded-xl border border-current/15",
         mode === "brand-card"
           ? "bg-[oklch(0.94_0.025_155)]"
           : mode === "reference"
@@ -10139,7 +11139,7 @@ function PostImagePatternPreview({
     <div
       aria-hidden
       className={cn(
-        "relative aspect-[3/2] overflow-hidden rounded-xl border",
+        "relative aspect-video overflow-hidden rounded-xl border",
         dark
           ? "border-stone-700 bg-stone-900"
           : "border-stone-200 bg-stone-100",
@@ -10578,7 +11578,7 @@ function PublishedEntriesList({
                               Draft copy
                             </div>
                             <MarkdownSummary
-                              className="mt-1 line-clamp-3 text-sm leading-6 text-muted-foreground"
+                              className="mt-1 line-clamp-3 text-balance text-sm leading-6 text-muted-foreground"
                               markdown={heldDraftPreview}
                             />
                           </div>
@@ -10590,7 +11590,7 @@ function PublishedEntriesList({
                           {entry.title}
                         </h2>
                         <MarkdownSummary
-                          className="mt-1 line-clamp-3 text-sm leading-6 text-muted-foreground"
+                          className="mt-1 line-clamp-3 text-balance text-sm leading-6 text-muted-foreground"
                           markdown={entry.summary}
                         />
                         {entry.items && entry.items.length > 0 ? (
@@ -10601,7 +11601,7 @@ function PublishedEntriesList({
                                 key={`${key}:${item.category}:${item.title}`}
                               >
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="text-sm font-medium tracking-normal">
+                                  <h3 className="text-balance text-sm font-medium tracking-normal">
                                     {item.title}
                                   </h3>
                                   <Badge variant="outline">
@@ -10609,7 +11609,7 @@ function PublishedEntriesList({
                                   </Badge>
                                 </div>
                                 <MarkdownSummary
-                                  className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground"
+                                  className="mt-1 line-clamp-2 text-balance text-xs leading-5 text-muted-foreground"
                                   markdown={item.summary}
                                 />
                               </section>
@@ -11058,6 +12058,8 @@ function formatCategoryDisplayTypeBadge(
   displayType: ChangelogDisplayType,
 ): string {
   switch (displayType) {
+    case "article":
+      return "Article display";
     case "callout":
       return "Callout display";
     case "text":
@@ -11066,6 +12068,10 @@ function formatCategoryDisplayTypeBadge(
     default:
       return "Post display";
   }
+}
+
+function isPostLikeDisplayType(displayType: ChangelogDisplayType): boolean {
+  return displayType === "post" || displayType === "article";
 }
 
 function toApiCategory(
@@ -11110,7 +12116,9 @@ function toPublishedEntry(entry: ApiChangelogEntry): PublishedEntry {
     holdReason: entry.holdReason ?? null,
     processedAt: entry.processedAt ?? null,
     windowEndedAt: entry.windowEndedAt ?? null,
-    imageUrl: entry.imageUrl ?? null,
+    imageUrl: resolvePublicEntryImageUrl(entry.imageUrl),
+    articleSlug: entry.articleSlug ?? null,
+    articleMarkdown: entry.articleMarkdown ?? null,
     imageGenerationStatus: entry.imageGenerationStatus ?? null,
     imageGenerationError: entry.imageGenerationError ?? null,
     items: toUiChangeItems(entry.items),
@@ -11118,6 +12126,36 @@ function toPublishedEntry(entry: ApiChangelogEntry): PublishedEntry {
     sourcePullRequests: entry.sourcePullRequests ?? [],
     time: formatPublishedEntryTime(entry.publishedAt ?? entry.windowEndedAt),
   };
+}
+
+function resolvePublicEntryImageUrl(
+  imageUrl: string | null | undefined,
+): string | null {
+  if (!imageUrl) {
+    return null;
+  }
+
+  if (typeof window === "undefined") {
+    return imageUrl;
+  }
+
+  try {
+    const source = new URL(imageUrl, window.location.origin);
+    // Public image endpoints must be loaded from the same host as the public
+    // changelog. That preserves proxying in local development and prevents an
+    // older configured public URL from sending asset requests to a host that
+    // does not serve the API.
+    if (source.pathname.startsWith("/api/public/")) {
+      return new URL(
+        `${source.pathname}${source.search}${source.hash}`,
+        window.location.origin,
+      ).toString();
+    }
+
+    return source.toString();
+  } catch {
+    return imageUrl;
+  }
 }
 
 function toHeldEntry(entry: ApiChangelogEntry): HeldEntry {
@@ -11491,8 +12529,35 @@ function getCurrentPublicChangelogSlug(): string | null {
   return getPublicChangelogSlugFromPathname(window.location?.pathname ?? "");
 }
 
+function getCurrentPublicArticleSlug(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return (
+    getPublicArticleRouteFromPathname(window.location.pathname)?.articleSlug ??
+    (isCustomChangelogRootLocation(window.location)
+      ? getCustomDomainArticleSlugFromPathname(window.location.pathname)
+      : null)
+  );
+}
+
 export function getPublicChangelogPath(slug: string): string {
   return `/changelog/${encodeURIComponent(slug)}`;
+}
+
+function getPublicChangelogRootPath(slug: string | null): string {
+  return slug ? getPublicChangelogPath(slug) : "/";
+}
+
+function getPublicArticlePath(
+  changelogSlug: string | null,
+  articleSlug: string,
+): string {
+  const safeArticleSlug = encodeURIComponent(articleSlug);
+  return changelogSlug
+    ? `${getPublicChangelogPath(changelogSlug)}/articles/${safeArticleSlug}`
+    : `/articles/${safeArticleSlug}`;
 }
 
 export function getPublicChangelogUrl(
@@ -11536,6 +12601,13 @@ function getPublicSiteUrl(): string {
   );
 }
 
+export function getHostedPublicChangelogUrl(): string {
+  return getConfiguredOrigin(
+    import.meta.env.VITE_PUBLIC_CHANGELOG_URL,
+    "https://app.cooee.sh",
+  );
+}
+
 function getConfiguredOrigin(
   value: string | undefined,
   fallback: string,
@@ -11559,6 +12631,27 @@ function getConfiguredOrigin(
   }
 
   return fallback;
+}
+
+async function readCooeeApiJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(getApiUnavailableMessage());
+  }
+
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new Error(getApiUnavailableMessage());
+  }
+}
+
+export function getApiUnavailableMessage(
+  isDevelopment = import.meta.env.DEV,
+): string {
+  return isDevelopment
+    ? "Cooee’s local API isn’t running. Start it with bun run dev, then refresh this page."
+    : "Cooee couldn’t reach its API. Refresh the page and try again.";
 }
 
 function normalizePublicChangelogPagination(
@@ -11604,6 +12697,16 @@ export function getPublicChangelogFeedPath(
   return before ? `${path}?before=${encodeURIComponent(before)}` : path;
 }
 
+function getPublicArticleApiPath(
+  changelogSlug: string | null,
+  articleSlug: string,
+): string {
+  const safeArticleSlug = encodeURIComponent(articleSlug);
+  return changelogSlug
+    ? `/api/public/changelogs/${encodeURIComponent(changelogSlug)}/articles/${safeArticleSlug}`
+    : `/api/public/changelog/articles/${safeArticleSlug}`;
+}
+
 export function getPublicChangelogResourceUrls(slug: string | null): {
   api: string;
   json: string;
@@ -11624,7 +12727,10 @@ export function isCustomChangelogRootLocation(location: {
   hostname?: string;
   pathname?: string;
 }): boolean {
-  if (location.pathname !== "/") {
+  if (
+    location.pathname !== "/" &&
+    !getCustomDomainArticleSlugFromPathname(location.pathname ?? "")
+  ) {
     return false;
   }
 
@@ -11677,13 +12783,62 @@ function formatCustomHostnameStatus(value: string, fallback: string): string {
 export function getPublicChangelogSlugFromPathname(
   pathname: string,
 ): string | null {
-  const [, changelogSegment, slugSegment, extraSegment] = pathname.split("/");
-  if (changelogSegment !== "changelog" || !slugSegment || extraSegment) {
+  const [, changelogSegment, slugSegment, routeSegment, articleSlug, extra] =
+    pathname.split("/");
+  const isChangelogRoot = !routeSegment;
+  const isArticleRoute =
+    routeSegment === "articles" && Boolean(articleSlug) && !extra;
+  if (
+    changelogSegment !== "changelog" ||
+    !slugSegment ||
+    (!isChangelogRoot && !isArticleRoute)
+  ) {
     return null;
   }
 
   try {
     return decodeURIComponent(slugSegment);
+  } catch {
+    return null;
+  }
+}
+
+function getPublicArticleRouteFromPathname(pathname: string): {
+  changelogSlug: string;
+  articleSlug: string;
+} | null {
+  const [, changelogSegment, changelogSlug, routeSegment, articleSlug, extra] =
+    pathname.split("/");
+  if (
+    changelogSegment !== "changelog" ||
+    !changelogSlug ||
+    routeSegment !== "articles" ||
+    !articleSlug ||
+    extra
+  ) {
+    return null;
+  }
+
+  try {
+    return {
+      changelogSlug: decodeURIComponent(changelogSlug),
+      articleSlug: decodeURIComponent(articleSlug),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getCustomDomainArticleSlugFromPathname(
+  pathname: string,
+): string | null {
+  const [, routeSegment, articleSlug, extra] = pathname.split("/");
+  if (routeSegment !== "articles" || !articleSlug || extra) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(articleSlug);
   } catch {
     return null;
   }
@@ -11966,8 +13121,6 @@ export function buildPublicChangelogPreview({
   const resolvedCategoryDefinitions =
     normalizeChangelogCategoryDefinitions(categoryDefinitions);
   const currentPublicTheme = normalizeThemeMode(publicTheme);
-  const nextPublicTheme = currentPublicTheme === "dark" ? "light" : "dark";
-  const publicThemeToggleLabel = `Switch to ${nextPublicTheme} mode`;
   const pageBackground = currentPublicTheme === "dark" ? "#1c1917" : "#fafaf9";
   const pageTextColor = currentPublicTheme === "dark" ? "#fafaf9" : "#1c1917";
   const escapedAppName = escapeHtml(appName.trim() || "Cooee");
@@ -12117,26 +13270,6 @@ export function buildPublicChangelogPreview({
 	            gap: 16px;
 	            justify-content: space-between;
 	          }
-	          .theme-toggle {
-	            align-items: center;
-	            background: var(--public-panel);
-	            border: 1px solid var(--public-border-strong);
-	            border-radius: 12px;
-	            color: var(--public-heading);
-	            display: inline-flex;
-	            flex: none;
-	            height: 36px;
-	            justify-content: center;
-	            width: 36px;
-	          }
-	          .theme-toggle svg {
-	            height: 16px;
-	            width: 16px;
-	          }
-	          html[data-theme="light"] [data-theme-toggle-icon="light"],
-	          html[data-theme="dark"] [data-theme-toggle-icon="dark"] {
-	            display: none;
-	          }
 	          h1 {
 	            font-size: 32px;
 	            line-height: 1.15;
@@ -12258,16 +13391,17 @@ export function buildPublicChangelogPreview({
           article[data-display-type="callout"][data-callout-expanded="true"] .callout-expand svg {
             transform: rotate(180deg);
           }
-          article[data-display-type="post"] {
+          article[data-display-type="post"],
+          article[data-display-type="article"] {
             background: var(--public-panel);
             border-radius: 24px;
             box-shadow: var(--public-shadow);
             padding: 36px;
           }
-	          .entry-image {
-            aspect-ratio: 3 / 2;
-	            border: 1px solid var(--public-border);
-            border-radius: 18px;
+          .entry-image {
+            aspect-ratio: 16 / 9;
+            border: 1px solid var(--public-border);
+            border-radius: 16px;
             display: block;
             margin: 0 0 20px;
             object-fit: cover;
@@ -12697,7 +13831,8 @@ export function buildPublicChangelogPreview({
             }
           }
           @media (max-width: 639px) {
-            article[data-display-type="post"] {
+            article[data-display-type="post"],
+            article[data-display-type="article"] {
               padding: 20px;
             }
           }
@@ -12744,10 +13879,6 @@ export function buildPublicChangelogPreview({
             <div class="header-row">
               <h1>${escapedAppName} changelog</h1>
               <div class="header-actions">
-                <button class="theme-toggle" type="button" aria-label="${publicThemeToggleLabel}" data-public-theme-toggle>
-                  <svg data-theme-toggle-icon="dark" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.9 13.2A8 8 0 0 1 10.8 3.1 7 7 0 1 0 20.9 13.2Z"></path></svg>
-                  <svg data-theme-toggle-icon="light" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>
-                </button>
                 ${filterToggleMarkup}
                 ${appLinkMarkup}
               </div>
@@ -13279,7 +14410,7 @@ function renderPublicEntry(
 
   return `
     <article ${commonAttributes}>
-      ${displayType === "post" ? renderPublicEntryImage(entry) : ""}
+      ${isPostLikeDisplayType(displayType) ? renderPublicEntryImage(entry) : ""}
       <div class="entry-header">
         <h3>${escapeHtml(entry.title)}</h3>
       </div>
@@ -13452,50 +14583,6 @@ function renderPublicPaginationScript(
               }
             })
             .catch(() => {});
-        }
-
-        const themeToggle = document.querySelector("[data-public-theme-toggle]");
-        const publicThemeStorageKey = "${publicChangelogThemeStorageKey}";
-        const publicThemeCookieName = "${publicChangelogThemeCookieName}";
-        function getRememberedPublicTheme() {
-          try {
-            const storedTheme = window.localStorage.getItem(publicThemeStorageKey);
-            return storedTheme === "dark" || storedTheme === "light" ? storedTheme : null;
-          } catch {
-            return null;
-          }
-        }
-        function persistPublicTheme(theme) {
-          try {
-            window.localStorage.setItem(publicThemeStorageKey, theme);
-          } catch {}
-          try {
-            document.cookie = publicThemeCookieName + "=" + theme + "; Max-Age=31536000; Path=/; SameSite=Lax";
-          } catch {}
-        }
-        function getPublicTheme() {
-          return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-        }
-        function updateThemeToggle() {
-          if (!themeToggle) {
-            return;
-          }
-
-          const nextTheme = getPublicTheme() === "dark" ? "light" : "dark";
-          themeToggle.setAttribute("aria-label", "Switch to " + nextTheme + " mode");
-        }
-        const rememberedPublicTheme = getRememberedPublicTheme();
-        if (rememberedPublicTheme) {
-          document.documentElement.dataset.theme = rememberedPublicTheme;
-        }
-        if (themeToggle) {
-          themeToggle.addEventListener("click", () => {
-            const nextTheme = getPublicTheme() === "dark" ? "light" : "dark";
-            document.documentElement.dataset.theme = nextTheme;
-            persistPublicTheme(nextTheme);
-            updateThemeToggle();
-          });
-          updateThemeToggle();
         }
 
         const groups = Array.from(document.querySelectorAll(".date-group"));

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -322,6 +323,8 @@ export const changelogEntries = pgTable(
     status: changelogEntryStatus("status").notNull().default("draft"),
     holdReason: text("hold_reason"),
     imageUrl: text("image_url"),
+    articleSlug: text("article_slug"),
+    articleMarkdown: text("article_markdown"),
     imageGenerationStatus: text("image_generation_status"),
     imageGenerationError: text("image_generation_error"),
     imageGenerationAttemptCount: integer("image_generation_attempt_count")
@@ -362,6 +365,9 @@ export const changelogEntries = pgTable(
       .defaultNow(),
   },
   (table) => [
+    uniqueIndex("changelog_entries_article_slug_idx")
+      .on(table.changelogId, table.articleSlug)
+      .where(sql`${table.articleSlug} is not null`),
     index("changelog_entries_image_generation_due_idx").on(
       table.imageGenerationStatus,
       table.imageGenerationNextAttemptAt,

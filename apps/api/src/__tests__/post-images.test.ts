@@ -29,7 +29,7 @@ async function sourceImage(colour = "#DDD6C8") {
 }
 
 describe("post image orchestrator", () => {
-  test("renders every local pattern as a bounded 1536x1024 WebP", async () => {
+  test("renders every local pattern as a bounded 1536x864 WebP", async () => {
     let aiCalls = 0;
     const orchestrator = new PostImageOrchestrator({
       generatePostImage: async () => {
@@ -49,7 +49,7 @@ describe("post image orchestrator", () => {
       expect(await sharp(output.body).metadata()).toMatchObject({
         format: "webp",
         width: 1536,
-        height: 1024,
+        height: 864,
       });
     }
     expect(aiCalls).toBe(0);
@@ -86,7 +86,7 @@ describe("post image orchestrator", () => {
     expect(await sharp(withTitle.body).metadata()).toMatchObject({
       format: "webp",
       width: 1536,
-      height: 1024,
+      height: 864,
     });
   });
 
@@ -107,7 +107,7 @@ describe("post image orchestrator", () => {
       },
     });
     const dotRegion = await sharp(output.body)
-      .extract({ left: 887, top: 923, width: 16, height: 16 })
+      .extract({ left: 887, top: 763, width: 16, height: 16 })
       .png()
       .toBuffer();
     const dot = await sharp(dotRegion).stats();
@@ -170,6 +170,7 @@ describe("post image orchestrator", () => {
       prompt.indexOf("One-off direction"),
     );
     expect(prompt).toContain("Do not include any words");
+    expect(prompt).toContain("16:9 changelog card image");
   });
 
   test("normalizes reference orientation, metadata, dimensions, and type", async () => {

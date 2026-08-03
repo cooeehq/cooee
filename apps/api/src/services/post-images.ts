@@ -10,7 +10,7 @@ import type { StoredAsset } from "./assets";
 import type { AiImageGenerator, AiImageResult, AiTokenUsage } from "./openai";
 
 export const postImageWidth = 1536;
-export const postImageHeight = 1024;
+export const postImageHeight = 864;
 export const maxPostImageBytes = 3 * 1024 * 1024;
 export const maxReferenceImageBytes = 10 * 1024 * 1024;
 const postImageTitleFontUrl = new URL(
@@ -164,7 +164,7 @@ export function buildPostImagePrompt(input: RenderPostImageInput): string {
       ? `One-off direction for this image: ${oneOffDirection}`
       : "",
     "Do not include any words, letters, numbers, captions, logos, brand marks, screenshots, UI mockups, code, people, private implementation details, or invented product interfaces.",
-    "The result must work as a clean 3:2 changelog card image with important detail kept away from the perimeter.",
+    "The result must work as a clean 16:9 changelog card image with important detail kept away from the perimeter.",
   ]
     .filter(Boolean)
     .join("\n");

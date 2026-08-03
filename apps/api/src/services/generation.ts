@@ -454,10 +454,12 @@ async function generateChangelogForWindowUnlocked(input: {
         .filter(
           (entry) =>
             entry.status === "published" &&
-            getChangelogCategoryDefinition(
-              entry.category,
-              changelog.settings.categoryDefinitions,
-            ).displayType === "post",
+            !["text", "callout"].includes(
+              getChangelogCategoryDefinition(
+                entry.category,
+                changelog.settings.categoryDefinitions,
+              ).displayType,
+            ),
         )
         .map((entry) =>
           input.store.enqueuePostImageGeneration({
