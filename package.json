@@ -24,7 +24,7 @@
   "scripts": {
     "build": "bun run --filter='*' build",
     "check": "bun run typecheck && bun test",
-    "dev": "bun run --filter @cooee/api --filter @cooee/admin dev",
+    "dev": "COOEE_API_PORT=3100 APP_URL=http://localhost:5173 BETTER_AUTH_URL=http://localhost:5173 bun run --filter @cooee/api --filter @cooee/admin dev",
     "dev:api": "bun --filter @cooee/api dev",
     "dev:admin": "bun --filter @cooee/admin dev",
     "format": "prettier --write .",
@@ -56,6 +56,8 @@
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "@tiptap/extension-link": "3.26.0",
+    "@tiptap/extension-image": "3.26.0",
+    "@tiptap/extension-table": "3.26.0",
     "@tiptap/react": "3.26.0",
     "@tiptap/starter-kit": "3.26.0",
     "better-auth": "^1.6.23",
@@ -77,6 +79,7 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.17",
     "turndown": "7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
     "vaul": "^1.1.2",
     "zod": "^4.1.13"
   }

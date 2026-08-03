@@ -1,13 +1,17 @@
+import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import { TableKit } from "@tiptap/extension-table";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   BoldIcon,
   CodeIcon,
+  ImagePlusIcon,
   ItalicIcon,
   LinkIcon,
   ListIcon,
   SquareCodeIcon,
+  Table2Icon,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect } from "react";
@@ -45,6 +49,13 @@ export function MarkdownEditor({
         },
         openOnClick: false,
       }),
+      Image.configure({
+        allowBase64: false,
+        inline: false,
+      }),
+      TableKit.configure({
+        table: { resizable: true },
+      }),
     ],
     immediatelyRender: false,
     onUpdate: ({ editor: activeEditor }) => {
@@ -75,6 +86,35 @@ export function MarkdownEditor({
           icon={BoldIcon}
           label="Bold"
           onClick={() => editor?.chain().focus().toggleBold().run()}
+        />
+        <EditorButton
+          active={false}
+          disabled={!editor}
+          icon={ImagePlusIcon}
+          label="Image"
+          onClick={() => {
+            const url = window.prompt("Image URL");
+            const safeUrl = normalizeImageUrl(url);
+
+            if (!editor || !safeUrl) {
+              return;
+            }
+
+            editor.chain().focus().setImage({ src: safeUrl }).run();
+          }}
+        />
+        <EditorButton
+          active={editor?.isActive("table") ?? false}
+          disabled={!editor}
+          icon={Table2Icon}
+          label="Table"
+          onClick={() =>
+            editor
+              ?.chain()
+              .focus()
+              .insertTable({ cols: 3, rows: 3, withHeaderRow: true })
+              .run()
+          }
         />
         <EditorButton
           active={editor?.isActive("italic") ?? false}
@@ -131,6 +171,19 @@ export function MarkdownEditor({
       <EditorContent editor={editor} />
     </div>
   );
+}
+
+function normalizeImageUrl(value: string | null): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 export function shouldReplaceEditorContent(

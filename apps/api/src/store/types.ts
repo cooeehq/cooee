@@ -286,6 +286,8 @@ export type NewEntryInput = {
   holdReason?: string;
   windowEndedAt: string;
   imageUrl?: string | null;
+  articleSlug?: string | null;
+  articleMarkdown?: string | null;
   items?: ChangelogEntry["items"];
   sourcePullRequests: ChangelogEntry["sourcePullRequests"];
   generationKey?: string;
@@ -298,6 +300,8 @@ export type UpdateEntryInput = {
   summary: string;
   category: ChangelogEntry["category"];
   publishedAt?: string;
+  articleSlug?: string | null;
+  articleMarkdown?: string | null;
 };
 
 export type UpdateEntryImageInput = {

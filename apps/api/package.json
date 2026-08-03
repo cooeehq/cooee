@@ -10,7 +10,7 @@
     "auth:encrypt-oauth-tokens": "bun src/scripts/encrypt-oauth-tokens.ts",
     "billing:complimentary": "bun src/scripts/manage-complimentary-access.ts",
     "stripe:configure": "bun src/scripts/configure-stripe.ts",
-    "dev": "bun --env-file=../../.env.local --watch src/index.ts",
+    "dev": "PORT=${COOEE_API_PORT:-3000} bun --env-file=../../.env.local --watch src/index.ts",
     "migrate": "bun src/db/migrate.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc -p tsconfig.json"

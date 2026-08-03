@@ -22,6 +22,8 @@ describe("MarkdownEditor", () => {
     expect(html).toContain("Inline code");
     expect(html).toContain("Code block");
     expect(html).toContain("Link");
+    expect(html).toContain("Image");
+    expect(html).toContain("Table");
     expect(html).not.toContain("<textarea");
   });
 

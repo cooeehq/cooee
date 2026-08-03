@@ -1,6 +1,6 @@
 export type ChangelogCategory = string;
 
-export type ChangelogDisplayType = "post" | "callout" | "text";
+export type ChangelogDisplayType = "article" | "post" | "callout" | "text";
 export type ChangelogPublicTheme = "light" | "dark";
 export type ChangelogLogoAlignment = "left" | "center" | "right";
 
@@ -41,6 +41,8 @@ export type ChangelogEntry = {
   status: ChangelogEntryStatus;
   publishedAt: string | null;
   imageUrl?: string | null;
+  articleSlug?: string | null;
+  articleMarkdown?: string | null;
   items?: ChangelogChangeItem[];
   sourcePullRequests: Array<{
     number: number;
@@ -74,12 +76,23 @@ export type PublicFeedEntry = {
   category: ChangelogCategory;
   publishedAt: string;
   imageUrl?: string | null;
+  articleSlug?: string | null;
   items?: ChangelogChangeItem[];
   sourcePullRequests?: Array<{
     number: number;
     title?: string;
     url: string;
   }>;
+};
+
+export type PublicArticleEntry = PublicFeedEntry & {
+  articleSlug: string;
+  articleMarkdown: string;
+};
+
+export type PublicArticle = {
+  changelog: PublicChangelog;
+  entry: PublicArticleEntry;
 };
 
 export type PublicFeedPagination = {

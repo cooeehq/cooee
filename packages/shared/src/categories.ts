@@ -5,6 +5,7 @@ import type {
 } from "./types";
 
 export const changelogDisplayTypes: ChangelogDisplayType[] = [
+  "article",
   "post",
   "callout",
   "text",
@@ -15,7 +16,7 @@ export const defaultChangelogCategoryDefinitions: ChangelogCategoryDefinition[] 
     {
       id: "feature",
       label: "Feature",
-      displayType: "post",
+      displayType: "article",
       marketingCopy: true,
     },
     {
@@ -194,7 +195,7 @@ function normalizeCategoryMarketingCopy(
   displayType: ChangelogDisplayType,
   fallback: boolean | undefined,
 ): boolean {
-  if (displayType !== "post") {
+  if (displayType !== "post" && displayType !== "article") {
     return false;
   }
 

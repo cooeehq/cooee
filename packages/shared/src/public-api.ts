@@ -3,7 +3,7 @@ import { z } from "zod";
 export const publicChangelogCategoryDefinitionSchema = z.object({
   id: z.string(),
   label: z.string(),
-  displayType: z.enum(["post", "callout", "text"]),
+  displayType: z.enum(["article", "post", "callout", "text"]),
   marketingCopy: z.boolean().optional(),
 });
 
@@ -20,6 +20,7 @@ export const publicFeedEntrySchema = z.object({
   category: z.string(),
   publishedAt: z.string(),
   imageUrl: z.string().nullable().optional(),
+  articleSlug: z.string().nullable().optional(),
   items: z.array(publicChangelogChangeItemSchema).optional(),
   sourcePullRequests: z
     .array(
@@ -63,6 +64,16 @@ export const publicFeedSchema = z.object({
   entries: z.array(publicFeedEntrySchema),
   groups: z.record(z.string(), z.array(publicFeedEntrySchema)),
   pagination: publicFeedPaginationSchema.optional(),
+});
+
+export const publicArticleEntrySchema = publicFeedEntrySchema.extend({
+  articleSlug: z.string(),
+  articleMarkdown: z.string(),
+});
+
+export const publicArticleSchema = z.object({
+  changelog: publicChangelogSchema,
+  entry: publicArticleEntrySchema,
 });
 
 const publicFeedBeforeSchema = z.iso.datetime({ offset: true });
@@ -114,7 +125,7 @@ const publicFeedExample = {
     slug: "acme-app",
     name: "Acme App",
     description: "Latest product updates",
-    publicUrl: "https://cooee.sh/changelog/acme-app",
+    publicUrl: "https://app.cooee.sh/changelog/acme-app",
   },
   generatedAt: "2026-07-22T08:30:00.000Z",
   entries: [
@@ -143,8 +154,39 @@ export const publicApiOpenApiDocument = {
     version: "1.0.0",
     description: "Read published Cooee changelogs without authentication.",
   },
-  servers: [{ url: "https://cooee.sh" }],
+  servers: [{ url: "https://api.cooee.sh" }],
   paths: {
+    "/api/public/changelogs/{slug}/articles/{articleSlug}": {
+      get: {
+        operationId: "getChangelogArticle",
+        summary: "Get one published long-form changelog article",
+        parameters: [
+          {
+            name: "slug",
+            in: "path",
+            required: true,
+            schema: { type: "string", example: "acme-app" },
+          },
+          {
+            name: "articleSlug",
+            in: "path",
+            required: true,
+            schema: { type: "string", example: "faster-search" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Published changelog article",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PublicArticle" },
+              },
+            },
+          },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
     "/api/public/changelogs/{slug}/feed.json": {
       get: {
         operationId: "getChangelogFeed",
@@ -390,6 +432,17 @@ export const publicApiOpenApiDocument = {
           pagination: { $ref: "#/components/schemas/Pagination" },
         },
       },
+      PublicArticle: {
+        type: "object",
+        required: ["changelog", "entry"],
+        properties: {
+          changelog: {
+            type: "object",
+            required: ["slug", "name", "description", "publicUrl"],
+          },
+          entry: { $ref: "#/components/schemas/ArticleEntry" },
+        },
+      },
       FeedEntry: {
         type: "object",
         required: ["id", "title", "summary", "category", "publishedAt"],
@@ -400,6 +453,7 @@ export const publicApiOpenApiDocument = {
           category: { type: "string" },
           publishedAt: { type: "string", format: "date-time" },
           imageUrl: { type: ["string", "null"], format: "uri" },
+          articleSlug: { type: ["string", "null"] },
           items: {
             type: "array",
             items: { $ref: "#/components/schemas/ChangeItem" },
@@ -418,6 +472,19 @@ export const publicApiOpenApiDocument = {
           },
         },
       },
+      ArticleEntry: {
+        allOf: [
+          { $ref: "#/components/schemas/FeedEntry" },
+          {
+            type: "object",
+            required: ["articleSlug", "articleMarkdown"],
+            properties: {
+              articleSlug: { type: "string" },
+              articleMarkdown: { type: "string" },
+            },
+          },
+        ],
+      },
       ChangeItem: {
         type: "object",
         required: ["title", "summary", "category"],
@@ -433,7 +500,10 @@ export const publicApiOpenApiDocument = {
         properties: {
           id: { type: "string" },
           label: { type: "string" },
-          displayType: { type: "string", enum: ["post", "callout", "text"] },
+          displayType: {
+            type: "string",
+            enum: ["article", "post", "callout", "text"],
+          },
           marketingCopy: { type: "boolean" },
         },
       },

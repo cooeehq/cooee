@@ -90,7 +90,9 @@ export function buildPromptPayload(
   const marketingCopyCategoryIds = categories
     .filter(
       (category) =>
-        category.displayType === "post" && category.marketingCopy === true,
+        (category.displayType === "post" ||
+          category.displayType === "article") &&
+        category.marketingCopy === true,
     )
     .map((category) => category.id);
 
