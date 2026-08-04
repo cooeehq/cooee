@@ -796,6 +796,10 @@ describe("historical changelog generation", () => {
               decision: "skip",
               reason: "Matches the repository's internal billing exclusion.",
               matchedFeedbackIds: ["feedback_internal_billing"],
+              privateRepositoryGuardrailTopics: ["billing"],
+              directUxOrDxImpact: false,
+              shouldTellUsers: false,
+              knowledgeBenefitsUxOrDx: false,
               confidence: 0.98,
             },
             {
@@ -803,6 +807,10 @@ describe("historical changelog generation", () => {
               decision: "publish",
               reason: "Adds a directly visible shipment filtering control.",
               matchedFeedbackIds: [],
+              privateRepositoryGuardrailTopics: [],
+              directUxOrDxImpact: true,
+              shouldTellUsers: true,
+              knowledgeBenefitsUxOrDx: true,
               confidence: 0.96,
             },
           ],
@@ -867,6 +875,10 @@ describe("historical changelog generation", () => {
             decision: "publish",
             reason: "Possible customer impact, but the evidence is indirect.",
             matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: false,
+            shouldTellUsers: false,
+            knowledgeBenefitsUxOrDx: false,
             confidence: 0.72,
           },
         ],
@@ -889,6 +901,162 @@ describe("historical changelog generation", () => {
     expect(result.status).toBe("held");
     expect(result.holdReason).toBe("publication-eligibility-review");
     expect(result.entry?.sourcePullRequests[0]?.number).toBe(65);
+  });
+
+  test("forces guarded private-repository topics into review", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.repositories[0]!.private = true;
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_67",
+        number: 67,
+        title: "Fix subscription invoice reconciliation",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    let summarizeCalled = false;
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 67,
+            decision: "publish",
+            reason: "The billing fix might improve the product experience.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: ["billing"],
+            directUxOrDxImpact: true,
+            shouldTellUsers: true,
+            knowledgeBenefitsUxOrDx: true,
+            confidence: 0.99,
+          },
+        ],
+      }),
+      summarize: async () => {
+        summarizeCalled = true;
+        throw new Error(
+          "guarded private-repository PRs must not reach the writer",
+        );
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(summarizeCalled).toBe(false);
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("publication-eligibility-review");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(67);
+  });
+
+  test("publishes direct private-repository UX changes with clean guardrails", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.repositories[0]!.private = true;
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_68",
+        number: 68,
+        title: "Add saved shipment filters",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 68,
+            decision: "publish",
+            reason: "Adds a directly visible workflow capability.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: true,
+            shouldTellUsers: true,
+            knowledgeBenefitsUxOrDx: true,
+            confidence: 0.97,
+          },
+        ],
+      }),
+      summarize: async () => ({
+        title: "Saved shipment filters",
+        summary: "Shipment filters can now be saved for later use.",
+        category: "feature",
+        confidence: 0.97,
+        sensitive: false,
+        items: [
+          {
+            title: "Saved shipment filters",
+            summary: "Shipment filters can now be saved for later use.",
+            category: "feature",
+            sourcePullRequestNumbers: [68],
+          },
+        ],
+      }),
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(result.status).toBe("published");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(68);
+  });
+
+  test("holds private-repository publications without direct UX or DX value", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.repositories[0]!.private = true;
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_69",
+        number: 69,
+        title: "Refactor queue retry helpers",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 69,
+            decision: "publish",
+            reason: "The refactor could indirectly improve reliability.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: false,
+            shouldTellUsers: false,
+            knowledgeBenefitsUxOrDx: false,
+            confidence: 0.98,
+          },
+        ],
+      }),
+      summarize: async () => {
+        throw new Error(
+          "indirect private-repository PRs must not reach the writer",
+        );
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("publication-eligibility-review");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(69);
   });
 
   test("holds every PR when the publication gate omits a decision", async () => {

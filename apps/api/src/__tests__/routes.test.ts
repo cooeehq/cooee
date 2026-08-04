@@ -1333,6 +1333,15 @@ describe("api routes", () => {
     expect(source).toContain(
       "Do not override a dismissal by reframing internal work as reliability, speed, accuracy, or smoother operation",
     );
+    expect(source).toContain(
+      "do we want to tell our users about this, and does knowing it benefit their product UX or external developer DX",
+    );
+    expect(source).toContain(
+      "Tag internal libraries, migrations, billing, authentication, security patches, hotfixes, and general typos or minor UI tweaks",
+    );
+    expect(source).toContain(
+      "For private repositories, publish only when all three are true",
+    );
   });
 
   test("reports post image generation availability without config details", async () => {

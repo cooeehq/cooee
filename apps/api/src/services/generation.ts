@@ -14,6 +14,7 @@ import type {
   PullRequestMetadata,
 } from "@cooee/shared";
 import {
+  privateRepositoryGuardrailTopics,
   type AiPublicationDecision,
   unwrapAiSummaryResult,
   unwrapAiPublicationClassificationResult,
@@ -304,13 +305,19 @@ async function generateChangelogForWindowUnlocked(input: {
     );
     publicationPullRequests = filtered.publishable.filter((pullRequest) => {
       const decision = decisionsByNumber.get(pullRequest.number);
-      return decision?.decision === "publish" && decision.confidence >= 0.85;
+      return (
+        decision?.decision === "publish" &&
+        decision.confidence >= 0.85 &&
+        !requiresPrivateRepositoryReview(decision, writerOptions)
+      );
     });
     const heldPullRequests = filtered.publishable.filter((pullRequest) => {
       const decision = decisionsByNumber.get(pullRequest.number);
       return (
         decision?.decision === "hold" ||
-        (decision?.decision === "publish" && decision.confidence < 0.85)
+        (decision?.decision === "publish" && decision.confidence < 0.85) ||
+        (decision !== undefined &&
+          requiresPrivateRepositoryReview(decision, writerOptions))
       );
     });
     if (heldPullRequests.length > 0) {
@@ -606,6 +613,13 @@ function normalizePublicationDecisions(
       decision.reason.trim().length === 0 ||
       !Array.isArray(decision.matchedFeedbackIds) ||
       !decision.matchedFeedbackIds.every((id) => typeof id === "string") ||
+      !Array.isArray(decision.privateRepositoryGuardrailTopics) ||
+      !decision.privateRepositoryGuardrailTopics.every((topic) =>
+        privateRepositoryGuardrailTopics.includes(topic),
+      ) ||
+      typeof decision.directUxOrDxImpact !== "boolean" ||
+      typeof decision.shouldTellUsers !== "boolean" ||
+      typeof decision.knowledgeBenefitsUxOrDx !== "boolean" ||
       typeof decision.confidence !== "number" ||
       decision.confidence < 0 ||
       decision.confidence > 1
@@ -618,6 +632,21 @@ function normalizePublicationDecisions(
   }
 
   return seenNumbers.size === expectedNumbers.size ? decisions : null;
+}
+
+function requiresPrivateRepositoryReview(
+  decision: AiPublicationDecision,
+  options: Required<AiWritingOptions>,
+): boolean {
+  if (options.repositoryVisibility !== "private") return false;
+
+  return (
+    decision.privateRepositoryGuardrailTopics.length > 0 ||
+    (decision.decision === "publish" &&
+      (!decision.directUxOrDxImpact ||
+        !decision.shouldTellUsers ||
+        !decision.knowledgeBenefitsUxOrDx))
+  );
 }
 
 export async function assertAiCreditRechargeAvailability(input: {

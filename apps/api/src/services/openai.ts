@@ -33,11 +33,28 @@ export type AiSummaryResult = {
   usage?: AiTokenUsage;
 };
 
+export const privateRepositoryGuardrailTopics = [
+  "internal-library",
+  "migration",
+  "billing",
+  "authentication",
+  "security-patch",
+  "hotfix",
+  "typo-or-ui-tweak",
+] as const;
+
+export type PrivateRepositoryGuardrailTopic =
+  (typeof privateRepositoryGuardrailTopics)[number];
+
 export type AiPublicationDecision = {
   pullRequestNumber: number;
   decision: "publish" | "skip" | "hold";
   reason: string;
   matchedFeedbackIds: string[];
+  privateRepositoryGuardrailTopics: PrivateRepositoryGuardrailTopic[];
+  directUxOrDxImpact: boolean;
+  shouldTellUsers: boolean;
+  knowledgeBenefitsUxOrDx: boolean;
   confidence: number;
 };
 
@@ -100,7 +117,7 @@ const AI_POST_WRITING_RULES =
   "Writing rules: No antithesis. No corrective negation. No paragraph pinning. No parataxis. No summary beats. No rhetorical crutches. No negative parallelisms. No negative anaphoras. No contrasting pairs. No rule of three. No em dashes. No throat-clearing openers. No landing sentences. No setup/payoff constructions. No parallel sentence structures within a paragraph. Vary sentence length unpredictably. No stacked noun phrases. No filler intensifiers (genuinely, really, truly, actually). No corporate-register verbs (leverage, underscore, reflect). No nominalization. No hedging qualifiers. Write for the spoken voice. No performed enthusiasm.";
 
 const PUBLICATION_CLASSIFIER_SYSTEM_PROMPT =
-  "You are Cooee's fail-closed publication eligibility gate. You classify pull requests before any public changelog copy is written. Return only valid JSON with decisions. A pull request may be published only when its sanitized metadata shows a direct, externally observable capability, behavior, or outcome for the configured audience. Internal implementation work is not public merely because an indirect customer benefit can be imagined. Repository dismissal rules are mandatory vetoes: when a pull request matches or plausibly falls within a dismissed rule, you must skip it. Do not override a dismissal by reframing internal work as reliability, speed, accuracy, or smoother operation. Internal billing logic, invoice plumbing, entitlements, migrations, deployment fixes, dependency or lockfile work, observability, analytics plumbing, test-only changes, refactors, and backend maintenance should be skipped unless the metadata clearly describes a direct reader-visible product change and no dismissal rule covers it. Relevant corrections may override a dismissal only when they closely match the current pull request. Use hold when evidence is ambiguous or conflicting. Every input pull request must have exactly one decision.";
+  "You are Cooee's fail-closed publication eligibility gate. You classify pull requests before any public changelog copy is written. Return only valid JSON with decisions. A pull request may be published only when its sanitized metadata shows a direct, externally observable capability, behavior, or outcome for the configured audience. Internal implementation work is not public merely because an indirect customer benefit can be imagined. Repository dismissal rules are mandatory vetoes: when a pull request matches or plausibly falls within a dismissed rule, you must skip it. Do not override a dismissal by reframing internal work as reliability, speed, accuracy, or smoother operation. For every decision, answer: do we want to tell our users about this, and does knowing it benefit their product UX or external developer DX? DX means the experience of external developers who use the product, API, SDK, or documented integration, never the repository team's engineering, deployment, or maintenance experience. Set directUxOrDxImpact, shouldTellUsers, and knowledgeBenefitsUxOrDx independently and conservatively. For private repositories, publish only when all three are true and the change has no privateRepositoryGuardrailTopics. Tag internal libraries, migrations, billing, authentication, security patches, hotfixes, and general typos or minor UI tweaks with their matching privateRepositoryGuardrailTopics; these topics are review-only for private repositories. Internal billing logic, invoice plumbing, entitlements, migrations, deployment fixes, dependency or lockfile work, observability, analytics plumbing, test-only changes, refactors, and backend maintenance should be skipped unless the metadata clearly describes a direct reader-visible product change and no dismissal rule covers it. Relevant corrections may override a dismissal only when they closely match the current pull request. Use hold when evidence is ambiguous or conflicting. Every input pull request must have exactly one decision.";
 
 const POST_GENERATOR_SYSTEM_PROMPT = `${AI_POST_WRITING_RULES}\n\nYou are Cooee, a privacy-first changelog writer. Return only valid JSON with title, summary, category, items, skippedPullRequestNumbers, confidence, and sensitive. Items are the authoritative customer-facing posts: create one item for each unique customer-facing change, each with its own title, markdown summary, category, and sourcePullRequestNumbers array containing the PR numbers that directly caused that item. Create a separate item for each PR by default. Combine PRs only when they directly contribute to the same customer-facing change; then include every related PR number in that item's sourcePullRequestNumbers. Dismissed learnings are repository-specific publishing guidance: skip matching non-customer-facing pull requests by putting their numbers in skippedPullRequestNumbers and do not create items for them. Relevant learnings correct prior exclusions. Merged learnings describe changes that belong together. Every input pull request must appear in exactly one item or in skippedPullRequestNumbers. Use top-level title, summary, and category only as fallback metadata when exactly one item cannot be produced. Keep titles plain text. Use concise markdown in summary fields only when it improves readability, such as short bullet lists or emphasis. Keep the voice product-descriptive. Use you/your sparingly, only when direct address clarifies an action or outcome. Avoid replacing unnecessary second-person wording with users, merchants, customers, store owners, teams, or similar third-person audience labels unless those are a different group from the reader. When rewriteInstructions are present, follow them as editing direction without weakening privacy rules or inventing facts.`;
 
@@ -186,6 +203,10 @@ export class OpenAiSummarizer implements AiSummarizer {
                     "decision",
                     "reason",
                     "matchedFeedbackIds",
+                    "privateRepositoryGuardrailTopics",
+                    "directUxOrDxImpact",
+                    "shouldTellUsers",
+                    "knowledgeBenefitsUxOrDx",
                     "confidence",
                   ],
                   properties: {
@@ -199,6 +220,16 @@ export class OpenAiSummarizer implements AiSummarizer {
                       type: "array",
                       items: { type: "string" },
                     },
+                    privateRepositoryGuardrailTopics: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: privateRepositoryGuardrailTopics,
+                      },
+                    },
+                    directUxOrDxImpact: { type: "boolean" },
+                    shouldTellUsers: { type: "boolean" },
+                    knowledgeBenefitsUxOrDx: { type: "boolean" },
                     confidence: { type: "number", minimum: 0, maximum: 1 },
                   },
                 },
