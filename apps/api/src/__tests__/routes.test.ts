@@ -1328,6 +1328,11 @@ describe("api routes", () => {
     expect(source).toContain(
       "Avoid replacing unnecessary second-person wording with users, merchants, customers",
     );
+    expect(source).toContain("fail-closed publication eligibility gate");
+    expect(source).toContain("Repository dismissal rules are mandatory vetoes");
+    expect(source).toContain(
+      "Do not override a dismissal by reframing internal work as reliability, speed, accuracy, or smoother operation",
+    );
   });
 
   test("reports post image generation availability without config details", async () => {

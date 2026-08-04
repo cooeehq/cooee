@@ -14,7 +14,9 @@ import type {
   PullRequestMetadata,
 } from "@cooee/shared";
 import {
+  type AiPublicationDecision,
   unwrapAiSummaryResult,
+  unwrapAiPublicationClassificationResult,
   type AiSummarizer,
   type AiTokenUsage,
 } from "./openai";
@@ -255,11 +257,95 @@ async function generateChangelogForWindowUnlocked(input: {
     resolveAiWritingOptions({ changelog, store: input.store }),
   ]);
 
-  const summaryResult = await input.summarizer.summarize(filtered.publishable, {
-    ...writerOptions,
-    categoryDefinitions: changelog.settings.categoryDefinitions,
-    learnings,
-  });
+  let publicationPullRequests = filtered.publishable;
+  let publicationHeldEntries: StoredEntry[] = [];
+
+  if (input.summarizer.classifyPublication) {
+    const classificationResult = await input.summarizer.classifyPublication(
+      filtered.publishable,
+      {
+        ...writerOptions,
+        learnings,
+      },
+    );
+    const { classification, usage: classificationUsage } =
+      unwrapAiPublicationClassificationResult(classificationResult);
+    if (classificationUsage) {
+      await input.recordAiUsage?.({
+        workspaceId: changelog.workspaceId,
+        sourceId: `publication-classification:${changelog.id}:${windowStart}:${windowEnd}`,
+        usage: classificationUsage,
+      });
+    }
+    const decisions = normalizePublicationDecisions(
+      classification,
+      filtered.publishable,
+    );
+    if (!decisions) {
+      const entries = await createGeneratedHoldEntries({
+        changelogId: changelog.id,
+        holdReason: "invalid-publication-classification",
+        pullRequests: filtered.publishable,
+        generationKey: input.generationKey,
+        store: input.store,
+        windowEndedAt: windowEnd,
+      });
+      await input.store.markGenerated(changelog.id, windowEnd);
+      return {
+        status: "held",
+        entry: entries[0],
+        entries,
+        holdReason: "invalid-publication-classification",
+      };
+    }
+
+    const decisionsByNumber = new Map(
+      decisions.map((decision) => [decision.pullRequestNumber, decision]),
+    );
+    publicationPullRequests = filtered.publishable.filter((pullRequest) => {
+      const decision = decisionsByNumber.get(pullRequest.number);
+      return decision?.decision === "publish" && decision.confidence >= 0.85;
+    });
+    const heldPullRequests = filtered.publishable.filter((pullRequest) => {
+      const decision = decisionsByNumber.get(pullRequest.number);
+      return (
+        decision?.decision === "hold" ||
+        (decision?.decision === "publish" && decision.confidence < 0.85)
+      );
+    });
+    if (heldPullRequests.length > 0) {
+      publicationHeldEntries = await createGeneratedHoldEntries({
+        changelogId: changelog.id,
+        holdReason: "publication-eligibility-review",
+        pullRequests: heldPullRequests,
+        generationKey: input.generationKey,
+        store: input.store,
+        windowEndedAt: windowEnd,
+      });
+    }
+
+    if (publicationPullRequests.length === 0) {
+      await input.store.markGenerated(changelog.id, windowEnd);
+      if (publicationHeldEntries.length > 0) {
+        return {
+          status: "held",
+          entry: publicationHeldEntries[0],
+          entries: publicationHeldEntries,
+          holdReason: "publication-eligibility-review",
+        };
+      }
+      return { status: "empty", entries: [] };
+    }
+  }
+
+  const summaryResult = await input.summarizer.summarize(
+    publicationPullRequests,
+    {
+      ...writerOptions,
+      categoryDefinitions: changelog.settings.categoryDefinitions,
+      learnings,
+    },
+  );
   const { candidate, usage } = unwrapAiSummaryResult(summaryResult);
   if (usage) {
     await input.recordAiUsage?.({
@@ -274,20 +360,21 @@ async function generateChangelogForWindowUnlocked(input: {
 
   if (!validation.ok) {
     const holdReason = input.summarizer.disabledReason ?? validation.reason;
-    const entries = await createGeneratedHoldEntries({
+    const generatedHoldEntries = await createGeneratedHoldEntries({
       changelogId: changelog.id,
       holdReason,
-      pullRequests: filtered.publishable,
+      pullRequests: publicationPullRequests,
       generationKey: input.generationKey,
       store: input.store,
       windowEndedAt: windowEnd,
     });
+    const entries = [...publicationHeldEntries, ...generatedHoldEntries];
     await input.store.markGenerated(changelog.id, windowEnd);
     return { status: "held", entry: entries[0], entries, holdReason };
   }
 
   const publishedAt = input.windowStart
-    ? (getLatestMergedAt(filtered.publishable) ?? windowEnd)
+    ? (getLatestMergedAt(publicationPullRequests) ?? windowEnd)
     : windowEnd;
   const publishableItems: GeneratedChangeItem[] =
     validation.entry.items && validation.entry.items.length > 0
@@ -299,9 +386,9 @@ async function generateChangelogForWindowUnlocked(input: {
             category: validation.entry.category,
           },
         ];
-  const entries: StoredEntry[] = [];
+  const entries: StoredEntry[] = [...publicationHeldEntries];
   const pullRequestsByNumber = new Map(
-    filtered.publishable.map((pullRequest) => [
+    publicationPullRequests.map((pullRequest) => [
       pullRequest.number,
       pullRequest,
     ]),
@@ -355,7 +442,7 @@ async function generateChangelogForWindowUnlocked(input: {
     }
   }
 
-  const uncoveredPullRequests = filtered.publishable.filter(
+  const uncoveredPullRequests = publicationPullRequests.filter(
     (pullRequest) =>
       !coveredPullRequestNumbers.has(pullRequest.number) &&
       !skippedPullRequestNumbers.has(pullRequest.number),
@@ -485,6 +572,52 @@ async function generateChangelogForWindowUnlocked(input: {
     entries,
     holdReason: heldEntry?.holdReason,
   };
+}
+
+function normalizePublicationDecisions(
+  classification: unknown,
+  pullRequests: PullRequestMetadata[],
+): AiPublicationDecision[] | null {
+  if (
+    !classification ||
+    typeof classification !== "object" ||
+    !("decisions" in classification) ||
+    !Array.isArray(classification.decisions)
+  ) {
+    return null;
+  }
+
+  const expectedNumbers = new Set(
+    pullRequests.map((pullRequest) => pullRequest.number),
+  );
+  const seenNumbers = new Set<number>();
+  const decisions: AiPublicationDecision[] = [];
+
+  for (const value of classification.decisions) {
+    if (!value || typeof value !== "object") return null;
+    const decision = value as Partial<AiPublicationDecision>;
+    if (
+      typeof decision.pullRequestNumber !== "number" ||
+      !Number.isInteger(decision.pullRequestNumber) ||
+      !expectedNumbers.has(decision.pullRequestNumber) ||
+      seenNumbers.has(decision.pullRequestNumber) ||
+      !["publish", "skip", "hold"].includes(decision.decision ?? "") ||
+      typeof decision.reason !== "string" ||
+      decision.reason.trim().length === 0 ||
+      !Array.isArray(decision.matchedFeedbackIds) ||
+      !decision.matchedFeedbackIds.every((id) => typeof id === "string") ||
+      typeof decision.confidence !== "number" ||
+      decision.confidence < 0 ||
+      decision.confidence > 1
+    ) {
+      return null;
+    }
+
+    seenNumbers.add(decision.pullRequestNumber);
+    decisions.push(decision as AiPublicationDecision);
+  }
+
+  return seenNumbers.size === expectedNumbers.size ? decisions : null;
 }
 
 export async function assertAiCreditRechargeAvailability(input: {

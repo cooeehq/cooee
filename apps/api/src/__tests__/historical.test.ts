@@ -748,6 +748,180 @@ describe("historical changelog generation", () => {
     expect(store.entries).toEqual([]);
   });
 
+  test("applies dismissed repository rules before writing public copy", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.aiFeedback.push({
+      id: "feedback_internal_billing",
+      workspaceId: "ws_acme",
+      changelogId: "cl_acme",
+      entryId: "entry_internal_billing",
+      title: "Billing reconciliation internals",
+      summary: "Billing reconciliation logic was updated.",
+      category: "maintenance",
+      note: "Internal billing logic and fixes should not be made public.",
+      feedbackKind: "dismissed",
+      sourcePullRequests: [],
+      createdAt: "2026-06-02T00:00:00.000Z",
+    });
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_63",
+        number: 63,
+        title: "Fix Stripe invoice reconciliation retry",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+      pullRequest({
+        id: "pr_64",
+        number: 64,
+        title: "Add shipment status filters",
+        mergedAt: "2026-06-03T05:15:00.000Z",
+      }),
+    );
+    const summarizedPullRequests: number[][] = [];
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async (pullRequests, options) => {
+        expect(pullRequests.map((pullRequest) => pullRequest.number)).toEqual([
+          63, 64,
+        ]);
+        expect(options?.learnings?.[0]).toMatchObject({
+          id: "feedback_internal_billing",
+          feedbackKind: "dismissed",
+          note: "Internal billing logic and fixes should not be made public.",
+        });
+        return {
+          decisions: [
+            {
+              pullRequestNumber: 63,
+              decision: "skip",
+              reason: "Matches the repository's internal billing exclusion.",
+              matchedFeedbackIds: ["feedback_internal_billing"],
+              confidence: 0.98,
+            },
+            {
+              pullRequestNumber: 64,
+              decision: "publish",
+              reason: "Adds a directly visible shipment filtering control.",
+              matchedFeedbackIds: [],
+              confidence: 0.96,
+            },
+          ],
+        };
+      },
+      summarize: async (pullRequests) => {
+        summarizedPullRequests.push(
+          pullRequests.map((pullRequest) => pullRequest.number),
+        );
+        return {
+          title: "Shipment status filters",
+          summary: "Shipment lists can now be filtered by status.",
+          category: "feature",
+          confidence: 0.95,
+          sensitive: false,
+          items: [
+            {
+              title: "Shipment status filters",
+              summary: "Shipment lists can now be filtered by status.",
+              category: "feature",
+              sourcePullRequestNumbers: [64],
+            },
+          ],
+        };
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(summarizedPullRequests).toEqual([[64]]);
+    expect(result.status).toBe("published");
+    expect(
+      result.entries?.flatMap((entry) =>
+        entry.sourcePullRequests.map((pullRequest) => pullRequest.number),
+      ),
+    ).toEqual([64]);
+  });
+
+  test("holds low-confidence publication decisions instead of publishing", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_65",
+        number: 65,
+        title: "Adjust billing plan transition handling",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    let summarizeCalled = false;
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 65,
+            decision: "publish",
+            reason: "Possible customer impact, but the evidence is indirect.",
+            matchedFeedbackIds: [],
+            confidence: 0.72,
+          },
+        ],
+      }),
+      summarize: async () => {
+        summarizeCalled = true;
+        throw new Error("low-confidence PRs must not reach the writer");
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(summarizeCalled).toBe(false);
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("publication-eligibility-review");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(65);
+  });
+
+  test("holds every PR when the publication gate omits a decision", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_66",
+        number: 66,
+        title: "Adjust invoice retry internals",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+    );
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({ decisions: [] }),
+      summarize: async () => {
+        throw new Error("invalid classifications must fail closed");
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("invalid-publication-classification");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(66);
+  });
+
   test("runs historical generation across the last N completed windows", async () => {
     const store = InMemoryStore.seeded();
     store.changelogs[0].settings.scheduleFrequency = "weekly";
