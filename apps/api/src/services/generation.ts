@@ -14,7 +14,10 @@ import type {
   PullRequestMetadata,
 } from "@cooee/shared";
 import {
+  privateRepositoryGuardrailTopics,
+  type AiPublicationDecision,
   unwrapAiSummaryResult,
+  unwrapAiPublicationClassificationResult,
   type AiSummarizer,
   type AiTokenUsage,
 } from "./openai";
@@ -255,11 +258,114 @@ async function generateChangelogForWindowUnlocked(input: {
     resolveAiWritingOptions({ changelog, store: input.store }),
   ]);
 
-  const summaryResult = await input.summarizer.summarize(filtered.publishable, {
-    ...writerOptions,
-    categoryDefinitions: changelog.settings.categoryDefinitions,
-    learnings,
-  });
+  let publicationPullRequests = filtered.publishable;
+  let publicationHeldEntries: StoredEntry[] = [];
+
+  if (input.summarizer.classifyPublication) {
+    const classificationResult = await input.summarizer.classifyPublication(
+      filtered.publishable,
+      {
+        ...writerOptions,
+        learnings,
+      },
+    );
+    const { classification, usage: classificationUsage } =
+      unwrapAiPublicationClassificationResult(classificationResult);
+    if (classificationUsage) {
+      await input.recordAiUsage?.({
+        workspaceId: changelog.workspaceId,
+        sourceId: `publication-classification:${changelog.id}:${windowStart}:${windowEnd}`,
+        usage: classificationUsage,
+      });
+    }
+    const decisions = normalizePublicationDecisions(
+      classification,
+      filtered.publishable,
+    );
+    if (!decisions) {
+      const entries = await createGeneratedHoldEntries({
+        changelogId: changelog.id,
+        holdReason: "invalid-publication-classification",
+        pullRequests: filtered.publishable,
+        generationKey: input.generationKey,
+        store: input.store,
+        windowEndedAt: windowEnd,
+      });
+      await input.store.markGenerated(changelog.id, windowEnd);
+      return {
+        status: "held",
+        entry: entries[0],
+        entries,
+        holdReason: "invalid-publication-classification",
+      };
+    }
+
+    const decisionsByNumber = new Map(
+      decisions.map((decision) => [decision.pullRequestNumber, decision]),
+    );
+    const dismissedFeedbackIds = new Set(
+      learnings
+        .filter((learning) => learning.feedbackKind === "dismissed")
+        .map((learning) => learning.id),
+    );
+    publicationPullRequests = filtered.publishable.filter((pullRequest) => {
+      const decision = decisionsByNumber.get(pullRequest.number);
+      return (
+        decision?.decision === "publish" &&
+        decision.confidence >= 0.85 &&
+        !requiresPublicationReview(
+          decision,
+          writerOptions,
+          dismissedFeedbackIds,
+        )
+      );
+    });
+    const heldPullRequests = filtered.publishable.filter((pullRequest) => {
+      const decision = decisionsByNumber.get(pullRequest.number);
+      return (
+        decision?.decision === "hold" ||
+        (decision?.decision === "publish" && decision.confidence < 0.85) ||
+        (decision !== undefined &&
+          requiresPublicationReview(
+            decision,
+            writerOptions,
+            dismissedFeedbackIds,
+          ))
+      );
+    });
+    if (heldPullRequests.length > 0) {
+      publicationHeldEntries = await createGeneratedHoldEntries({
+        changelogId: changelog.id,
+        holdReason: "publication-eligibility-review",
+        pullRequests: heldPullRequests,
+        generationKey: input.generationKey,
+        store: input.store,
+        windowEndedAt: windowEnd,
+      });
+    }
+
+    if (publicationPullRequests.length === 0) {
+      await input.store.markGenerated(changelog.id, windowEnd);
+      if (publicationHeldEntries.length > 0) {
+        return {
+          status: "held",
+          entry: publicationHeldEntries[0],
+          entries: publicationHeldEntries,
+          holdReason: "publication-eligibility-review",
+        };
+      }
+      return { status: "empty", entries: [] };
+    }
+  }
+
+  const summaryResult = await input.summarizer.summarize(
+    publicationPullRequests,
+    {
+      ...writerOptions,
+      categoryDefinitions: changelog.settings.categoryDefinitions,
+      learnings,
+    },
+  );
   const { candidate, usage } = unwrapAiSummaryResult(summaryResult);
   if (usage) {
     await input.recordAiUsage?.({
@@ -274,20 +380,21 @@ async function generateChangelogForWindowUnlocked(input: {
 
   if (!validation.ok) {
     const holdReason = input.summarizer.disabledReason ?? validation.reason;
-    const entries = await createGeneratedHoldEntries({
+    const generatedHoldEntries = await createGeneratedHoldEntries({
       changelogId: changelog.id,
       holdReason,
-      pullRequests: filtered.publishable,
+      pullRequests: publicationPullRequests,
       generationKey: input.generationKey,
       store: input.store,
       windowEndedAt: windowEnd,
     });
+    const entries = [...publicationHeldEntries, ...generatedHoldEntries];
     await input.store.markGenerated(changelog.id, windowEnd);
     return { status: "held", entry: entries[0], entries, holdReason };
   }
 
   const publishedAt = input.windowStart
-    ? (getLatestMergedAt(filtered.publishable) ?? windowEnd)
+    ? (getLatestMergedAt(publicationPullRequests) ?? windowEnd)
     : windowEnd;
   const publishableItems: GeneratedChangeItem[] =
     validation.entry.items && validation.entry.items.length > 0
@@ -299,9 +406,9 @@ async function generateChangelogForWindowUnlocked(input: {
             category: validation.entry.category,
           },
         ];
-  const entries: StoredEntry[] = [];
+  const generatedEntries: StoredEntry[] = [];
   const pullRequestsByNumber = new Map(
-    filtered.publishable.map((pullRequest) => [
+    publicationPullRequests.map((pullRequest) => [
       pullRequest.number,
       pullRequest,
     ]),
@@ -351,19 +458,19 @@ async function generateChangelogForWindowUnlocked(input: {
         sourcePullRequests: group.pullRequests.map(toSourcePullRequest),
         generationKey: input.generationKey,
       });
-      entries.push(entry);
+      generatedEntries.push(entry);
     }
   }
 
-  const uncoveredPullRequests = filtered.publishable.filter(
+  const uncoveredPullRequests = publicationPullRequests.filter(
     (pullRequest) =>
       !coveredPullRequestNumbers.has(pullRequest.number) &&
       !skippedPullRequestNumbers.has(pullRequest.number),
   );
-  if (uncoveredPullRequests.length === 1 && entries.length === 0) {
+  if (uncoveredPullRequests.length === 1 && generatedEntries.length === 0) {
     const pullRequest = uncoveredPullRequests[0];
     const item = getPostForSinglePullRequest(validation.entry, pullRequest);
-    entries.push(
+    generatedEntries.push(
       await input.store.createEntry({
         changelogId: changelog.id,
         title: item.title,
@@ -411,7 +518,7 @@ async function generateChangelogForWindowUnlocked(input: {
           windowEndedAt: windowEnd,
           generationKey: input.generationKey,
         });
-        entries.push(entry);
+        generatedEntries.push(entry);
         continue;
       }
 
@@ -427,7 +534,7 @@ async function generateChangelogForWindowUnlocked(input: {
         fallbackValidation.entry,
         pullRequest,
       );
-      entries.push(
+      generatedEntries.push(
         await input.store.createEntry({
           changelogId: changelog.id,
           title: item.title,
@@ -450,7 +557,7 @@ async function generateChangelogForWindowUnlocked(input: {
 
   if (changelog.settings.postImageSettings.enabled) {
     await Promise.all(
-      entries
+      generatedEntries
         .filter(
           (entry) =>
             entry.status === "published" &&
@@ -472,6 +579,7 @@ async function generateChangelogForWindowUnlocked(input: {
 
   await input.store.markGenerated(changelog.id, windowEnd);
 
+  const entries = [...generatedEntries, ...publicationHeldEntries];
   if (entries.length === 0) {
     return { status: "empty", entries: [] };
   }
@@ -481,10 +589,79 @@ async function generateChangelogForWindowUnlocked(input: {
     status: entries.some((entry) => entry.status === "published")
       ? "published"
       : "held",
-    entry: entries[0],
+    entry: entries.find((entry) => entry.status === "published") ?? entries[0],
     entries,
     holdReason: heldEntry?.holdReason,
   };
+}
+
+function normalizePublicationDecisions(
+  classification: unknown,
+  pullRequests: PullRequestMetadata[],
+): AiPublicationDecision[] | null {
+  if (
+    !classification ||
+    typeof classification !== "object" ||
+    !("decisions" in classification) ||
+    !Array.isArray(classification.decisions)
+  ) {
+    return null;
+  }
+
+  const expectedNumbers = new Set(
+    pullRequests.map((pullRequest) => pullRequest.number),
+  );
+  const seenNumbers = new Set<number>();
+  const decisions: AiPublicationDecision[] = [];
+
+  for (const value of classification.decisions) {
+    if (!value || typeof value !== "object") return null;
+    const decision = value as Partial<AiPublicationDecision>;
+    if (
+      typeof decision.pullRequestNumber !== "number" ||
+      !Number.isInteger(decision.pullRequestNumber) ||
+      !expectedNumbers.has(decision.pullRequestNumber) ||
+      seenNumbers.has(decision.pullRequestNumber) ||
+      !["publish", "skip", "hold"].includes(decision.decision ?? "") ||
+      typeof decision.reason !== "string" ||
+      decision.reason.trim().length === 0 ||
+      !Array.isArray(decision.matchedFeedbackIds) ||
+      !decision.matchedFeedbackIds.every((id) => typeof id === "string") ||
+      !Array.isArray(decision.privateRepositoryGuardrailTopics) ||
+      !decision.privateRepositoryGuardrailTopics.every((topic) =>
+        privateRepositoryGuardrailTopics.includes(topic),
+      ) ||
+      typeof decision.directUxOrDxImpact !== "boolean" ||
+      typeof decision.shouldTellUsers !== "boolean" ||
+      typeof decision.knowledgeBenefitsUxOrDx !== "boolean" ||
+      typeof decision.confidence !== "number" ||
+      decision.confidence < 0 ||
+      decision.confidence > 1
+    ) {
+      return null;
+    }
+
+    seenNumbers.add(decision.pullRequestNumber);
+    decisions.push(decision as AiPublicationDecision);
+  }
+
+  return seenNumbers.size === expectedNumbers.size ? decisions : null;
+}
+
+function requiresPublicationReview(
+  decision: AiPublicationDecision,
+  options: Required<AiWritingOptions>,
+  dismissedFeedbackIds: ReadonlySet<string>,
+): boolean {
+  return (
+    (options.repositoryVisibility === "private" &&
+      decision.privateRepositoryGuardrailTopics.length > 0) ||
+    (decision.decision === "publish" &&
+      (decision.matchedFeedbackIds.some((id) => dismissedFeedbackIds.has(id)) ||
+        !decision.directUxOrDxImpact ||
+        !decision.shouldTellUsers ||
+        !decision.knowledgeBenefitsUxOrDx))
+  );
 }
 
 export async function assertAiCreditRechargeAvailability(input: {
