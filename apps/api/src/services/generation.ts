@@ -303,12 +303,21 @@ async function generateChangelogForWindowUnlocked(input: {
     const decisionsByNumber = new Map(
       decisions.map((decision) => [decision.pullRequestNumber, decision]),
     );
+    const dismissedFeedbackIds = new Set(
+      learnings
+        .filter((learning) => learning.feedbackKind === "dismissed")
+        .map((learning) => learning.id),
+    );
     publicationPullRequests = filtered.publishable.filter((pullRequest) => {
       const decision = decisionsByNumber.get(pullRequest.number);
       return (
         decision?.decision === "publish" &&
         decision.confidence >= 0.85 &&
-        !requiresPrivateRepositoryReview(decision, writerOptions)
+        !requiresPublicationReview(
+          decision,
+          writerOptions,
+          dismissedFeedbackIds,
+        )
       );
     });
     const heldPullRequests = filtered.publishable.filter((pullRequest) => {
@@ -317,7 +326,11 @@ async function generateChangelogForWindowUnlocked(input: {
         decision?.decision === "hold" ||
         (decision?.decision === "publish" && decision.confidence < 0.85) ||
         (decision !== undefined &&
-          requiresPrivateRepositoryReview(decision, writerOptions))
+          requiresPublicationReview(
+            decision,
+            writerOptions,
+            dismissedFeedbackIds,
+          ))
       );
     });
     if (heldPullRequests.length > 0) {
@@ -393,7 +406,7 @@ async function generateChangelogForWindowUnlocked(input: {
             category: validation.entry.category,
           },
         ];
-  const entries: StoredEntry[] = [...publicationHeldEntries];
+  const generatedEntries: StoredEntry[] = [];
   const pullRequestsByNumber = new Map(
     publicationPullRequests.map((pullRequest) => [
       pullRequest.number,
@@ -445,7 +458,7 @@ async function generateChangelogForWindowUnlocked(input: {
         sourcePullRequests: group.pullRequests.map(toSourcePullRequest),
         generationKey: input.generationKey,
       });
-      entries.push(entry);
+      generatedEntries.push(entry);
     }
   }
 
@@ -454,10 +467,10 @@ async function generateChangelogForWindowUnlocked(input: {
       !coveredPullRequestNumbers.has(pullRequest.number) &&
       !skippedPullRequestNumbers.has(pullRequest.number),
   );
-  if (uncoveredPullRequests.length === 1 && entries.length === 0) {
+  if (uncoveredPullRequests.length === 1 && generatedEntries.length === 0) {
     const pullRequest = uncoveredPullRequests[0];
     const item = getPostForSinglePullRequest(validation.entry, pullRequest);
-    entries.push(
+    generatedEntries.push(
       await input.store.createEntry({
         changelogId: changelog.id,
         title: item.title,
@@ -505,7 +518,7 @@ async function generateChangelogForWindowUnlocked(input: {
           windowEndedAt: windowEnd,
           generationKey: input.generationKey,
         });
-        entries.push(entry);
+        generatedEntries.push(entry);
         continue;
       }
 
@@ -521,7 +534,7 @@ async function generateChangelogForWindowUnlocked(input: {
         fallbackValidation.entry,
         pullRequest,
       );
-      entries.push(
+      generatedEntries.push(
         await input.store.createEntry({
           changelogId: changelog.id,
           title: item.title,
@@ -544,7 +557,7 @@ async function generateChangelogForWindowUnlocked(input: {
 
   if (changelog.settings.postImageSettings.enabled) {
     await Promise.all(
-      entries
+      generatedEntries
         .filter(
           (entry) =>
             entry.status === "published" &&
@@ -566,6 +579,7 @@ async function generateChangelogForWindowUnlocked(input: {
 
   await input.store.markGenerated(changelog.id, windowEnd);
 
+  const entries = [...generatedEntries, ...publicationHeldEntries];
   if (entries.length === 0) {
     return { status: "empty", entries: [] };
   }
@@ -575,7 +589,7 @@ async function generateChangelogForWindowUnlocked(input: {
     status: entries.some((entry) => entry.status === "published")
       ? "published"
       : "held",
-    entry: entries[0],
+    entry: entries.find((entry) => entry.status === "published") ?? entries[0],
     entries,
     holdReason: heldEntry?.holdReason,
   };
@@ -634,16 +648,17 @@ function normalizePublicationDecisions(
   return seenNumbers.size === expectedNumbers.size ? decisions : null;
 }
 
-function requiresPrivateRepositoryReview(
+function requiresPublicationReview(
   decision: AiPublicationDecision,
   options: Required<AiWritingOptions>,
+  dismissedFeedbackIds: ReadonlySet<string>,
 ): boolean {
-  if (options.repositoryVisibility !== "private") return false;
-
   return (
-    decision.privateRepositoryGuardrailTopics.length > 0 ||
+    (options.repositoryVisibility === "private" &&
+      decision.privateRepositoryGuardrailTopics.length > 0) ||
     (decision.decision === "publish" &&
-      (!decision.directUxOrDxImpact ||
+      (decision.matchedFeedbackIds.some((id) => dismissedFeedbackIds.has(id)) ||
+        !decision.directUxOrDxImpact ||
         !decision.shouldTellUsers ||
         !decision.knowledgeBenefitsUxOrDx))
   );

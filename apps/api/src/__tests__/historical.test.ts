@@ -903,6 +903,159 @@ describe("historical changelog generation", () => {
     expect(result.entry?.sourcePullRequests[0]?.number).toBe(65);
   });
 
+  test("holds contradictory dismissal matches and missing user value for every repository", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.aiFeedback.push({
+      id: "feedback_internal_auth",
+      workspaceId: "ws_acme",
+      changelogId: "cl_acme",
+      entryId: "entry_internal_auth",
+      title: "Authentication internals",
+      summary: "Authentication internals were updated.",
+      category: "maintenance",
+      note: "Internal authentication changes should not be public.",
+      feedbackKind: "dismissed",
+      sourcePullRequests: [],
+      createdAt: "2026-06-02T00:00:00.000Z",
+    });
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_72",
+        number: 72,
+        title: "Update authentication session internals",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+      pullRequest({
+        id: "pr_73",
+        number: 73,
+        title: "Refactor public SDK build pipeline",
+        mergedAt: "2026-06-03T05:15:00.000Z",
+      }),
+    );
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 72,
+            decision: "publish",
+            reason: "Contradictory publication decision.",
+            matchedFeedbackIds: ["feedback_internal_auth"],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: true,
+            shouldTellUsers: true,
+            knowledgeBenefitsUxOrDx: true,
+            confidence: 0.99,
+          },
+          {
+            pullRequestNumber: 73,
+            decision: "publish",
+            reason: "Internal developer tooling without external DX impact.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: false,
+            shouldTellUsers: false,
+            knowledgeBenefitsUxOrDx: false,
+            confidence: 0.99,
+          },
+        ],
+      }),
+      summarize: async () => {
+        throw new Error("contradictory publication decisions must be held");
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(result.status).toBe("held");
+    expect(result.entries).toHaveLength(2);
+    expect(
+      result.entries?.map((entry) => entry.sourcePullRequests[0]?.number),
+    ).toEqual([72, 73]);
+  });
+
+  test("keeps mixed held PRs out of publication result bookkeeping", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.repositories[0]!.private = true;
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_70",
+        number: 70,
+        title: "Update internal authentication helpers",
+        mergedAt: "2026-06-03T04:15:00.000Z",
+      }),
+      pullRequest({
+        id: "pr_71",
+        number: 71,
+        title: "Add shipment status filters",
+        mergedAt: "2026-06-03T05:15:00.000Z",
+      }),
+    );
+    let summarizeCalls = 0;
+    const gatedSummarizer: AiSummarizer = {
+      classifyPublication: async () => ({
+        decisions: [
+          {
+            pullRequestNumber: 70,
+            decision: "hold",
+            reason: "Authentication internals require review.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: ["authentication"],
+            directUxOrDxImpact: false,
+            shouldTellUsers: false,
+            knowledgeBenefitsUxOrDx: false,
+            confidence: 0.99,
+          },
+          {
+            pullRequestNumber: 71,
+            decision: "publish",
+            reason: "Adds a directly visible filtering control.",
+            matchedFeedbackIds: [],
+            privateRepositoryGuardrailTopics: [],
+            directUxOrDxImpact: true,
+            shouldTellUsers: true,
+            knowledgeBenefitsUxOrDx: true,
+            confidence: 0.98,
+          },
+        ],
+      }),
+      summarize: async () => {
+        summarizeCalls += 1;
+        return {
+          title: "Shipment status filters",
+          summary: "Shipment lists can now be filtered by status.",
+          category: "feature",
+          confidence: 0.98,
+          sensitive: false,
+        };
+      },
+    };
+
+    const result = await generateChangelogForWindow({
+      store,
+      summarizer: gatedSummarizer,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-02T23:00:00.000Z",
+      windowEnd: "2026-06-03T23:00:00.000Z",
+    });
+
+    expect(summarizeCalls).toBe(1);
+    expect(result.status).toBe("published");
+    expect(result.entry?.status).toBe("published");
+    expect(result.entry?.sourcePullRequests[0]?.number).toBe(71);
+    expect(result.entries?.map((entry) => entry.status)).toEqual([
+      "published",
+      "held",
+    ]);
+  });
+
   test("forces guarded private-repository topics into review", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [];
