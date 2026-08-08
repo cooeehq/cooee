@@ -201,6 +201,7 @@ test("surfaces hosted API errors and expired setup sessions", async () => {
 
 test("collects the Cooee choices in the terminal", async () => {
   const answers = [
+    "pull-requests",
     "weekly",
     "5",
     "16:30",
@@ -217,6 +218,7 @@ test("collects the Cooee choices in the terminal", async () => {
   expect(configuration).toEqual({
     aiPersonality: "concise",
     createImagesPerUpdate: true,
+    generationSource: "pull-requests",
     historicalBackfillDays: 30,
     privacyLabels: "cooee:skip, cooee:private",
     publishTime: "16:30",

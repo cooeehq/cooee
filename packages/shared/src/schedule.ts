@@ -8,6 +8,8 @@ export type DailyWindowInput = {
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly" | "on-merge";
 
+export type ChangelogGenerationSource = "pull-requests" | "releases";
+
 export type DailyWindow = {
   startedAt: Date;
   endedAt: Date;

@@ -24,9 +24,9 @@ describe("Cooee admin app", () => {
     expect(getSurfaceFromPathname("/app/setup")).toBe("app");
     expect(isCliSetupPath("/app/setup/")).toBe(true);
     expect(getSurfaceFromPathname("/changelog/acme")).toBe("publicChangelog");
-    expect(getSurfaceFromPathname("/changelog/acme/articles/launch-notes")).toBe(
-      "publicChangelog",
-    );
+    expect(
+      getSurfaceFromPathname("/changelog/acme/articles/launch-notes"),
+    ).toBe("publicChangelog");
     expect(getSurfaceFromPathname("/application")).toBe("notFound");
     expect(getSurfaceFromPathname("/docs")).toBe("notFound");
     expect(getSurfaceFromPathname("/privacy")).toBe("notFound");
@@ -160,6 +160,18 @@ describe("Cooee admin app", () => {
         },
       }),
     ).toBe("On the next PR merge");
+
+    expect(
+      getNextScheduledRunLabel({
+        now: new Date("2026-06-03T00:30:00.000Z"),
+        settings: {
+          generationSource: "releases",
+          publishTime: "09:00",
+          scheduleFrequency: "daily",
+          timeZone: "Australia/Brisbane",
+        },
+      }),
+    ).toBe("On the next SemVer release");
   });
 
   test("uses the theme-specific logo with a fallback to the default", () => {

@@ -1,4 +1,5 @@
 import type {
+  ChangelogGenerationSource,
   BillingCadence,
   ChangelogCategoryDefinition,
   ChangelogEntry,
@@ -146,6 +147,7 @@ export type WorkspaceSettings = {
   aiPersonality: "product-user" | "concise" | "technical";
   aiFailClosed: boolean;
   createImagesPerUpdate: boolean;
+  generationSource: ChangelogGenerationSource;
   scheduleFrequency: ScheduleFrequency;
   scheduleWeekday?: number;
   scheduleMonthDay?: number;
@@ -226,6 +228,7 @@ export type ChangelogSettings = {
   sensitiveLabels: string[];
   categoryDefinitions: ChangelogCategoryDefinition[];
   groupEntriesByCategory: boolean;
+  generationSource: ChangelogGenerationSource;
   scheduleFrequency: ScheduleFrequency;
   scheduleWeekday?: number;
   scheduleMonthDay?: number;
@@ -269,7 +272,8 @@ export type PostImageGenerationJob = {
 export type MergeGenerationJob = {
   id: string;
   changelogId: string;
-  pullRequestNumber: number;
+  pullRequestNumber: number | null;
+  generationKey: string;
   windowStartedAt: string;
   windowEndedAt: string;
   attemptCount: number;
@@ -387,6 +391,12 @@ export type Store = {
   enqueueMergeGenerationJob(input: {
     changelogId: string;
     pullRequestNumber: number;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<void>;
+  enqueueReleaseGenerationJob(input: {
+    changelogId: string;
+    tagName: string;
     windowStartedAt: string;
     windowEndedAt: string;
   }): Promise<void>;

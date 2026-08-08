@@ -218,6 +218,9 @@ export const changelogs = pgTable(
     timeZone: text("time_zone").notNull().default("UTC"),
     publishTime: text("publish_time").notNull().default("09:00"),
     scheduleFrequency: text("schedule_frequency").notNull().default("daily"),
+    generationSource: text("generation_source")
+      .notNull()
+      .default("pull-requests"),
     scheduleWeekday: integer("schedule_weekday").notNull().default(1),
     scheduleMonthDay: integer("schedule_month_day").notNull().default(1),
     skipLabels: jsonb("skip_labels")
@@ -446,7 +449,8 @@ export const mergeGenerationJobs = pgTable(
     changelogId: text("changelog_id")
       .notNull()
       .references(() => changelogs.id, { onDelete: "cascade" }),
-    pullRequestNumber: integer("pull_request_number").notNull(),
+    pullRequestNumber: integer("pull_request_number"),
+    generationKey: text("generation_key").notNull(),
     windowStartedAt: timestamp("window_started_at", {
       withTimezone: true,
     }).notNull(),
@@ -472,9 +476,9 @@ export const mergeGenerationJobs = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("merge_generation_jobs_changelog_pr_idx").on(
+    uniqueIndex("merge_generation_jobs_changelog_trigger_idx").on(
       table.changelogId,
-      table.pullRequestNumber,
+      table.generationKey,
     ),
     index("merge_generation_jobs_due_idx").on(
       table.status,
