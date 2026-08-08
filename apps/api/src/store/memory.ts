@@ -178,6 +178,7 @@ export class InMemoryStore implements Store {
             sensitiveLabels: ["security", "vulnerability"],
             categoryDefinitions: defaultChangelogCategoryDefinitions,
             groupEntriesByCategory: true,
+            generationSource: "pull-requests",
             scheduleFrequency: "daily",
             scheduleWeekday: 1,
             scheduleMonthDay: 1,
@@ -274,13 +275,47 @@ export class InMemoryStore implements Store {
     const duplicate = this.mergeGenerationJobs.some(
       (job) =>
         job.changelogId === input.changelogId &&
-        job.pullRequestNumber === input.pullRequestNumber,
+        job.generationKey === `merge:${input.pullRequestNumber}`,
     );
     if (duplicate) return;
 
     this.mergeGenerationJobs.push({
       id: `merge_job_${crypto.randomUUID()}`,
       ...input,
+      generationKey: `merge:${input.pullRequestNumber}`,
+      attemptCount: 0,
+      status: "pending",
+      nextAttemptAt: new Date(0).toISOString(),
+      processingStartedAt: null,
+      claimToken: null,
+      lastError: null,
+    });
+  }
+
+  async enqueueReleaseGenerationJob(input: {
+    changelogId: string;
+    tagName: string;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<void> {
+    const generationKey = `release:${input.tagName}`;
+    if (
+      this.mergeGenerationJobs.some(
+        (job) =>
+          job.changelogId === input.changelogId &&
+          job.generationKey === generationKey,
+      )
+    ) {
+      return;
+    }
+
+    this.mergeGenerationJobs.push({
+      id: `release_job_${crypto.randomUUID()}`,
+      changelogId: input.changelogId,
+      pullRequestNumber: null,
+      generationKey,
+      windowStartedAt: input.windowStartedAt,
+      windowEndedAt: input.windowEndedAt,
       attemptCount: 0,
       status: "pending",
       nextAttemptAt: new Date(0).toISOString(),
@@ -1487,22 +1522,28 @@ export class InMemoryStore implements Store {
   async markGenerated(changelogId: string, windowEnd: string): Promise<void> {
     const changelog = this.changelogs.find((item) => item.id === changelogId);
 
-    if (changelog) {
+    if (
+      changelog &&
+      (!changelog.lastGeneratedWindowEnd ||
+        Date.parse(windowEnd) > Date.parse(changelog.lastGeneratedWindowEnd))
+    ) {
       changelog.lastGeneratedWindowEnd = windowEnd;
     }
   }
 
   async listDueChangelogs(now: Date): Promise<StoredChangelog[]> {
-    return this.changelogs.filter((changelog) =>
-      isChangelogDue({
-        now,
-        timeZone: changelog.settings.timeZone,
-        publishTime: changelog.settings.publishTime,
-        frequency: changelog.settings.scheduleFrequency,
-        scheduleWeekday: changelog.settings.scheduleWeekday,
-        scheduleMonthDay: changelog.settings.scheduleMonthDay,
-        lastGeneratedWindowEnd: changelog.lastGeneratedWindowEnd,
-      }),
+    return this.changelogs.filter(
+      (changelog) =>
+        changelog.settings.generationSource === "pull-requests" &&
+        isChangelogDue({
+          now,
+          timeZone: changelog.settings.timeZone,
+          publishTime: changelog.settings.publishTime,
+          frequency: changelog.settings.scheduleFrequency,
+          scheduleWeekday: changelog.settings.scheduleWeekday,
+          scheduleMonthDay: changelog.settings.scheduleMonthDay,
+          lastGeneratedWindowEnd: changelog.lastGeneratedWindowEnd,
+        }),
     );
   }
 

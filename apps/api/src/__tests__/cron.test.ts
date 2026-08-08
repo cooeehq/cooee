@@ -99,6 +99,52 @@ describe("daily changelog cron", () => {
     ).toBe(true);
   });
 
+  test("only processes release-mode changelogs when a release job is queued", async () => {
+    const store = InMemoryStore.seeded();
+    store.changelogs[0]!.settings.generationSource = "releases";
+    store.pullRequests.push({
+      id: "pr_54",
+      number: 54,
+      title: "Add release dashboard",
+      body: "Customers can now review release activity.",
+      labels: ["feature"],
+      mergedAt: "2026-06-06T04:30:00.000Z",
+      url: "https://github.com/acme/app/pull/54",
+      repository: "acme/app",
+      author: "mona",
+    });
+
+    expect(
+      await runDailyChangelogCron({
+        now: new Date("2026-06-07T00:30:00.000Z"),
+        store,
+        summarizer,
+      }),
+    ).toEqual({ processed: 0 });
+
+    await store.enqueueReleaseGenerationJob({
+      changelogId: "cl_acme",
+      tagName: "v3.0.0",
+      windowStartedAt: "2026-06-01T00:00:00.000Z",
+      windowEndedAt: "2026-06-07T02:00:00.000Z",
+    });
+    expect(
+      await runDailyChangelogCron({
+        now: new Date("2026-06-07T02:01:00.000Z"),
+        store,
+        summarizer,
+      }),
+    ).toEqual({ processed: 1 });
+    expect(store.mergeGenerationJobs[0]?.status).toBe("completed");
+    expect(
+      store.entries.some((entry) =>
+        entry.sourcePullRequests.some(
+          (pullRequest) => pullRequest.number === 54,
+        ),
+      ),
+    ).toBe(true);
+  });
+
   test("retries a queued merge generation job after a transient failure", async () => {
     const store = InMemoryStore.seeded();
     store.changelogs[0].settings.scheduleFrequency = "on-merge";

@@ -287,6 +287,7 @@ type SettingsState = {
   aiFailClosed: boolean;
   createImagesPerUpdate: boolean;
   postImageSettings: PostImageSettings;
+  generationSource: "pull-requests" | "releases";
   scheduleFrequency: ScheduleFrequency;
   scheduleWeekday: number;
   scheduleMonthDay: number;
@@ -681,6 +682,7 @@ const defaultSettings: SettingsState = {
   aiFailClosed: true,
   createImagesPerUpdate: false,
   postImageSettings: defaultPostImageSettings,
+  generationSource: "pull-requests",
   scheduleFrequency: "daily",
   scheduleWeekday: 1,
   scheduleMonthDay: 1,
@@ -725,6 +727,10 @@ const scheduleFrequencyOptions: SelectOption[] = [
   { label: "Every week", value: "weekly" },
   { label: "Every month", value: "monthly" },
   { label: "Every PR merge", value: "on-merge" },
+];
+const generationSourceOptions: SelectOption[] = [
+  { label: "Merged pull requests", value: "pull-requests" },
+  { label: "Official SemVer releases", value: "releases" },
 ];
 const scheduleWeekdayOptions: SelectOption[] = [
   { label: "Sunday", value: "0" },
@@ -3785,6 +3791,7 @@ export function App({
                     aiCreditUsagePercent={aiCreditUsagePercent}
                     aiCreditResetLabel={aiCreditResetLabel}
                     billingUsageStatus={billingUsageStatus}
+                    generationSource={settings.generationSource}
                     nextScheduledRunLabel={nextScheduledRunLabel}
                     scheduleFrequency={settings.scheduleFrequency}
                     scheduleTimeZone={settings.timeZone}
@@ -4117,6 +4124,7 @@ function HeaderWorkspaceStatus({
   aiCreditUsagePercent,
   aiCreditResetLabel,
   billingUsageStatus,
+  generationSource,
   nextScheduledRunLabel,
   scheduleFrequency,
   scheduleTimeZone,
@@ -4125,6 +4133,7 @@ function HeaderWorkspaceStatus({
   aiCreditUsagePercent: number | null;
   aiCreditResetLabel: string | null;
   billingUsageStatus: "loading" | "ready" | "error";
+  generationSource: SettingsState["generationSource"];
   nextScheduledRunLabel: string | null;
   scheduleFrequency: ScheduleFrequency;
   scheduleTimeZone: string;
@@ -4168,7 +4177,9 @@ function HeaderWorkspaceStatus({
       <div
         className="flex min-w-0 items-center gap-1.5 text-xs"
         title={
-          nextScheduledRunLabel && scheduleFrequency !== "on-merge"
+          nextScheduledRunLabel &&
+          scheduleFrequency !== "on-merge" &&
+          generationSource !== "releases"
             ? `${nextScheduledRunLabel} (${scheduleTimeZone})`
             : undefined
         }
@@ -7012,50 +7023,78 @@ function OnboardingWizardModal({
               <div className="flex flex-col gap-5">
                 <div>
                   <h2 className="text-balance text-lg font-semibold">
-                    Pick the rhythm
+                    Choose what triggers a post
                   </h2>
                   <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                    Bundle updates at the pace your customers expect.
+                    Generate on merged PRs, or wait for an official release.
                   </p>
                 </div>
                 <RadioGroup
-                  className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-                  name="schedule-frequency"
-                  onValueChange={(scheduleFrequency) =>
+                  className="grid gap-3 sm:grid-cols-2"
+                  name="generation-source"
+                  onValueChange={(generationSource) =>
                     setSettings((current) => ({
                       ...current,
-                      scheduleFrequency:
-                        scheduleFrequency as SettingsState["scheduleFrequency"],
+                      generationSource:
+                        generationSource as SettingsState["generationSource"],
                     }))
                   }
-                  value={settings.scheduleFrequency}
+                  value={settings.generationSource}
                 >
                   <OnboardingChoice
-                    checked={settings.scheduleFrequency === "daily"}
-                    description="Best for active products."
-                    label="Every day"
-                    value="daily"
+                    checked={settings.generationSource === "pull-requests"}
+                    description="Generate from merged PRs on your chosen cadence."
+                    label="Merged pull requests"
+                    value="pull-requests"
                   />
                   <OnboardingChoice
-                    checked={settings.scheduleFrequency === "weekly"}
-                    description="Batch updates weekly."
-                    label="Every week"
-                    value="weekly"
-                  />
-                  <OnboardingChoice
-                    checked={settings.scheduleFrequency === "monthly"}
-                    description="Quiet release cadence."
-                    label="Every month"
-                    value="monthly"
-                  />
-                  <OnboardingChoice
-                    checked={settings.scheduleFrequency === "on-merge"}
-                    description="Publish after each merge."
-                    label="Every PR merge"
-                    value="on-merge"
+                    checked={settings.generationSource === "releases"}
+                    description="Bundle merged PRs when a stable SemVer release is published."
+                    label="Official SemVer releases"
+                    value="releases"
                   />
                 </RadioGroup>
-                {settings.scheduleFrequency !== "on-merge" ? (
+                {settings.generationSource === "pull-requests" ? (
+                  <RadioGroup
+                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                    name="schedule-frequency"
+                    onValueChange={(scheduleFrequency) =>
+                      setSettings((current) => ({
+                        ...current,
+                        scheduleFrequency:
+                          scheduleFrequency as SettingsState["scheduleFrequency"],
+                      }))
+                    }
+                    value={settings.scheduleFrequency}
+                  >
+                    <OnboardingChoice
+                      checked={settings.scheduleFrequency === "daily"}
+                      description="Best for active products."
+                      label="Every day"
+                      value="daily"
+                    />
+                    <OnboardingChoice
+                      checked={settings.scheduleFrequency === "weekly"}
+                      description="Batch updates weekly."
+                      label="Every week"
+                      value="weekly"
+                    />
+                    <OnboardingChoice
+                      checked={settings.scheduleFrequency === "monthly"}
+                      description="Quiet release cadence."
+                      label="Every month"
+                      value="monthly"
+                    />
+                    <OnboardingChoice
+                      checked={settings.scheduleFrequency === "on-merge"}
+                      description="Publish after each merge."
+                      label="Every PR merge"
+                      value="on-merge"
+                    />
+                  </RadioGroup>
+                ) : null}
+                {settings.generationSource === "pull-requests" &&
+                settings.scheduleFrequency !== "on-merge" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     {settings.scheduleFrequency === "weekly" ? (
                       <SelectField
@@ -9397,8 +9436,17 @@ export function getNextScheduledRunLabel({
     SettingsState,
     "publishTime" | "scheduleFrequency" | "timeZone"
   > &
-    Partial<Pick<SettingsState, "scheduleMonthDay" | "scheduleWeekday">>;
+    Partial<
+      Pick<
+        SettingsState,
+        "generationSource" | "scheduleMonthDay" | "scheduleWeekday"
+      >
+    >;
 }): string {
+  if (settings.generationSource === "releases") {
+    return "On the next SemVer release";
+  }
+
   if (settings.scheduleFrequency === "on-merge") {
     return "On the next PR merge";
   }
@@ -10355,30 +10403,52 @@ function SettingsView({
           </SettingsSection>
 
           <SettingsSection
-            description="Choose when Cooee checks for merged pull requests and publishes approved updates."
+            description="Choose which GitHub event creates changelog drafts, then set the cadence for merged pull requests."
             id="settings-schedule"
             title="Publishing schedule"
           >
             <SettingsRow
-              description="Pick the cadence that matches how often your users expect product news."
-              title="Schedule frequency"
+              description="Generate on a merged-PR cadence, or bundle merged PRs when GitHub publishes an official SemVer release. Drafts and prereleases are ignored."
+              title="Generate posts from"
             >
               <SelectField
-                label="Schedule frequency"
+                label="Generate posts from"
                 labelClassName="sr-only"
-                onValueChange={(scheduleFrequency) =>
+                onValueChange={(generationSource) =>
                   setSettings((current) => ({
                     ...current,
-                    scheduleFrequency:
-                      scheduleFrequency as SettingsState["scheduleFrequency"],
+                    generationSource:
+                      generationSource as SettingsState["generationSource"],
                   }))
                 }
-                options={scheduleFrequencyOptions}
-                value={settings.scheduleFrequency}
+                options={generationSourceOptions}
+                value={settings.generationSource}
               />
             </SettingsRow>
 
-            {settings.scheduleFrequency === "weekly" ? (
+            {settings.generationSource === "pull-requests" ? (
+              <SettingsRow
+                description="Pick the cadence that matches how often your users expect product news."
+                title="Schedule frequency"
+              >
+                <SelectField
+                  label="Schedule frequency"
+                  labelClassName="sr-only"
+                  onValueChange={(scheduleFrequency) =>
+                    setSettings((current) => ({
+                      ...current,
+                      scheduleFrequency:
+                        scheduleFrequency as SettingsState["scheduleFrequency"],
+                    }))
+                  }
+                  options={scheduleFrequencyOptions}
+                  value={settings.scheduleFrequency}
+                />
+              </SettingsRow>
+            ) : null}
+
+            {settings.generationSource === "pull-requests" &&
+            settings.scheduleFrequency === "weekly" ? (
               <SettingsRow
                 description="Choose which day of the week Cooee runs."
                 title="Run day"
@@ -10398,7 +10468,8 @@ function SettingsView({
               </SettingsRow>
             ) : null}
 
-            {settings.scheduleFrequency === "monthly" ? (
+            {settings.generationSource === "pull-requests" &&
+            settings.scheduleFrequency === "monthly" ? (
               <SettingsRow
                 description="For shorter months, the run falls on the month's last day."
                 title="Run day"
@@ -10418,7 +10489,8 @@ function SettingsView({
               </SettingsRow>
             ) : null}
 
-            {settings.scheduleFrequency !== "on-merge" ? (
+            {settings.generationSource === "pull-requests" &&
+            settings.scheduleFrequency !== "on-merge" ? (
               <SettingsRow
                 description="Cooee waits until this local time before publishing a due update."
                 htmlFor="settings-publish-time"

@@ -49,6 +49,7 @@ export type SetupSession = {
 export type SetupConfiguration = {
   aiPersonality: "product-user" | "concise" | "technical";
   createImagesPerUpdate: boolean;
+  generationSource: "pull-requests" | "releases";
   historicalBackfillDays: number;
   privacyLabels: string;
   publishTime: string;
@@ -361,14 +362,23 @@ export async function collectSetupConfiguration(
   initial: SetupConfiguration,
   ask: (question: string) => Promise<string>,
 ): Promise<SetupConfiguration> {
-  const scheduleFrequency = readScheduleFrequency(
+  const generationSource = readGenerationSource(
     await ask(
-      `Publish cadence [daily/weekly/monthly/on-merge] (${initial.scheduleFrequency}): `,
+      `Generate posts from [pull-requests/releases] (${initial.generationSource}): `,
     ),
-    initial.scheduleFrequency,
+    initial.generationSource,
   );
+  const scheduleFrequency =
+    generationSource === "pull-requests"
+      ? readScheduleFrequency(
+          await ask(
+            `Publish cadence [daily/weekly/monthly/on-merge] (${initial.scheduleFrequency}): `,
+          ),
+          initial.scheduleFrequency,
+        )
+      : initial.scheduleFrequency;
   const scheduleWeekday =
-    scheduleFrequency === "weekly"
+    generationSource === "pull-requests" && scheduleFrequency === "weekly"
       ? readBoundedNumber(
           await ask(
             `Weekday [Sunday=0, Monday=1] (${initial.scheduleWeekday}): `,
@@ -380,7 +390,7 @@ export async function collectSetupConfiguration(
         )
       : initial.scheduleWeekday;
   const scheduleMonthDay =
-    scheduleFrequency === "monthly"
+    generationSource === "pull-requests" && scheduleFrequency === "monthly"
       ? readBoundedNumber(
           await ask(`Day of the month (${initial.scheduleMonthDay}): `),
           initial.scheduleMonthDay,
@@ -390,7 +400,7 @@ export async function collectSetupConfiguration(
         )
       : initial.scheduleMonthDay;
   const publishTime =
-    scheduleFrequency === "on-merge"
+    generationSource === "releases" || scheduleFrequency === "on-merge"
       ? initial.publishTime
       : readPublishTime(
           await ask(
@@ -427,6 +437,7 @@ export async function collectSetupConfiguration(
   return {
     aiPersonality,
     createImagesPerUpdate,
+    generationSource,
     historicalBackfillDays,
     privacyLabels,
     publishTime,
@@ -526,6 +537,9 @@ export function normalizeSetupConfiguration(
       ? input.aiPersonality
       : "product-user",
     createImagesPerUpdate: input.createImagesPerUpdate === true,
+    generationSource: isGenerationSource(input.generationSource)
+      ? input.generationSource
+      : "pull-requests",
     historicalBackfillDays: normalizeBoundedNumber(
       input.historicalBackfillDays,
       14,
@@ -546,6 +560,16 @@ export function normalizeSetupConfiguration(
     scheduleMonthDay: normalizeBoundedNumber(input.scheduleMonthDay, 1, 1, 31),
     scheduleWeekday: normalizeBoundedNumber(input.scheduleWeekday, 1, 0, 6),
   };
+}
+
+function readGenerationSource(
+  value: string,
+  fallback: SetupConfiguration["generationSource"],
+): SetupConfiguration["generationSource"] {
+  const candidate = value.trim().toLowerCase();
+  if (!candidate) return fallback;
+  if (isGenerationSource(candidate)) return candidate;
+  throw new Error("Choose pull-requests or releases.");
 }
 
 function readScheduleFrequency(
@@ -633,6 +657,12 @@ function isScheduleFrequency(
   value: unknown,
 ): value is SetupConfiguration["scheduleFrequency"] {
   return ["daily", "weekly", "monthly", "on-merge"].includes(value as string);
+}
+
+function isGenerationSource(
+  value: unknown,
+): value is SetupConfiguration["generationSource"] {
+  return ["pull-requests", "releases"].includes(value as string);
 }
 
 function isAiPersonality(

@@ -186,13 +186,13 @@ access.
 
 For an installation hosted at `https://changelog.example.com`, configure:
 
-| Integration            | URL or permission                                        |
-| ---------------------- | -------------------------------------------------------- |
-| OAuth callback         | `https://changelog.example.com/api/auth/callback/github` |
-| GitHub App callback    | `https://changelog.example.com/api/github/callback`      |
-| GitHub App webhook     | `https://changelog.example.com/api/webhooks/github`      |
-| Repository permissions | Pull requests read-only; metadata read-only              |
-| Webhook events         | Pull request; installation; installation repositories    |
+| Integration            | URL or permission                                              |
+| ---------------------- | -------------------------------------------------------------- |
+| OAuth callback         | `https://changelog.example.com/api/auth/callback/github`       |
+| GitHub App callback    | `https://changelog.example.com/api/github/callback`            |
+| GitHub App webhook     | `https://changelog.example.com/api/webhooks/github`            |
+| Repository permissions | Pull requests read-only; metadata read-only                    |
+| Webhook events         | Pull request; release; installation; installation repositories |
 
 Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_SLUG`,
 `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. The

@@ -71,8 +71,11 @@ export async function runDailyChangelogCron(
           changelogId: job.changelogId,
           windowStart: job.windowStartedAt,
           windowEnd: job.windowEndedAt,
-          pullRequestNumbers: [job.pullRequestNumber],
-          generationKey: `merge:${job.changelogId}:${job.pullRequestNumber}`,
+          pullRequestNumbers:
+            job.pullRequestNumber === null
+              ? undefined
+              : [job.pullRequestNumber],
+          generationKey: `${job.generationKey}:${job.changelogId}`,
         });
         await store.completeMergeGenerationJob({
           jobId: job.id,

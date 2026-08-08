@@ -216,6 +216,7 @@ test("reuses existing GitHub access and lets the paired CLI save its choices", a
   );
   expect(await configuration.json()).toMatchObject({
     configuration: {
+      generationSource: "pull-requests",
       historicalBackfillDays: 14,
       scheduleFrequency: "daily",
     },
@@ -228,6 +229,7 @@ test("reuses existing GitHub access and lets the paired CLI save its choices", a
         configuration: {
           aiPersonality: "technical",
           createImagesPerUpdate: true,
+          generationSource: "releases",
           historicalBackfillDays: 30,
           privacyLabels: "cooee:skip, cooee:private",
           publishTime: "16:30",
@@ -253,6 +255,7 @@ test("reuses existing GitHub access and lets the paired CLI save its choices", a
     onboardingCompleted: true,
   });
   expect(store.changelogs[0]?.settings).toMatchObject({
+    generationSource: "releases",
     publishTime: "16:30",
     scheduleFrequency: "weekly",
     scheduleWeekday: 5,

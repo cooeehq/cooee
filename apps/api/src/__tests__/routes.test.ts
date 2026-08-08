@@ -251,20 +251,17 @@ describe("api routes", () => {
     const store = InMemoryStore.seeded();
     const app = createApp({ store });
     const created = await app.fetch(
-      new Request(
-        "http://cooee.test/api/admin/changelogs/cl_acme/entries",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            title: "A closer look at workspace exports",
-            summary: "Exports are now easier to share.",
-            category: "feature",
-            articleMarkdown:
-              "# Workspace exports\n\n![Export preview](https://images.example.test/exports.png)\n\n| Format | Ready |\n| --- | --- |\n| CSV | Yes |",
-          }),
-        },
-      ),
+      new Request("http://cooee.test/api/admin/changelogs/cl_acme/entries", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "A closer look at workspace exports",
+          summary: "Exports are now easier to share.",
+          category: "feature",
+          articleMarkdown:
+            "# Workspace exports\n\n![Export preview](https://images.example.test/exports.png)\n\n| Format | Ready |\n| --- | --- |\n| CSV | Yes |",
+        }),
+      }),
     );
 
     expect(created.status).toBe(201);
@@ -1810,6 +1807,89 @@ describe("api routes", () => {
     });
   });
 
+  test("queues one generation job for a published stable SemVer release", async () => {
+    const store = InMemoryStore.seeded();
+    store.changelogs[0]!.settings.generationSource = "releases";
+    store.changelogs[0]!.lastGeneratedWindowEnd = "2026-06-01T00:00:00.000Z";
+    const webhookSecret = "webhook-secret";
+    const app = createApp({
+      store,
+      env: { GITHUB_WEBHOOK_SECRET: webhookSecret },
+    });
+    const payload = JSON.stringify({
+      action: "published",
+      repository: { full_name: "acme/app" },
+      release: {
+        tag_name: "v2.4.0",
+        draft: false,
+        prerelease: false,
+        published_at: "2026-06-07T02:00:00.000Z",
+      },
+    });
+    const request = async () =>
+      app.fetch(
+        new Request("http://cooee.test/api/webhooks/github", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-github-event": "release",
+            "x-hub-signature-256": await signPayload(payload, webhookSecret),
+          },
+          body: payload,
+        }),
+      );
+
+    expect((await request()).status).toBe(202);
+    expect((await request()).status).toBe(202);
+    expect(store.mergeGenerationJobs).toHaveLength(1);
+    expect(store.mergeGenerationJobs[0]).toMatchObject({
+      changelogId: "cl_acme",
+      generationKey: "release:v2.4.0",
+      pullRequestNumber: null,
+      status: "pending",
+      windowStartedAt: "2026-06-01T00:00:00.000Z",
+      windowEndedAt: "2026-06-07T02:00:00.000Z",
+    });
+  });
+
+  test("ignores prereleases and non-SemVer GitHub releases", async () => {
+    const store = InMemoryStore.seeded();
+    store.changelogs[0]!.settings.generationSource = "releases";
+    const webhookSecret = "webhook-secret";
+    const app = createApp({
+      store,
+      env: { GITHUB_WEBHOOK_SECRET: webhookSecret },
+    });
+
+    for (const release of [
+      { tag_name: "v2.4.0-beta.1", prerelease: true },
+      { tag_name: "summer-release", prerelease: false },
+    ]) {
+      const payload = JSON.stringify({
+        action: "published",
+        repository: { full_name: "acme/app" },
+        release: {
+          ...release,
+          draft: false,
+          published_at: "2026-06-07T02:00:00.000Z",
+        },
+      });
+      const response = await app.fetch(
+        new Request("http://cooee.test/api/webhooks/github", {
+          method: "POST",
+          headers: {
+            "x-github-event": "release",
+            "x-hub-signature-256": await signPayload(payload, webhookSecret),
+          },
+          body: payload,
+        }),
+      );
+      expect(response.status).toBe(202);
+    }
+
+    expect(store.mergeGenerationJobs).toHaveLength(0);
+  });
+
   test("persists manual posts without requiring AI", async () => {
     const store = InMemoryStore.seeded();
     store.workspaces[0].billingMode = "hosted";
@@ -2352,6 +2432,7 @@ describe("api routes", () => {
       sensitiveLabels: ["security", "vulnerability"],
       categoryDefinitions: defaultChangelogCategoryDefinitions,
       groupEntriesByCategory: true,
+      generationSource: "pull-requests",
       scheduleFrequency: "daily",
       publishTime: "09:00",
       timeZone: "UTC",
@@ -3730,6 +3811,7 @@ describe("api routes", () => {
         sensitiveLabels: [],
         categoryDefinitions: defaultChangelogCategoryDefinitions,
         groupEntriesByCategory: true,
+        generationSource: "pull-requests",
         publicTheme: "light",
         scheduleFrequency: "daily",
         publishTime: "09:00",

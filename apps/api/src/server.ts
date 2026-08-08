@@ -180,6 +180,7 @@ const defaultWorkspaceSettings: WorkspaceSettings = {
   aiPersonality: "product-user",
   aiFailClosed: true,
   createImagesPerUpdate: false,
+  generationSource: "pull-requests",
   scheduleFrequency: "daily",
   scheduleWeekday: 1,
   scheduleMonthDay: 1,
@@ -912,7 +913,8 @@ export function createApp(options: AppOptions = {}): App {
               );
             }
 
-            await storeMergedPullRequestWebhook({
+            await storeGitHubWebhook({
+              event: request.headers.get("x-github-event"),
               payload,
               store,
             });
@@ -1731,9 +1733,7 @@ export function createApp(options: AppOptions = {}): App {
 
           if (
             (request.method === "GET" || request.method === "HEAD") &&
-            /^\/api\/public\/changelog\/articles\/([^/]+)$/.test(
-              url.pathname,
-            )
+            /^\/api\/public\/changelog\/articles\/([^/]+)$/.test(url.pathname)
           ) {
             const articleMatch =
               /^\/api\/public\/changelog\/articles\/([^/]+)$/.exec(
@@ -2177,7 +2177,8 @@ export function createApp(options: AppOptions = {}): App {
                     ? (selected.entry.articleSlug ?? null)
                     : input.articleSlug,
                 category: input.category,
-                categoryDefinitions: selected.changelog.settings.categoryDefinitions,
+                categoryDefinitions:
+                  selected.changelog.settings.categoryDefinitions,
                 entries: await store.listEntries(selected.changelog.id),
                 entryId,
                 title: input.title,
@@ -2446,7 +2447,10 @@ export function createApp(options: AppOptions = {}): App {
               workspaceId: getWorkspaceId(url),
             });
             if (!selected) {
-              return json({ error: "Changelog entry not found" }, { status: 404 });
+              return json(
+                { error: "Changelog entry not found" },
+                { status: 404 },
+              );
             }
             const article = await resolveArticleFields({
               articleMarkdown:
@@ -2458,7 +2462,8 @@ export function createApp(options: AppOptions = {}): App {
                   ? (selected.entry.articleSlug ?? null)
                   : input.articleSlug,
               category: input.category,
-              categoryDefinitions: selected.changelog.settings.categoryDefinitions,
+              categoryDefinitions:
+                selected.changelog.settings.categoryDefinitions,
               entries: await store.listEntries(selected.changelog.id),
               entryId,
               title: input.title,
@@ -4072,6 +4077,7 @@ async function selectRepositoryForChangelog({
         sensitiveLabels: ["security", "vulnerability"],
         categoryDefinitions: defaultChangelogCategoryDefinitions,
         groupEntriesByCategory: true,
+        generationSource: workspaceSettings.generationSource,
         scheduleFrequency: workspaceSettings.scheduleFrequency,
         scheduleWeekday: workspaceSettings.scheduleWeekday,
         scheduleMonthDay: workspaceSettings.scheduleMonthDay,
@@ -4324,6 +4330,7 @@ function serializeChangelogSettings(
     publicTheme: changelog.settings.publicTheme,
     categoryDefinitions: changelog.settings.categoryDefinitions,
     groupEntriesByCategory: changelog.settings.groupEntriesByCategory,
+    generationSource: changelog.settings.generationSource,
     scheduleFrequency: changelog.settings.scheduleFrequency,
     scheduleWeekday: changelog.settings.scheduleWeekday ?? 1,
     scheduleMonthDay: changelog.settings.scheduleMonthDay ?? 1,
@@ -4517,6 +4524,11 @@ function normalizeChangelogSettings({
         settings.groupEntriesByCategory,
         changelog.settings.groupEntriesByCategory,
       ),
+      generationSource: readEnum(
+        settings.generationSource,
+        ["pull-requests", "releases"],
+        changelog.settings.generationSource,
+      ),
       scheduleFrequency: readEnum(
         settings.scheduleFrequency,
         ["daily", "weekly", "monthly", "on-merge"],
@@ -4566,6 +4578,7 @@ function normalizeChangelogSettings({
       faviconDataUrl: null,
       faviconUrl: workspaceSettings.faviconUrl,
       scheduleFrequency: workspaceSettings.scheduleFrequency,
+      generationSource: workspaceSettings.generationSource,
       scheduleWeekday: workspaceSettings.scheduleWeekday,
       scheduleMonthDay: workspaceSettings.scheduleMonthDay,
       publishTime: workspaceSettings.publishTime,
@@ -4713,14 +4726,20 @@ function getCanonicalCooeeRedirect(url: URL, request: Request): string | null {
   return new URL(`${url.pathname}${url.search}`, "https://cooee.sh").toString();
 }
 
-async function storeMergedPullRequestWebhook({
+async function storeGitHubWebhook({
+  event,
   payload,
   store,
 }: {
+  event: string | null;
   payload: string;
   store: Store;
 }): Promise<void> {
   const parsed = safeJsonParse(payload);
+  if (event === "release") {
+    await storePublishedReleaseWebhook({ parsed, store });
+    return;
+  }
   const pullRequest = parseMergedPullRequestWebhook(parsed);
 
   if (!pullRequest) {
@@ -4735,7 +4754,11 @@ async function storeMergedPullRequestWebhook({
   const changelog = await store.getChangelogByRepositoryFullName(
     pullRequest.repositoryFullName,
   );
-  if (!changelog || changelog.settings.scheduleFrequency !== "on-merge") {
+  if (
+    !changelog ||
+    changelog.settings.generationSource !== "pull-requests" ||
+    changelog.settings.scheduleFrequency !== "on-merge"
+  ) {
     return;
   }
 
@@ -4750,6 +4773,72 @@ async function storeMergedPullRequestWebhook({
     windowStartedAt: windowStartedAt.toISOString(),
     windowEndedAt: windowEndedAt.toISOString(),
   });
+}
+
+async function storePublishedReleaseWebhook({
+  parsed,
+  store,
+}: {
+  parsed: unknown;
+  store: Store;
+}): Promise<void> {
+  const release = parsePublishedSemverReleaseWebhook(parsed);
+  if (!release) return;
+
+  const changelog = await store.getChangelogByRepositoryFullName(
+    release.repositoryFullName,
+  );
+  if (!changelog || changelog.settings.generationSource !== "releases") {
+    return;
+  }
+  if (
+    changelog.lastGeneratedWindowEnd &&
+    Date.parse(release.publishedAt) <=
+      Date.parse(changelog.lastGeneratedWindowEnd)
+  ) {
+    return;
+  }
+
+  await store.enqueueReleaseGenerationJob({
+    changelogId: changelog.id,
+    tagName: release.tagName,
+    windowStartedAt:
+      changelog.lastGeneratedWindowEnd ?? new Date(0).toISOString(),
+    windowEndedAt: release.publishedAt,
+  });
+}
+
+function parsePublishedSemverReleaseWebhook(payload: unknown): {
+  repositoryFullName: string;
+  tagName: string;
+  publishedAt: string;
+} | null {
+  if (!isRecord(payload) || payload.action !== "published") return null;
+  const repository = payload.repository;
+  const release = payload.release;
+  if (!isRecord(repository) || !isRecord(release)) return null;
+
+  const repositoryFullName = readString(repository.full_name, "");
+  const tagName = readString(release.tag_name, "");
+  const publishedAt = readString(release.published_at, "");
+  if (
+    !repositoryFullName ||
+    release.draft === true ||
+    release.prerelease === true ||
+    !isSemverTag(tagName) ||
+    !publishedAt ||
+    Number.isNaN(Date.parse(publishedAt))
+  ) {
+    return null;
+  }
+
+  return { repositoryFullName, tagName, publishedAt };
+}
+
+function isSemverTag(value: string): boolean {
+  return /^v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
+    value,
+  );
 }
 
 function safeJsonParse(value: string): unknown {
@@ -6936,6 +7025,7 @@ function serializeCliSetupConfiguration({
   return {
     aiPersonality: workspaceSettings.aiPersonality,
     createImagesPerUpdate: changelog.settings.postImageSettings.enabled,
+    generationSource: changelog.settings.generationSource,
     historicalBackfillDays: workspaceSettings.historicalBackfillDays,
     privacyLabels: labelListToString([
       ...changelog.settings.skipLabels,
@@ -7198,6 +7288,11 @@ function normalizeWorkspaceSettings(
       settings.createImagesPerUpdate,
       defaultWorkspaceSettings.createImagesPerUpdate,
     ),
+    generationSource: readEnum(
+      settings.generationSource,
+      ["pull-requests", "releases"],
+      defaultWorkspaceSettings.generationSource,
+    ),
     scheduleFrequency: readEnum(
       settings.scheduleFrequency,
       ["daily", "weekly", "monthly", "on-merge"],
@@ -7300,7 +7395,9 @@ function normalizeArticleMarkdown(value: unknown): string | null | undefined {
   return markdown ? markdown.slice(0, 100_000) : null;
 }
 
-function normalizeOptionalArticleSlug(value: unknown): string | null | undefined {
+function normalizeOptionalArticleSlug(
+  value: unknown,
+): string | null | undefined {
   if (value === null || value === "") {
     return null;
   }

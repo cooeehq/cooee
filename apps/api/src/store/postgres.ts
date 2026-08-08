@@ -128,13 +128,33 @@ export class PostgresStore implements Store {
   }): Promise<void> {
     await this.sql`
       insert into merge_generation_jobs (
-        id, changelog_id, pull_request_number,
+        id, changelog_id, pull_request_number, generation_key,
         window_started_at, window_ended_at
       ) values (
         ${crypto.randomUUID()}, ${input.changelogId}, ${input.pullRequestNumber},
+        ${`merge:${input.pullRequestNumber}`},
         ${new Date(input.windowStartedAt)}, ${new Date(input.windowEndedAt)}
       )
-      on conflict (changelog_id, pull_request_number) do nothing
+      on conflict (changelog_id, generation_key) do nothing
+    `;
+  }
+
+  async enqueueReleaseGenerationJob(input: {
+    changelogId: string;
+    tagName: string;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<void> {
+    await this.sql`
+      insert into merge_generation_jobs (
+        id, changelog_id, pull_request_number, generation_key,
+        window_started_at, window_ended_at
+      ) values (
+        ${crypto.randomUUID()}, ${input.changelogId}, null,
+        ${`release:${input.tagName}`}, ${new Date(input.windowStartedAt)},
+        ${new Date(input.windowEndedAt)}
+      )
+      on conflict (changelog_id, generation_key) do nothing
     `;
   }
 
@@ -860,7 +880,7 @@ export class PostgresStore implements Store {
           public_url, custom_domain, custom_hostname_id,
           custom_hostname_status, custom_hostname_ssl_status, time_zone,
           publish_time, schedule_frequency, schedule_weekday,
-          schedule_month_day, skip_labels, sensitive_labels,
+          schedule_month_day, generation_source, skip_labels, sensitive_labels,
           category_definitions, group_entries_by_category,
           include_pull_request_links, public_theme, image_settings
         ) values (
@@ -872,6 +892,7 @@ export class PostgresStore implements Store {
           ${input.settings.publishTime}, ${input.settings.scheduleFrequency},
           ${input.settings.scheduleWeekday ?? 1},
           ${input.settings.scheduleMonthDay ?? 1},
+          ${input.settings.generationSource},
           ${sql.json(input.settings.skipLabels)},
           ${sql.json(input.settings.sensitiveLabels)},
           ${sql.json(input.settings.categoryDefinitions)},
@@ -913,6 +934,7 @@ export class PostgresStore implements Store {
         schedule_frequency = ${input.settings.scheduleFrequency},
         schedule_weekday = ${input.settings.scheduleWeekday ?? 1},
         schedule_month_day = ${input.settings.scheduleMonthDay ?? 1},
+        generation_source = ${input.settings.generationSource},
         skip_labels = ${this.sql.json(input.settings.skipLabels)},
         sensitive_labels = ${this.sql.json(input.settings.sensitiveLabels)},
         category_definitions = ${this.sql.json(input.settings.categoryDefinitions)},
@@ -1668,7 +1690,10 @@ export class PostgresStore implements Store {
   async markGenerated(changelogId: string, windowEnd: string): Promise<void> {
     await this.sql`
       update changelogs
-      set last_generated_window_end = ${new Date(windowEnd)}, updated_at = now()
+      set last_generated_window_end = greatest(
+        coalesce(last_generated_window_end, ${new Date(windowEnd)}),
+        ${new Date(windowEnd)}
+      ), updated_at = now()
       where id = ${changelogId}
     `;
   }
@@ -1680,16 +1705,18 @@ export class PostgresStore implements Store {
       join repositories r on r.id = c.repository_id
     `;
 
-    return rows.map(mapChangelog).filter((changelog) =>
-      isChangelogDue({
-        now,
-        timeZone: changelog.settings.timeZone,
-        publishTime: changelog.settings.publishTime,
-        frequency: changelog.settings.scheduleFrequency,
-        scheduleWeekday: changelog.settings.scheduleWeekday,
-        scheduleMonthDay: changelog.settings.scheduleMonthDay,
-        lastGeneratedWindowEnd: changelog.lastGeneratedWindowEnd,
-      }),
+    return rows.map(mapChangelog).filter(
+      (changelog) =>
+        changelog.settings.generationSource === "pull-requests" &&
+        isChangelogDue({
+          now,
+          timeZone: changelog.settings.timeZone,
+          publishTime: changelog.settings.publishTime,
+          frequency: changelog.settings.scheduleFrequency,
+          scheduleWeekday: changelog.settings.scheduleWeekday,
+          scheduleMonthDay: changelog.settings.scheduleMonthDay,
+          lastGeneratedWindowEnd: changelog.lastGeneratedWindowEnd,
+        }),
     );
   }
 }
@@ -1836,6 +1863,8 @@ function mapChangelog(row: postgres.Row): StoredChangelog {
         defaultChangelogCategoryDefinitions,
       ),
       groupEntriesByCategory: row.group_entries_by_category ?? true,
+      generationSource:
+        row.generation_source === "releases" ? "releases" : "pull-requests",
       scheduleFrequency: row.schedule_frequency ?? "daily",
       scheduleWeekday: row.schedule_weekday ?? 1,
       scheduleMonthDay: row.schedule_month_day ?? 1,
@@ -1885,6 +1914,7 @@ function mapMergeGenerationJob(row: postgres.Row): MergeGenerationJob {
     id: row.id,
     changelogId: row.changelog_id,
     pullRequestNumber: row.pull_request_number,
+    generationKey: row.generation_key,
     windowStartedAt: toIso(row.window_started_at),
     windowEndedAt: toIso(row.window_ended_at),
     attemptCount: row.attempt_count,
