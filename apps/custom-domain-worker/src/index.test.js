@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { proxyToCooeeOrigin } from "./index";
+import { proxyToCooeeOrigin, resolveOriginHost } from "./index";
 
 const originalFetch = globalThis.fetch;
 
@@ -8,6 +8,59 @@ afterEach(() => {
 });
 
 describe("custom domain proxy Worker", () => {
+  test.each([
+    ["cooee.sh", "website.internal"],
+    ["www.cooee.sh", "website.internal"],
+    ["app.cooee.sh", "admin.internal"],
+    ["api.cooee.sh", "api.internal"],
+    ["cloud.cooee.sh", "api.internal"],
+    ["changelog.partbot.io", "api.internal"],
+  ])("routes %s to %s", (hostname, expectedOrigin) => {
+    expect(
+      resolveOriginHost(hostname, {
+        COOEE_ADMIN_ORIGIN_HOST: "admin.internal",
+        COOEE_ORIGIN_HOST: "api.internal",
+        COOEE_WEBSITE_ORIGIN_HOST: "website.internal",
+      }),
+    ).toBe(expectedOrigin);
+  });
+
+  test("proxies the marketing site to its Railway origin", async () => {
+    let proxiedRequest;
+    globalThis.fetch = async (request) => {
+      proxiedRequest = request;
+      return new Response("ok");
+    };
+
+    await proxyToCooeeOrigin(new Request("https://cooee.sh/pricing"), {
+      COOEE_WEBSITE_ORIGIN_HOST: "cooee.up.railway.app",
+    });
+
+    expect(proxiedRequest.url).toBe(
+      "https://cooee.up.railway.app/pricing",
+    );
+    expect(proxiedRequest.headers.get("x-forwarded-host")).toBe("cooee.sh");
+  });
+
+  test("proxies the app to its Railway origin", async () => {
+    let proxiedRequest;
+    globalThis.fetch = async (request) => {
+      proxiedRequest = request;
+      return new Response("ok");
+    };
+
+    await proxyToCooeeOrigin(new Request("https://app.cooee.sh/login"), {
+      COOEE_ADMIN_ORIGIN_HOST: "cooee-admin-production.up.railway.app",
+    });
+
+    expect(proxiedRequest.url).toBe(
+      "https://cooee-admin-production.up.railway.app/login",
+    );
+    expect(proxiedRequest.headers.get("x-forwarded-host")).toBe(
+      "app.cooee.sh",
+    );
+  });
+
   test("proxies custom hostname traffic to the Railway origin", async () => {
     let proxiedRequest;
     globalThis.fetch = async (request) => {
