@@ -39,7 +39,7 @@ describe("workspace entitlements", () => {
       id: "watermelon",
       accessSource: "complimentary",
       repositoryLimit: 15,
-      monthlyIncludedCredits: 300,
+      monthlyIncludedCredits: 1_000,
       subscriptionStatus: null,
       complimentaryExpiresAt: "2099-01-01T00:00:00.000Z",
     });
@@ -83,10 +83,10 @@ describe("workspace entitlements", () => {
       workspaceId: "ws_acme",
       stripeCustomerId: null,
       sourceId: "generation:cl_acme:month",
-      inputTokens: 300_000,
+      inputTokens: 1_000_000,
       cachedInputTokens: 0,
       outputTokens: 0,
-      totalTokens: 300_000,
+      totalTokens: 1_000_000,
       rechargePacksReported: 0,
       createdAt: new Date(
         Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 2),

@@ -230,7 +230,7 @@ function subscriptionPayload(
             metadata: {
               component: "usage",
               plan_id: "pineapple",
-              recharge_credits: "15",
+              recharge_credits: "100",
             },
             recurring: { interval: "month", usage_type: "metered" },
           },

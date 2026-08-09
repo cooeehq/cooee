@@ -189,10 +189,10 @@ describe("AI credit billing", () => {
       workspaceId: "ws_acme",
       sourceId: "generation:cl_acme:overage",
       usage: {
-        inputTokens: 30_001,
+        inputTokens: 100_001,
         cachedInputTokens: 0,
         outputTokens: 0,
-        totalTokens: 30_001,
+        totalTokens: 100_001,
       },
     });
 
