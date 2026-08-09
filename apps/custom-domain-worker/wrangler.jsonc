@@ -11,6 +11,8 @@
     }
   ],
   "vars": {
-    "COOEE_ORIGIN_HOST": "cooee-api-production.up.railway.app"
+    "COOEE_ORIGIN_HOST": "cooee-api-production.up.railway.app",
+    "COOEE_ADMIN_ORIGIN_HOST": "cooee-admin-production.up.railway.app",
+    "COOEE_WEBSITE_ORIGIN_HOST": "cooee.up.railway.app"
   }
 }
