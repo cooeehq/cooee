@@ -76,7 +76,7 @@ export const billingPlans: BillingPlanDefinition[] = [
     estimatedMonthlyPullRequests:
       getHostedPlanEntitlements("lobster").estimatedMonthlyPullRequests,
     features: [
-      "30 AI credits / month (~25 PRs)",
+      "100 AI credits / month (~25 PRs)",
       "Manual and AI-drafted posts",
       "Scheduled publishing and AI runs",
       "Hosted changelog, JSON feed, and React embed",
@@ -107,7 +107,7 @@ export const billingPlans: BillingPlanDefinition[] = [
     features: [
       "Everything in Lobster",
       "Multiple repositories",
-      "120 AI credits / month (~100 PRs)",
+      "400 AI credits / month (~100 PRs)",
       "Better value for regular release volume",
     ],
   },
@@ -133,7 +133,7 @@ export const billingPlans: BillingPlanDefinition[] = [
       getHostedPlanEntitlements("watermelon").estimatedMonthlyPullRequests,
     features: [
       "Everything in Pineapple",
-      "300 AI credits / month (~250 PRs)",
+      "1,000 AI credits / month (~250 PRs)",
       "Multiple changelogs for different products or audiences",
     ],
   },

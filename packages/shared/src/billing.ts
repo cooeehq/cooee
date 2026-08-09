@@ -10,7 +10,7 @@ export type SubscriptionAccessState =
   | "canceled";
 
 export const aiCreditRecharge = {
-  credits: 15,
+  credits: 100,
   amount: 10,
 } as const;
 
@@ -76,7 +76,7 @@ export const hostedPlanEntitlements: Record<
   lobster: {
     id: "lobster",
     repositoryLimit: 1,
-    monthlyIncludedCredits: 30,
+    monthlyIncludedCredits: 100,
     estimatedMonthlyPullRequests: 25,
     aiGeneration: true,
     scheduledPublishing: true,
@@ -86,7 +86,7 @@ export const hostedPlanEntitlements: Record<
   pineapple: {
     id: "pineapple",
     repositoryLimit: 3,
-    monthlyIncludedCredits: 120,
+    monthlyIncludedCredits: 400,
     estimatedMonthlyPullRequests: 100,
     aiGeneration: true,
     scheduledPublishing: true,
@@ -96,7 +96,7 @@ export const hostedPlanEntitlements: Record<
   watermelon: {
     id: "watermelon",
     repositoryLimit: 15,
-    monthlyIncludedCredits: 300,
+    monthlyIncludedCredits: 1_000,
     estimatedMonthlyPullRequests: 250,
     aiGeneration: true,
     scheduledPublishing: true,

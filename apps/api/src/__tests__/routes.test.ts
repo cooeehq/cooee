@@ -2682,7 +2682,7 @@ describe("api routes", () => {
       },
       usage: {
         aiCreditsThisPeriod: 12.5,
-        includedCredits: 120,
+        includedCredits: 400,
         pullRequestsThisPeriod: 2,
       },
     });
@@ -3050,7 +3050,7 @@ describe("api routes", () => {
                   metadata: {
                     component: "usage",
                     plan_id: "pineapple",
-                    recharge_credits: "15",
+                    recharge_credits: "100",
                   },
                   recurring: { interval: "month", usage_type: "metered" },
                 },
