@@ -61,6 +61,111 @@ describe("daily changelog cron", () => {
     ).resolves.toEqual({ processed: 1 });
   });
 
+  test("keeps running when a due changelog is blocked by AI credits", async () => {
+    const store = InMemoryStore.seeded();
+    store.workspaces[0]!.billingMode = "hosted";
+    store.complimentaryAccessGrants.push({
+      id: "grant_exhausted",
+      workspaceId: "ws_acme",
+      planId: "watermelon",
+      reason: "Test grant",
+      grantedBy: "operator@example.com",
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    const now = new Date("2026-06-07T00:30:00.000Z");
+    store.aiUsageEvents.push({
+      id: "usage_exhausted",
+      workspaceId: "ws_acme",
+      stripeCustomerId: null,
+      sourceId: "generation:cl_acme:month",
+      inputTokens: 300_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 300_000,
+      rechargePacksReported: 0,
+      createdAt: new Date().toISOString(),
+      reportedAt: null,
+    });
+    store.pullRequests.push({
+      id: "pr_credits_blocked",
+      number: 55,
+      title: "Add customer export controls",
+      body: "Customers can choose which fields to export.",
+      labels: ["feature"],
+      mergedAt: "2026-06-06T04:30:00.000Z",
+      url: "https://github.com/acme/app/pull/55",
+      repository: "acme/app",
+      author: "mona",
+    });
+    store.workspaces.push({
+      ...store.workspaces[0]!,
+      id: "ws_healthy",
+      name: "Healthy workspace",
+      billingMode: "self-hosted",
+    });
+    store.repositories.push({
+      ...store.repositories[0]!,
+      id: "repo_healthy",
+      workspaceId: "ws_healthy",
+      owner: "healthy",
+      name: "app",
+      fullName: "healthy/app",
+    });
+    store.changelogs.push({
+      ...store.changelogs[0]!,
+      id: "cl_healthy",
+      workspaceId: "ws_healthy",
+      repositoryId: "repo_healthy",
+      slug: "healthy-app",
+      name: "Healthy App",
+      repository: "healthy/app",
+      settings: { ...store.changelogs[0]!.settings },
+    });
+    store.pullRequests.push({
+      id: "pr_healthy",
+      number: 56,
+      title: "Improve customer search",
+      body: "Customers can find saved records more quickly.",
+      labels: ["improvement"],
+      mergedAt: "2026-06-06T05:30:00.000Z",
+      url: "https://github.com/healthy/app/pull/56",
+      repository: "healthy/app",
+      author: "mona",
+    });
+    const warnings: Array<{ message: string; details: unknown }> = [];
+
+    await expect(
+      runDailyChangelogCron({
+        now,
+        store,
+        summarizer,
+        logger: {
+          warn(message, details) {
+            warnings.push({ message, details });
+          },
+        },
+      }),
+    ).resolves.toEqual({ processed: 1 });
+
+    expect(warnings).toEqual([
+      {
+        message: "Skipped entitlement-blocked changelog generation.",
+        details: {
+          changelogId: "cl_acme",
+          reason:
+            "The complimentary AI credit allowance is used. It resets next month.",
+          status: 402,
+        },
+      },
+    ]);
+    expect(store.changelogs[0]!.lastGeneratedWindowEnd).toBeNull();
+    expect(store.changelogs[1]!.lastGeneratedWindowEnd).toBe(
+      "2026-06-06T23:00:00.000Z",
+    );
+    expect(store.entries.some((entry) => entry.title === "PR 56")).toBe(true);
+  });
+
   test("processes a queued merge generation job", async () => {
     const store = InMemoryStore.seeded();
     store.changelogs[0].settings.scheduleFrequency = "on-merge";
