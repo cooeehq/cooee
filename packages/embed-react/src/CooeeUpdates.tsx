@@ -98,6 +98,8 @@ export function CooeeUpdates({
   });
   const [externalTrigger, setExternalTrigger] =
     React.useState<HTMLElement | null>(null);
+  const [shadcnStyles, setShadcnStyles] = React.useState("");
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
   const reactId = React.useId();
@@ -274,6 +276,59 @@ export function CooeeUpdates({
     appearance,
   );
 
+  useIsomorphicLayoutEffect(() => {
+    if (theme !== "shadcn" || typeof document === "undefined") {
+      setShadcnStyles("");
+      return;
+    }
+
+    const source = externalTrigger ?? rootRef.current;
+    if (!source) {
+      return;
+    }
+    const themeSource: HTMLElement = source;
+
+    function syncThemeTokens() {
+      const styles =
+        themeSource.ownerDocument.defaultView?.getComputedStyle(themeSource);
+      if (!styles) {
+        return;
+      }
+
+      const nextStyles = buildShadcnStyles(
+        instanceId,
+        positionerId,
+        styles,
+      );
+      setShadcnStyles((current) =>
+        current === nextStyles ? current : nextStyles,
+      );
+    }
+
+    syncThemeTokens();
+
+    const observer =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(syncThemeTokens);
+    let themeAncestor: Element | null = themeSource;
+    while (observer && themeAncestor) {
+      observer.observe(themeAncestor, {
+        attributeFilter: ["class", "data-theme", "style"],
+        attributes: true,
+      });
+      themeAncestor = themeAncestor.parentElement;
+    }
+
+    const colorScheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+    colorScheme?.addEventListener?.("change", syncThemeTokens);
+
+    return () => {
+      observer?.disconnect();
+      colorScheme?.removeEventListener?.("change", syncThemeTokens);
+    };
+  }, [externalTrigger, instanceId, positionerId, theme]);
+
   return (
     <Popover.Root onOpenChange={setOpen} open={open}>
       <div
@@ -282,11 +337,12 @@ export function CooeeUpdates({
         data-cooee-theme={theme}
         data-external-trigger={externalTrigger ? "" : undefined}
         id={instanceId}
+        ref={rootRef}
       >
         <style
           data-cooee-styles
           nonce={styleNonce}
-        >{`${embedStyles}\n${instanceStyles}`}</style>
+        >{`${embedStyles}\n${instanceStyles}\n${shadcnStyles}`}</style>
         {!externalTrigger ? (
           <button
             aria-controls={panelId}
@@ -410,6 +466,9 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
             <div className="cooee-updates__entry-meta" dir="auto">
               {formatCategory(entry.category)}
             </div>
+            <h3 className="cooee-updates__entry-title" dir="auto">
+              {entry.title}
+            </h3>
             {entry.imageUrl ? (
               <img
                 alt=""
@@ -418,9 +477,6 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
                 src={entry.imageUrl}
               />
             ) : null}
-            <h3 className="cooee-updates__entry-title" dir="auto">
-              {entry.title}
-            </h3>
             <div
               className="cooee-updates__entry-summary"
               dangerouslySetInnerHTML={{
@@ -590,6 +646,54 @@ function buildInstanceStyles(
     : "";
 }
 
+const shadcnColorTokens = [
+  ["--cooee-accent", "--primary", "--color-primary"],
+  [
+    "--cooee-accent-text",
+    "--primary-foreground",
+    "--color-primary-foreground",
+  ],
+  ["--cooee-surface", "--popover", "--color-popover"],
+  ["--cooee-surface-subtle", "--muted", "--color-muted"],
+  ["--cooee-text", "--popover-foreground", "--color-popover-foreground"],
+  ["--cooee-muted", "--muted-foreground", "--color-muted-foreground"],
+  ["--cooee-border", "--border", "--color-border"],
+  ["--cooee-ring", "--ring", "--color-ring"],
+] as const;
+
+function buildShadcnStyles(
+  instanceId: string,
+  positionerId: string,
+  styles: CSSStyleDeclaration,
+): string {
+  const declarations = shadcnColorTokens.flatMap(
+    ([target, semanticToken, tailwindAlias]) => {
+      const value = normalizeShadcnColor(
+        styles.getPropertyValue(semanticToken),
+      );
+      const alias = normalizeShadcnColor(
+        styles.getPropertyValue(tailwindAlias),
+      );
+      const resolved = value ?? alias;
+
+      return resolved ? [`${target}: ${resolved};`] : [];
+    },
+  );
+
+  return declarations.length > 0
+    ? `#${instanceId}, #${positionerId} {\n    ${declarations.join("\n    ")}\n  }`
+    : "";
+}
+
+export function normalizeShadcnColor(value: string): string | null {
+  const candidate = value.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  return normalizeCssColor(candidate) ?? normalizeCssColor(`hsl(${candidate})`);
+}
+
 function normalizeCornerRadius(value: number | undefined): number | null {
   if (value === undefined || !Number.isFinite(value)) {
     return null;
@@ -713,20 +817,16 @@ const embedStyles = `
   position: relative;
 }
 .cooee-updates[data-cooee-theme="shadcn"] {
-  --cooee-accent: var(--color-primary, hsl(var(--primary)));
-  --cooee-accent-text: var(--color-primary-foreground, hsl(var(--primary-foreground)));
   --cooee-radius: var(--radius-lg, var(--radius, 10px));
-  --cooee-surface: var(--color-popover, hsl(var(--popover)));
-  --cooee-surface-subtle: var(--color-muted, hsl(var(--muted)));
-  --cooee-text: var(--color-popover-foreground, hsl(var(--popover-foreground)));
-  --cooee-muted: var(--color-muted-foreground, hsl(var(--muted-foreground)));
-  --cooee-border: var(--color-border, hsl(var(--border)));
   --cooee-border-subtle: color-mix(in oklab, var(--cooee-border) 70%, transparent);
-  --cooee-ring: var(--color-ring, hsl(var(--ring)));
   --cooee-shadow: color-mix(in oklab, var(--cooee-text) 16%, transparent);
   color-scheme: inherit;
   font-family: var(--font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
+.cooee-updates,
+.cooee-updates *,
+.cooee-updates *::before,
+.cooee-updates *::after { box-sizing: border-box; }
 .cooee-updates[data-color-scheme="dark"] {
   --cooee-surface: #1c1917;
   --cooee-surface-subtle: #292524;
@@ -877,7 +977,7 @@ const embedStyles = `
   overflow-wrap: anywhere;
 }
 .cooee-updates__entry-image {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 2 / 1;
   border: 1px solid var(--cooee-border-subtle);
   border-radius: var(--cooee-radius);
   display: block;
