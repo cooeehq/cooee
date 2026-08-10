@@ -1,6 +1,6 @@
 {
   "name": "@cooeehq/react",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Drop-in React component for Cooee changelogs — a \"Latest updates\" popup powered by your public feed.",
   "license": "MIT",
   "type": "module",

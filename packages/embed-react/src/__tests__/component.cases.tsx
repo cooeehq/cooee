@@ -3,7 +3,10 @@ import domino from "@mixmark-io/domino";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { CooeeUpdatesLabels } from "../CooeeUpdates";
+import type {
+  CooeeUpdatesLabels,
+  CooeeUpdatesTheme,
+} from "../CooeeUpdates";
 
 const testWindow = domino.createWindow(
   "<!doctype html><html><body></body></html>",
@@ -92,7 +95,7 @@ Object.defineProperties(testWindow.Element.prototype, {
   },
 });
 
-const { CooeeUpdates } = await import("../CooeeUpdates");
+const { CooeeUpdates, normalizeShadcnColor } = await import("../CooeeUpdates");
 
 beforeEach(() => {
   focusedElement = null;
@@ -162,7 +165,7 @@ describe("CooeeUpdates embed", () => {
     expect(root.getAttribute("data-cooee-theme")).toBe("dark");
   });
 
-  test("maps shadcn semantic tokens without requiring Tailwind compilation", () => {
+  test("keeps a safe surface while shadcn semantic tokens resolve", () => {
     const html = renderToStaticMarkup(
       <CooeeUpdates feedUrl="https://cooee.test/feed.json" theme="shadcn" />,
     );
@@ -175,15 +178,85 @@ describe("CooeeUpdates embed", () => {
 
     expect(root.getAttribute("data-color-scheme")).toBe("inherit");
     expect(root.getAttribute("data-cooee-theme")).toBe("shadcn");
-    expect(style.textContent).toContain(
-      "--cooee-surface: var(--color-popover, hsl(var(--popover)))",
-    );
-    expect(style.textContent).toContain(
-      "--cooee-accent: var(--color-primary, hsl(var(--primary)))",
-    );
-    expect(style.textContent).toContain(
-      "--cooee-ring: var(--color-ring, hsl(var(--ring)))",
-    );
+    expect(style.textContent).toContain("--cooee-surface: #fafaf9");
+    expect(style.textContent).not.toContain("hsl(var(--popover))");
+  });
+
+  test("normalizes modern colors and classic shadcn HSL channels", () => {
+    const originalCss = globalThis.CSS;
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: {
+        supports: (_property: string, value: string) =>
+          value === "oklch(97% 0.001 106.424)" ||
+          value === "hsl(0 0% 100%)",
+      },
+      writable: true,
+    });
+
+    try {
+      expect(normalizeShadcnColor("oklch(97% 0.001 106.424)")).toBe(
+        "oklch(97% 0.001 106.424)",
+      );
+      expect(normalizeShadcnColor("0 0% 100%")).toBe("hsl(0 0% 100%)");
+      expect(normalizeShadcnColor("not-a-color")).toBeNull();
+    } finally {
+      Object.defineProperty(globalThis, "CSS", {
+        configurable: true,
+        value: originalCss,
+        writable: true,
+      });
+    }
+  });
+
+  test("copies resolved shadcn colors into the portalled popup", async () => {
+    mockFetch(() => new Promise<Response>(() => undefined));
+    const originalCss = globalThis.CSS;
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: {
+        supports: (_property: string, value: string) =>
+          value === "oklch(97% 0.001 106.424)",
+      },
+      writable: true,
+    });
+    const externalTrigger = testWindow.document.createElement("button");
+    externalTrigger.setAttribute("data-cooee-updates-trigger", "");
+    for (const token of [
+      "--primary",
+      "--primary-foreground",
+      "--popover",
+      "--popover-foreground",
+      "--muted",
+      "--muted-foreground",
+      "--border",
+      "--ring",
+    ]) {
+      externalTrigger.style.setProperty(token, "oklch(97% 0.001 106.424)");
+    }
+    testWindow.document.body.appendChild(externalTrigger);
+
+    try {
+      const { container } = await renderEmbed({ theme: "shadcn" });
+      await flushAsyncWork();
+      const style = requiredElement<HTMLElement>(
+        container,
+        "style[data-cooee-styles]",
+      );
+
+      expect(style.textContent).toContain(
+        "--cooee-surface: oklch(97% 0.001 106.424)",
+      );
+      expect(style.textContent).toContain(
+        "--cooee-text: oklch(97% 0.001 106.424)",
+      );
+    } finally {
+      Object.defineProperty(globalThis, "CSS", {
+        configurable: true,
+        value: originalCss,
+        writable: true,
+      });
+    }
   });
 
   test("uses a data attribute on any element as the accessible popup anchor", async () => {
@@ -390,6 +463,9 @@ describe("CooeeUpdates embed", () => {
       "https://cooee.test/api/public/updates/entry-image/image",
     );
     expect(image.alt).toBe("");
+    expect(image.previousElementSibling?.className).toBe(
+      "cooee-updates__entry-title",
+    );
     expect(link.href).toBe("https://cooee.test/changelog/cooee");
     expect(link.textContent).toContain("See every update");
     expect(link.getAttribute("rel")).toBe("noreferrer");
@@ -453,6 +529,7 @@ async function renderEmbed(
   props: {
     labels?: Partial<CooeeUpdatesLabels>;
     maxItems?: number;
+    theme?: CooeeUpdatesTheme;
   } = {},
 ) {
   const container = testWindow.document.createElement("div");
@@ -466,6 +543,7 @@ async function renderEmbed(
         feedUrl="https://cooee.test/feed.json"
         labels={props.labels}
         maxItems={props.maxItems}
+        theme={props.theme}
       />,
     );
   });
