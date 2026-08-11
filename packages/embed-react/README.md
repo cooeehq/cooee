@@ -33,7 +33,8 @@ export function Updates() {
 Add `data-cooee-updates-trigger` to any element and render `CooeeUpdates`
 anywhere on the same page. The popup is portalled to the document body and
 anchored to that element, automatically flipping and shifting to stay inside
-the viewport.
+the viewport. Its starting edge stays aligned with the trigger whenever space
+allows.
 
 ```tsx
 export function AppHeader() {
@@ -73,7 +74,50 @@ the site where the component is rendered.
 Unread state is tracked per feed URL in `localStorage`; opening the popup
 marks everything as seen. When the feed includes post images, the component
 loads them lazily and resolves legacy relative URLs against the feed origin. A
-footer link opens the complete public changelog in a new tab.
+footer link opens the complete public changelog in a new tab, alongside the
+permanent Cooee attribution. Entries include their publication date and use the
+same category badge palette as the public changelog.
+
+Article entries include a **Read more** action. It loads the published article
+from the public API and expands the popup into a viewport-bounded, scrollable
+reader. The sticky header keeps both the back and close controls available.
+
+### Shared changelog presentation
+
+`CooeeChangelogCard`, `CooeeChangelogCategoryBadge`, and
+`CooeeChangelogEntryMeta` are the presentation primitives used by the popup.
+Hosted changelog views can reuse them to keep card spacing, image treatment,
+typography, dates, and badge tones in sync. Render `CooeeChangelogStyles` once
+near the shared view; its container query automatically switches cards from
+the roomy desktop spacing to the mobile spacing based on the card width.
+
+```tsx
+import {
+  CooeeChangelogCard,
+  CooeeChangelogCategoryBadge,
+  CooeeChangelogEntryMeta,
+  CooeeChangelogStyles,
+} from "@cooeehq/react";
+
+export function ChangelogCard() {
+  return (
+    <>
+      <CooeeChangelogStyles />
+      <CooeeChangelogCard
+        imageUrl="/launch.webp"
+        summaryHtml="<p>The release is ready.</p>"
+        title="A major launch"
+      >
+        <CooeeChangelogEntryMeta dateLabel="10 Aug 2026">
+          <CooeeChangelogCategoryBadge category="feature">
+            Feature
+          </CooeeChangelogCategoryBadge>
+        </CooeeChangelogEntryMeta>
+      </CooeeChangelogCard>
+    </>
+  );
+}
+```
 
 ### Appearance
 
@@ -129,9 +173,14 @@ can follow the plural rules for your locale.
   feedUrl="https://api.cooee.sh/api/public/changelogs/acme/feed.json"
   buttonLabel="Nouveautés"
   labels={{
+    articleLoadError: "Impossible de charger cet article.",
+    articleLoading: "Chargement de l’article…",
+    backToChangelog: "Retour au journal",
+    changelog: "Journal des modifications",
     close: "Fermer les nouveautés",
     loading: "Chargement…",
     retry: "Réessayer",
+    readMore: "Lire la suite",
     empty: "Aucune nouveauté.",
     viewAll: "Voir toutes les nouveautés",
   }}
@@ -147,7 +196,8 @@ can follow the plural rules for your locale.
 - Loading, errors, empty results, and loaded counts use screen-reader live
   regions. Errors include a retry action.
 - Controls use comfortable 44px targets, the panel stays within small
-  viewports, and the styles support RTL text, 200% zoom, forced colours, and
+  viewports, keeps its header visible while scrolling, and supports RTL text,
+  200% zoom, forced colours, and
   reduced-motion preferences.
 - Feed changes cancel stale requests. Invalid responses and unavailable
   `localStorage` fail gracefully.

@@ -1,6 +1,16 @@
 import * as React from "react";
 import { Popover } from "@base-ui/react/popover";
-import type { PublicFeedEntry } from "./feed-types.js";
+import {
+  CooeeChangelogCategoryBadge,
+  CooeeChangelogEntry,
+  CooeeChangelogEntryMeta,
+  cooeeChangelogStyles,
+} from "./ChangelogUi.js";
+import type {
+  ChangelogCategoryDefinition,
+  ChangelogDisplayType,
+  PublicFeedEntry,
+} from "./feed-types.js";
 import { renderMarkdown } from "./markdown.js";
 
 const defaultTriggerSelector = "[data-cooee-updates-trigger]";
@@ -21,15 +31,32 @@ export type CooeeUpdatesAppearance = {
 };
 
 export type CooeeUpdatesLabels = {
+  articleLoadError?: string;
+  articleLoading?: string;
+  backToChangelog?: string;
+  changelog?: string;
   close: string;
   empty: string;
   loadError: string;
   loading: string;
   retry: string;
+  readMore?: string;
   viewAll: string;
   loaded: (count: number) => string;
   unread: (count: number) => string;
 };
+
+type ResolvedLabels = CooeeUpdatesLabels &
+  Required<
+    Pick<
+      CooeeUpdatesLabels,
+      | "articleLoadError"
+      | "articleLoading"
+      | "backToChangelog"
+      | "changelog"
+      | "readMore"
+    >
+  >;
 
 export type CooeeUpdatesProps = {
   feedUrl: string;
@@ -55,28 +82,50 @@ type LoadState =
   | {
       status: "success";
       entries: PublicFeedEntry[];
-      changelogName: string;
+      categoryDefinitions: ChangelogCategoryDefinition[];
       publicUrl: string | null;
+      resolvedFeedUrl: string;
       latestPublishedAt?: string;
     }
   | { status: "error"; entries: PublicFeedEntry[] };
 
 type UpdatesPanelProps = {
-  labels: CooeeUpdatesLabels;
+  articleState: ArticleState;
+  labels: ResolvedLabels;
+  onArticleOpen: (entry: PublicFeedEntry) => void;
+  onArticleRetry: () => void;
   onRetry: () => void;
   state: LoadState;
 };
 
-const defaultLabels: CooeeUpdatesLabels = {
+type ArticleState =
+  | { status: "closed" }
+  | { status: "loading"; entry: PublicFeedEntry }
+  | { status: "error"; entry: PublicFeedEntry }
+  | { status: "success"; entry: PublicFeedEntry; markdown: string };
+
+const defaultLabels: ResolvedLabels = {
+  articleLoadError: "We couldn’t load this article.",
+  articleLoading: "Loading article…",
+  backToChangelog: "Back to changelog",
+  changelog: "Changelog",
   close: "Close updates",
   empty: "No updates yet.",
   loadError: "We couldn’t load the latest updates.",
   loading: "Loading updates…",
   retry: "Try again",
+  readMore: "Read more",
   viewAll: "View all updates",
   loaded: (count) => `${count} ${count === 1 ? "update" : "updates"} loaded.`,
   unread: (count) => `${count} unread ${count === 1 ? "update" : "updates"}`,
 };
+
+const defaultCategoryDefinitions: ChangelogCategoryDefinition[] = [
+  { id: "feature", label: "Feature", displayType: "post" },
+  { id: "improvement", label: "Improvement", displayType: "callout" },
+  { id: "fix", label: "Fix", displayType: "text" },
+  { id: "maintenance", label: "Maintenance", displayType: "text" },
+];
 
 export function CooeeUpdates({
   feedUrl,
@@ -96,22 +145,90 @@ export function CooeeUpdates({
     status: "loading",
     entries: [],
   });
+  const [articleState, setArticleState] = React.useState<ArticleState>({
+    status: "closed",
+  });
   const [externalTrigger, setExternalTrigger] =
     React.useState<HTMLElement | null>(null);
   const [shadcnStyles, setShadcnStyles] = React.useState("");
   const rootRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
+  const articleRequestRef = React.useRef<AbortController | null>(null);
   const reactId = React.useId();
   const instanceId = `cooee-${reactId.replace(/[^A-Za-z0-9_-]/g, "")}`;
   const panelId = `${instanceId}-panel`;
   const positionerId = `${instanceId}-positioner`;
   const headingId = `${instanceId}-heading`;
   const labels = React.useMemo(
-    () => ({ ...defaultLabels, ...labelOverrides }),
+    () => ({
+      ...defaultLabels,
+      ...labelOverrides,
+      articleLoadError:
+        labelOverrides?.articleLoadError ?? defaultLabels.articleLoadError,
+      articleLoading:
+        labelOverrides?.articleLoading ?? defaultLabels.articleLoading,
+      backToChangelog:
+        labelOverrides?.backToChangelog ?? defaultLabels.backToChangelog,
+      changelog: labelOverrides?.changelog ?? defaultLabels.changelog,
+      readMore: labelOverrides?.readMore ?? defaultLabels.readMore,
+    }),
     [labelOverrides],
   );
   const itemLimit = normalizeMaxItems(maxItems);
+
+  const closeArticle = React.useCallback(() => {
+    articleRequestRef.current?.abort();
+    articleRequestRef.current = null;
+    setArticleState({ status: "closed" });
+  }, []);
+
+  const openArticle = React.useCallback(
+    async (entry: PublicFeedEntry) => {
+      if (!entry.articleSlug) {
+        return;
+      }
+
+      articleRequestRef.current?.abort();
+      const controller = new AbortController();
+      articleRequestRef.current = controller;
+      setArticleState({ status: "loading", entry });
+
+      try {
+        const response = await fetch(
+          getPublicArticleApiUrl(
+            state.status === "success" ? state.resolvedFeedUrl : feedUrl,
+            entry.articleSlug,
+          ),
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) {
+          throw new Error("The article request failed");
+        }
+
+        const markdown = parsePublicArticleMarkdown(await response.json());
+        if (!controller.signal.aborted) {
+          setArticleState({ status: "success", entry, markdown });
+        }
+      } catch (error) {
+        if (!controller.signal.aborted && !isAbortError(error)) {
+          setArticleState({ status: "error", entry });
+        }
+      } finally {
+        if (articleRequestRef.current === controller) {
+          articleRequestRef.current = null;
+        }
+      }
+    },
+    [feedUrl, state],
+  );
+
+  React.useEffect(
+    () => () => {
+      articleRequestRef.current?.abort();
+    },
+    [],
+  );
 
   useIsomorphicLayoutEffect(() => {
     if (typeof document === "undefined" || triggerSelector === null) {
@@ -241,8 +358,9 @@ export function CooeeUpdates({
         setState({
           status: "success",
           entries,
-          changelogName: feed.changelogName,
+          categoryDefinitions: feed.categoryDefinitions,
           publicUrl: feed.publicUrl,
+          resolvedFeedUrl: response.url || feedUrl,
           latestPublishedAt: feed.entries[0]?.publishedAt,
         });
         setUnreadCount(countUnread(feedUrl, feed.entries));
@@ -295,11 +413,7 @@ export function CooeeUpdates({
         return;
       }
 
-      const nextStyles = buildShadcnStyles(
-        instanceId,
-        positionerId,
-        styles,
-      );
+      const nextStyles = buildShadcnStyles(instanceId, positionerId, styles);
       setShadcnStyles((current) =>
         current === nextStyles ? current : nextStyles,
       );
@@ -330,7 +444,15 @@ export function CooeeUpdates({
   }, [externalTrigger, instanceId, positionerId, theme]);
 
   return (
-    <Popover.Root onOpenChange={setOpen} open={open}>
+    <Popover.Root
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          closeArticle();
+        }
+      }}
+      open={open}
+    >
       <div
         className={["cooee-updates", className].filter(Boolean).join(" ")}
         data-color-scheme={scheme}
@@ -342,7 +464,7 @@ export function CooeeUpdates({
         <style
           data-cooee-styles
           nonce={styleNonce}
-        >{`${embedStyles}\n${instanceStyles}\n${shadcnStyles}`}</style>
+        >{`${cooeeChangelogStyles}\n${embedStyles}\n${instanceStyles}\n${shadcnStyles}`}</style>
         {!externalTrigger ? (
           <button
             aria-controls={panelId}
@@ -372,7 +494,7 @@ export function CooeeUpdates({
 
       <Popover.Portal keepMounted>
         <Popover.Positioner
-          align="end"
+          align="start"
           anchor={externalTrigger ?? triggerRef}
           className="cooee-updates cooee-updates__positioner"
           collisionAvoidance={{
@@ -391,14 +513,29 @@ export function CooeeUpdates({
           <Popover.Popup
             aria-labelledby={headingId}
             className="cooee-updates__panel"
+            data-article-view={
+              articleState.status === "closed" ? undefined : ""
+            }
             finalFocus={() => triggerRef.current}
             id={panelId}
             initialFocus={closeRef}
           >
             <header className="cooee-updates__header">
-              <Popover.Title dir="auto" id={headingId}>
-                {state.status === "success" ? state.changelogName : buttonLabel}
-              </Popover.Title>
+              <div className="cooee-updates__header-leading">
+                {articleState.status !== "closed" ? (
+                  <button
+                    aria-label={labels.backToChangelog}
+                    className="cooee-updates__back"
+                    onClick={closeArticle}
+                    type="button"
+                  >
+                    <span aria-hidden="true">←</span>
+                  </button>
+                ) : null}
+                <Popover.Title dir="auto" id={headingId}>
+                  {labels.changelog}
+                </Popover.Title>
+              </div>
               <Popover.Close
                 aria-label={labels.close}
                 className="cooee-updates__close"
@@ -409,7 +546,14 @@ export function CooeeUpdates({
             </header>
 
             <UpdatesPanel
+              articleState={articleState}
               labels={labels}
+              onArticleOpen={(entry) => void openArticle(entry)}
+              onArticleRetry={() => {
+                if (articleState.status !== "closed") {
+                  void openArticle(articleState.entry);
+                }
+              }}
               onRetry={() => {
                 closeRef.current?.focus();
                 setRetryCount((count) => count + 1);
@@ -423,7 +567,24 @@ export function CooeeUpdates({
   );
 }
 
-function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
+function UpdatesPanel({
+  articleState,
+  labels,
+  onArticleOpen,
+  onArticleRetry,
+  onRetry,
+  state,
+}: UpdatesPanelProps) {
+  if (articleState.status !== "closed") {
+    return (
+      <ArticlePanel
+        articleState={articleState}
+        labels={labels}
+        onRetry={onArticleRetry}
+      />
+    );
+  }
+
   if (state.status === "loading") {
     return (
       <p aria-live="polite" className="cooee-updates__status" role="status">
@@ -461,67 +622,130 @@ function UpdatesPanel({ labels, onRetry, state }: UpdatesPanelProps) {
         {labels.loaded(state.entries.length)}
       </p>
       <div className="cooee-updates__entries">
-        {state.entries.map((entry) => (
-          <article className="cooee-updates__entry" key={entry.id}>
-            <div className="cooee-updates__entry-meta" dir="auto">
-              {formatCategory(entry.category)}
-            </div>
-            <h3 className="cooee-updates__entry-title" dir="auto">
-              {entry.title}
-            </h3>
-            {entry.imageUrl ? (
-              <img
-                alt=""
-                className="cooee-updates__entry-image"
-                loading="lazy"
-                src={entry.imageUrl}
-              />
-            ) : null}
-            <div
-              className="cooee-updates__entry-summary"
-              dangerouslySetInnerHTML={{
-                __html: renderMarkdown(entry.summary),
-              }}
-              dir="auto"
-            />
-            {entry.items && entry.items.length > 0 ? (
-              <div className="cooee-updates__item-list">
-                {entry.items.map((item, index) => (
-                  <section
-                    className="cooee-updates__item"
-                    key={`${entry.id}:${item.category}:${item.title}:${index}`}
+        {state.entries.map((entry) => {
+          const publishedDate = formatPublishedDate(entry.publishedAt);
+          const categoryDefinition = getCategoryDefinition(
+            entry.category,
+            state.categoryDefinitions,
+            entry,
+          );
+
+          return (
+            <CooeeChangelogEntry
+              action={
+                entry.articleSlug ? (
+                  <button
+                    className="cooee-updates__read-more"
+                    onClick={() => onArticleOpen(entry)}
+                    type="button"
                   >
-                    <div className="cooee-updates__item-header">
-                      <h4 className="cooee-updates__item-title" dir="auto">
-                        {item.title}
-                      </h4>
-                      <span className="cooee-updates__item-badge" dir="auto">
-                        {formatCategory(item.category)}
-                      </span>
-                    </div>
-                    <div
-                      className="cooee-updates__item-summary"
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdown(item.summary),
-                      }}
-                      dir="auto"
-                    />
-                  </section>
-                ))}
-              </div>
-            ) : null}
-          </article>
-        ))}
+                    {labels.readMore}
+                    <span aria-hidden="true">→</span>
+                  </button>
+                ) : null
+              }
+              categoryLabel={categoryDefinition.label}
+              dateLabel={publishedDate}
+              dateTime={entry.publishedAt}
+              displayType={categoryDefinition.displayType}
+              entry={entry}
+              getCategoryLabel={(category) =>
+                getCategoryDefinition(category, state.categoryDefinitions).label
+              }
+              key={entry.id}
+              showMeta
+            />
+          );
+        })}
       </div>
-      {state.publicUrl ? (
-        <footer className="cooee-updates__footer">
+      <footer className="cooee-updates__footer">
+        {state.publicUrl ? (
           <a href={state.publicUrl} rel="noreferrer" target="_blank">
             {labels.viewAll}
             <span aria-hidden="true"> ↗</span>
           </a>
-        </footer>
-      ) : null}
+        ) : null}
+        <a
+          className="cooee-updates__powered-by"
+          href="https://cooee.sh"
+          rel="noreferrer"
+          target="_blank"
+        >
+          Powered by <strong>cooee</strong>
+        </a>
+      </footer>
     </>
+  );
+}
+
+function ArticlePanel({
+  articleState,
+  labels,
+  onRetry,
+}: {
+  articleState: Exclude<ArticleState, { status: "closed" }>;
+  labels: ResolvedLabels;
+  onRetry: () => void;
+}) {
+  if (articleState.status === "loading") {
+    return (
+      <div className="cooee-updates__article-status">
+        <p aria-live="polite" role="status">
+          {labels.articleLoading}
+        </p>
+      </div>
+    );
+  }
+
+  if (articleState.status === "error") {
+    return (
+      <div
+        aria-live="assertive"
+        className="cooee-updates__article-status"
+        role="alert"
+      >
+        <p>{labels.articleLoadError}</p>
+        <button
+          className="cooee-updates__retry"
+          onClick={onRetry}
+          type="button"
+        >
+          {labels.retry}
+        </button>
+      </div>
+    );
+  }
+
+  const publishedDate = formatPublishedDate(articleState.entry.publishedAt);
+
+  return (
+    <article className="cooee-updates__article">
+      <CooeeChangelogEntryMeta
+        dateLabel={publishedDate}
+        dateTime={articleState.entry.publishedAt}
+      >
+        <CooeeChangelogCategoryBadge category={articleState.entry.category}>
+          {formatCategory(articleState.entry.category)}
+        </CooeeChangelogCategoryBadge>
+      </CooeeChangelogEntryMeta>
+      <h3 className="cooee-updates__article-title" dir="auto">
+        {articleState.entry.title}
+      </h3>
+      {articleState.entry.imageUrl ? (
+        <img
+          alt=""
+          className="cooee-updates__article-image"
+          src={articleState.entry.imageUrl}
+        />
+      ) : null}
+      <div
+        className="cooee-updates__article-body"
+        dangerouslySetInnerHTML={{
+          __html: renderMarkdown(articleState.markdown),
+        }}
+        dir="auto"
+      />
+    </article>
   );
 }
 
@@ -529,7 +753,7 @@ function parsePublicFeed(
   value: unknown,
   feedUrl: string,
 ): {
-  changelogName: string;
+  categoryDefinitions: ChangelogCategoryDefinition[];
   publicUrl: string | null;
   entries: PublicFeedEntry[];
 } {
@@ -549,7 +773,9 @@ function parsePublicFeed(
   }
 
   return {
-    changelogName: value.changelog.name,
+    categoryDefinitions: normalizeCategoryDefinitions(
+      value.changelog.categoryDefinitions,
+    ),
     publicUrl:
       typeof value.changelog.publicUrl === "string"
         ? resolveSafeHttpUrl(value.changelog.publicUrl, feedUrl)
@@ -562,6 +788,105 @@ function parsePublicFeed(
           : entry.imageUrl,
     })),
   };
+}
+
+function normalizeCategoryDefinitions(
+  value: unknown,
+): ChangelogCategoryDefinition[] {
+  if (!Array.isArray(value)) {
+    return defaultCategoryDefinitions;
+  }
+
+  const definitions = value.flatMap((definition) => {
+    if (
+      !isRecord(definition) ||
+      typeof definition.id !== "string" ||
+      definition.id.trim() === "" ||
+      typeof definition.label !== "string" ||
+      definition.label.trim() === "" ||
+      !isChangelogDisplayType(definition.displayType)
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        id: normalizeCategoryId(definition.id),
+        label: definition.label.trim(),
+        displayType: definition.displayType,
+        ...(typeof definition.marketingCopy === "boolean"
+          ? { marketingCopy: definition.marketingCopy }
+          : {}),
+      },
+    ];
+  });
+
+  return definitions.length > 0 ? definitions : defaultCategoryDefinitions;
+}
+
+function getCategoryDefinition(
+  category: string,
+  definitions: ChangelogCategoryDefinition[],
+  entry?: PublicFeedEntry,
+): ChangelogCategoryDefinition {
+  const normalizedCategory = normalizeCategoryId(category);
+  return (
+    definitions.find(
+      ({ id }) => normalizeCategoryId(id) === normalizedCategory,
+    ) ?? {
+      id: normalizedCategory,
+      label: formatCategory(normalizedCategory),
+      displayType: entry?.articleSlug ? "article" : "post",
+    }
+  );
+}
+
+function normalizeCategoryId(category: string): string {
+  return category
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function isChangelogDisplayType(value: unknown): value is ChangelogDisplayType {
+  return (
+    value === "article" ||
+    value === "post" ||
+    value === "callout" ||
+    value === "text"
+  );
+}
+
+function getPublicArticleApiUrl(feedUrl: string, articleSlug: string): string {
+  const url = new URL(
+    feedUrl,
+    typeof window === "undefined" ? "http://localhost" : window.location.href,
+  );
+  const articlePath = `/articles/${encodeURIComponent(articleSlug)}`;
+
+  if (/\/feed\.json\/?$/.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/\/feed\.json\/?$/, articlePath);
+  } else {
+    url.pathname = `${url.pathname.replace(/\/$/, "")}${articlePath}`;
+  }
+
+  url.hash = "";
+  url.search = "";
+  return url.toString();
+}
+
+function parsePublicArticleMarkdown(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.entry) ||
+    typeof value.entry.articleMarkdown !== "string" ||
+    value.entry.articleMarkdown.trim().length === 0
+  ) {
+    throw new Error("Invalid public article");
+  }
+
+  return value.entry.articleMarkdown;
 }
 
 function resolveSafeHttpUrl(value: string, baseUrl: string): string | null {
@@ -648,11 +973,7 @@ function buildInstanceStyles(
 
 const shadcnColorTokens = [
   ["--cooee-accent", "--primary", "--color-primary"],
-  [
-    "--cooee-accent-text",
-    "--primary-foreground",
-    "--color-primary-foreground",
-  ],
+  ["--cooee-accent-text", "--primary-foreground", "--color-primary-foreground"],
   ["--cooee-surface", "--popover", "--color-popover"],
   ["--cooee-surface-subtle", "--muted", "--color-muted"],
   ["--cooee-text", "--popover-foreground", "--color-popover-foreground"],
@@ -753,6 +1074,19 @@ function formatCategory(category: string): string {
     : "Update";
 }
 
+function formatPublishedDate(value: string): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 type TriggerAttributeSnapshot = Record<
   | "aria-controls"
   | "aria-expanded"
@@ -850,7 +1184,9 @@ const embedStyles = `
   }
 }
 .cooee-updates__trigger,
+.cooee-updates__back,
 .cooee-updates__close,
+.cooee-updates__read-more,
 .cooee-updates__retry {
   font: inherit;
 }
@@ -870,7 +1206,9 @@ const embedStyles = `
   padding: 0 14px;
 }
 .cooee-updates__trigger:focus-visible,
+.cooee-updates__back:focus-visible,
 .cooee-updates__close:focus-visible,
+.cooee-updates__read-more:focus-visible,
 .cooee-updates__retry:focus-visible,
 .cooee-updates a:focus-visible {
   outline: 3px solid var(--cooee-ring);
@@ -900,7 +1238,18 @@ const embedStyles = `
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px;
+  scrollbar-width: none;
   text-align: start;
+}
+.cooee-updates__panel::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+.cooee-updates__panel[data-article-view] {
+  inline-size: 680px;
+  max-block-size: min(85dvh, 800px, var(--available-height));
+  max-inline-size: min(680px, var(--available-width));
 }
 .cooee-updates__positioner {
   inline-size: auto;
@@ -909,12 +1258,16 @@ const embedStyles = `
 }
 .cooee-updates__header {
   align-items: center;
+  background: var(--cooee-surface);
   border-block-end: 1px solid var(--cooee-border-subtle);
   display: flex;
   gap: 10px;
   justify-content: space-between;
-  margin-block-end: 10px;
-  padding-block-end: 10px;
+  margin: -14px -14px 10px;
+  padding: 14px 14px 10px;
+  position: sticky;
+  top: -14px;
+  z-index: 2;
 }
 .cooee-updates__header h2 {
   font-size: 15px;
@@ -922,6 +1275,29 @@ const embedStyles = `
   margin: 0;
   overflow-wrap: anywhere;
 }
+.cooee-updates__header-leading {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-inline-size: 0;
+}
+.cooee-updates__back {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--cooee-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  font-size: 20px;
+  inline-size: 44px;
+  justify-content: center;
+  line-height: 1;
+  margin-inline-start: -8px;
+  min-block-size: 44px;
+}
+.cooee-updates__back:hover { background: var(--cooee-surface-subtle); }
 .cooee-updates__close {
   align-items: center;
   background: transparent;
@@ -957,87 +1333,62 @@ const embedStyles = `
   padding: 0 14px;
 }
 .cooee-updates__entries { min-inline-size: 0; }
-.cooee-updates__entry {
-  border-block-end: 1px solid var(--cooee-border-subtle);
-  min-inline-size: 0;
-  padding: 10px 0;
+.cooee-updates__article {
+  margin-inline: auto;
+  max-inline-size: 620px;
+  padding: 12px 4px 24px;
 }
-.cooee-updates__entry:last-child { border-block-end: 0; }
-.cooee-updates__entry-meta {
-  color: var(--cooee-muted);
-  font-size: 11px;
-  font-weight: 650;
-  overflow-wrap: anywhere;
-  text-transform: uppercase;
-}
-.cooee-updates__entry-title {
-  font-size: 14px;
-  line-height: 1.4;
-  margin: 4px 0;
+.cooee-updates__article-title {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 16px 0 20px;
   overflow-wrap: anywhere;
 }
-.cooee-updates__entry-image {
-  aspect-ratio: 2 / 1;
+.cooee-updates__article-image {
+  aspect-ratio: 16 / 9;
   border: 1px solid var(--cooee-border-subtle);
   border-radius: var(--cooee-radius);
   display: block;
   inline-size: 100%;
-  margin-block: 8px;
+  margin-block-end: 20px;
   object-fit: cover;
 }
-.cooee-updates__entry-summary,
-.cooee-updates__item-summary {
-  color: var(--cooee-muted);
-  font-size: 13px;
-  line-height: 1.5;
+.cooee-updates__article-body {
+  color: var(--cooee-text);
+  font-size: 15px;
+  line-height: 1.7;
   min-inline-size: 0;
   overflow-wrap: anywhere;
 }
-.cooee-updates__entry-summary > :first-child,
-.cooee-updates__item-summary > :first-child { margin-block-start: 0; }
-.cooee-updates__entry-summary > :last-child,
-.cooee-updates__item-summary > :last-child { margin-block-end: 0; }
-.cooee-updates__item-list {
-  display: grid;
-  gap: 8px;
-  margin-block-start: 10px;
+.cooee-updates__article-body > :first-child { margin-block-start: 0; }
+.cooee-updates__article-body > :last-child { margin-block-end: 0; }
+.cooee-updates__article-body h1,
+.cooee-updates__article-body h2,
+.cooee-updates__article-body h3,
+.cooee-updates__article-body h4 {
+  color: var(--cooee-text);
+  line-height: 1.25;
+  margin-block: 28px 10px;
 }
-.cooee-updates__item {
-  border: 1px solid var(--cooee-border-subtle);
-  border-radius: var(--cooee-radius);
-  min-inline-size: 0;
-  padding: 10px;
-}
-.cooee-updates__item-header {
-  align-items: flex-start;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  min-inline-size: 0;
-}
-.cooee-updates__item-title {
-  font-size: 13px;
-  line-height: 1.4;
-  margin: 0;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-.cooee-updates__item-badge {
-  border: 1px solid var(--cooee-border);
-  border-radius: 999px;
-  color: var(--cooee-muted);
-  flex: none;
-  font-size: 10px;
+.cooee-updates__article-body p,
+.cooee-updates__article-body ol,
+.cooee-updates__article-body ul { margin-block: 0 16px; }
+.cooee-updates__article-body a {
+  color: var(--cooee-text);
   font-weight: 650;
-  max-inline-size: 45%;
-  overflow-wrap: anywhere;
-  padding: 2px 6px;
-  text-transform: uppercase;
+  text-underline-offset: 3px;
 }
-.cooee-updates__item-summary {
-  font-size: 12px;
-  margin-block-start: 6px;
+.cooee-updates__article-status {
+  align-items: flex-start;
+  color: var(--cooee-muted);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-block-size: 240px;
+  padding: 24px;
 }
+.cooee-updates__article-status p { margin: 0 0 12px; }
 .cooee-updates__sr-only {
   block-size: 1px;
   clip: rect(0, 0, 0, 0);
@@ -1050,19 +1401,36 @@ const embedStyles = `
   white-space: nowrap;
 }
 .cooee-updates__footer {
+  align-items: center;
   border-block-start: 1px solid var(--cooee-border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
   margin-block-start: 10px;
   padding-block-start: 10px;
 }
 .cooee-updates__footer a {
+  align-items: center;
   color: var(--cooee-text);
   display: inline-flex;
   font-size: 13px;
   font-weight: 650;
   min-block-size: 44px;
-  align-items: center;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.cooee-updates__footer .cooee-updates__powered-by {
+  color: var(--cooee-muted);
+  font-size: 11px;
+  font-weight: 450;
+  margin-inline-start: auto;
+  text-decoration: none;
+}
+.cooee-updates__powered-by strong {
+  color: var(--cooee-text);
+  font-weight: 750;
+  margin-inline-start: 3px;
 }
 .cooee-updates [data-code="inline"] {
   background: var(--cooee-surface-subtle);
