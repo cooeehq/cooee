@@ -1,4 +1,19 @@
 export { CooeeUpdates } from "./CooeeUpdates.js";
+export {
+  CooeeChangelogCard,
+  CooeeChangelogCategoryBadge,
+  CooeeChangelogEntryMeta,
+  CooeeChangelogEntry,
+  CooeeChangelogStyles,
+  cooeeChangelogStyles,
+} from "./ChangelogUi.js";
+export type {
+  CooeeChangelogCardProps,
+  CooeeChangelogCategoryBadgeProps,
+  CooeeChangelogEntryMetaProps,
+  CooeeChangelogEntryData,
+  CooeeChangelogEntryProps,
+} from "./ChangelogUi.js";
 export type {
   CooeeUpdatesAppearance,
   CooeeUpdatesLabels,

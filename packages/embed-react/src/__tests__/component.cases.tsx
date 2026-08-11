@@ -3,10 +3,7 @@ import domino from "@mixmark-io/domino";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import type {
-  CooeeUpdatesLabels,
-  CooeeUpdatesTheme,
-} from "../CooeeUpdates";
+import type { CooeeUpdatesLabels, CooeeUpdatesTheme } from "../CooeeUpdates";
 
 const testWindow = domino.createWindow(
   "<!doctype html><html><body></body></html>",
@@ -148,6 +145,8 @@ describe("CooeeUpdates embed", () => {
     expect(root.hasAttribute("style")).toBe(false);
     expect(style.getAttribute("nonce")).toBe("nonce-123");
     expect(style.textContent).toContain("--cooee-accent: #155e75");
+    expect(style.textContent).toContain("scrollbar-width: none");
+    expect(style.textContent).toContain("position: sticky");
   });
 
   test("supports explicit light and dark themes through the theme prop", () => {
@@ -188,8 +187,7 @@ describe("CooeeUpdates embed", () => {
       configurable: true,
       value: {
         supports: (_property: string, value: string) =>
-          value === "oklch(97% 0.001 106.424)" ||
-          value === "hsl(0 0% 100%)",
+          value === "oklch(97% 0.001 106.424)" || value === "hsl(0 0% 100%)",
       },
       writable: true,
     });
@@ -286,7 +284,12 @@ describe("CooeeUpdates embed", () => {
       testWindow.document,
       ".cooee-updates__panel",
     );
+    const positioner = requiredElement<HTMLElement>(
+      testWindow.document,
+      ".cooee-updates__positioner",
+    );
     expect(panel.getAttribute("data-open")).not.toBeNull();
+    expect(positioner.getAttribute("data-align")).toBe("start");
     expect(externalTrigger.getAttribute("aria-expanded")).toBe("true");
     expect(space.defaultPrevented).toBe(true);
   });
@@ -453,22 +456,174 @@ describe("CooeeUpdates embed", () => {
     await openEmbed(container);
     const image = requiredElement<HTMLImageElement>(
       testWindow.document,
-      ".cooee-updates__entry-image",
+      ".cooee-changelog-card__image",
     );
     const link = requiredElement<HTMLAnchorElement>(
       testWindow.document,
-      ".cooee-updates__footer a",
+      ".cooee-updates__footer a:not(.cooee-updates__powered-by)",
+    );
+    const heading = requiredElement<HTMLHeadingElement>(
+      testWindow.document,
+      ".cooee-updates__header h2",
+    );
+    const category = requiredElement<HTMLElement>(
+      testWindow.document,
+      ".cooee-changelog-badge",
+    );
+    const date = requiredElement<HTMLTimeElement>(
+      testWindow.document,
+      ".cooee-changelog-meta__date",
+    );
+    const poweredBy = requiredElement<HTMLAnchorElement>(
+      testWindow.document,
+      ".cooee-updates__powered-by",
     );
     expect(image.src).toBe(
       "https://cooee.test/api/public/updates/entry-image/image",
     );
     expect(image.alt).toBe("");
-    expect(image.previousElementSibling?.className).toBe(
-      "cooee-updates__entry-title",
+    expect(image.nextElementSibling?.className).toBe(
+      "cooee-changelog-card__title",
     );
     expect(link.href).toBe("https://cooee.test/changelog/cooee");
     expect(link.textContent).toContain("See every update");
     expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(heading.textContent).toBe("Changelog");
+    expect(category.classList.contains("cooee-changelog-badge--feature")).toBe(
+      true,
+    );
+    expect(date.dateTime).toBe("2026-07-21T00:00:00.000Z");
+    expect(date.textContent).toContain("2026");
+    expect(poweredBy.href).toBe("https://cooee.sh");
+    expect(poweredBy.textContent).toBe("Powered by cooee");
+  });
+
+  test("uses feed category definitions for the shared public entry layouts", async () => {
+    mockFetch(async () =>
+      jsonResponse({
+        changelog: {
+          name: "Cooee",
+          categoryDefinitions: [
+            { id: "feature", label: "Feature", displayType: "post" },
+            { id: "improvement", label: "Better", displayType: "callout" },
+            { id: "fix", label: "Fixed", displayType: "text" },
+          ],
+        },
+        entries: [
+          {
+            id: "entry-post",
+            title: "Launch post",
+            summary: "A full post.",
+            category: "feature",
+            publishedAt: "2026-07-21T00:00:00.000Z",
+          },
+          {
+            id: "entry-callout",
+            title: "Compact improvement",
+            summary: "A compact callout.",
+            category: "improvement",
+            publishedAt: "2026-07-20T00:00:00.000Z",
+          },
+          {
+            id: "entry-text",
+            title: "Small fix",
+            summary: "An expandable text update.",
+            category: "fix",
+            publishedAt: "2026-07-19T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    const { container } = await renderEmbed();
+
+    await flushAsyncWork();
+    await openEmbed(container);
+
+    expect(
+      testWindow.document.querySelector('[data-display-type="post"]'),
+    ).toBeTruthy();
+    expect(
+      testWindow.document.querySelector('[data-display-type="callout"]'),
+    ).toBeTruthy();
+    expect(
+      testWindow.document.querySelector('[data-display-type="text"]'),
+    ).toBeTruthy();
+    expect(testWindow.document.body.textContent).toContain("Better");
+    expect(testWindow.document.body.textContent).toContain("Fixed");
+  });
+
+  test("opens article entries in an expanded, scrollable popup reader", async () => {
+    const requests: string[] = [];
+    mockFetch(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      requests.push(url);
+
+      if (url.includes("/articles/launch-notes")) {
+        return jsonResponse({
+          entry: {
+            articleMarkdown:
+              "## The full launch story\n\nThis is the complete, readable article.",
+          },
+        });
+      }
+
+      return jsonResponse({
+        changelog: {
+          name: "Cooee",
+          publicUrl: "/changelog/cooee",
+        },
+        entries: [
+          {
+            articleSlug: "launch-notes",
+            category: "feature",
+            id: "article-entry",
+            publishedAt: "2026-07-21T00:00:00.000Z",
+            summary: "A short introduction.",
+            title: "A closer look at the launch",
+          },
+        ],
+      });
+    });
+
+    const { container } = await renderEmbed();
+    await flushAsyncWork();
+    await openEmbed(container);
+
+    const readMore = requiredElement<HTMLButtonElement>(
+      testWindow.document,
+      ".cooee-updates__read-more",
+    );
+    expect(readMore.textContent).toBe("Read more→");
+
+    await act(async () => readMore.click());
+    await flushAsyncWork();
+
+    const panel = requiredElement<HTMLElement>(
+      testWindow.document,
+      ".cooee-updates__panel",
+    );
+    const article = requiredElement<HTMLElement>(
+      panel,
+      ".cooee-updates__article",
+    );
+    const back = requiredElement<HTMLButtonElement>(
+      panel,
+      ".cooee-updates__back",
+    );
+    expect(panel.hasAttribute("data-article-view")).toBe(true);
+    expect(article.textContent).toContain("The full launch story");
+    expect(article.textContent).toContain("complete, readable article");
+    expect(back.getAttribute("aria-label")).toBe("Back to changelog");
+    expect(requests).toContain("https://cooee.test/articles/launch-notes");
+
+    await act(async () => back.click());
+    expect(panel.hasAttribute("data-article-view")).toBe(false);
+    expect(panel.querySelector(".cooee-updates__entries")).not.toBeNull();
   });
 
   test("drops unsafe public links and images", async () => {
@@ -492,11 +647,16 @@ describe("CooeeUpdates embed", () => {
     await flushAsyncWork();
     await openEmbed(container);
     expect(
-      testWindow.document.querySelector(".cooee-updates__entry-image"),
+      testWindow.document.querySelector(".cooee-changelog-card__image"),
     ).toBeFalsy();
+    const footer = requiredElement<HTMLElement>(
+      testWindow.document,
+      ".cooee-updates__footer",
+    );
     expect(
-      testWindow.document.querySelector(".cooee-updates__footer"),
+      footer.querySelector("a:not(.cooee-updates__powered-by)"),
     ).toBeFalsy();
+    expect(footer.textContent).toBe("Powered by cooee");
   });
 
   test("aborts the stale request when the feed URL changes", async () => {
