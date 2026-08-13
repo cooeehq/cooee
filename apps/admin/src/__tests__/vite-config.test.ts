@@ -40,7 +40,7 @@ describe("admin dev server config", () => {
     }
 
     const html = transformIndexHtml(
-      "<title>__COOEE_TITLE__</title><link rel=\"canonical\" href=\"https://cooee.invalid/__COOEE_CANONICAL_URL__\" />",
+      '<title>__COOEE_TITLE__</title><link rel="canonical" href="https://cooee.invalid/__COOEE_CANONICAL_URL__" />',
     );
     expect(html).toContain("<title>Cooee</title>");
     expect(html).toContain('href="https://app.cooee.sh/changelog"');

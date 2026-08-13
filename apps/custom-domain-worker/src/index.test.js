@@ -36,9 +36,7 @@ describe("custom domain proxy Worker", () => {
       COOEE_WEBSITE_ORIGIN_HOST: "cooee.up.railway.app",
     });
 
-    expect(proxiedRequest.url).toBe(
-      "https://cooee.up.railway.app/pricing",
-    );
+    expect(proxiedRequest.url).toBe("https://cooee.up.railway.app/pricing");
     expect(proxiedRequest.headers.get("x-forwarded-host")).toBe("cooee.sh");
   });
 
@@ -56,9 +54,7 @@ describe("custom domain proxy Worker", () => {
     expect(proxiedRequest.url).toBe(
       "https://cooee-admin-production.up.railway.app/login",
     );
-    expect(proxiedRequest.headers.get("x-forwarded-host")).toBe(
-      "app.cooee.sh",
-    );
+    expect(proxiedRequest.headers.get("x-forwarded-host")).toBe("app.cooee.sh");
   });
 
   test("proxies custom hostname traffic to the Railway origin", async () => {
@@ -69,7 +65,9 @@ describe("custom domain proxy Worker", () => {
     };
 
     const response = await proxyToCooeeOrigin(
-      new Request("https://changelog.partbot.io/api/public/changelog/feed.json"),
+      new Request(
+        "https://changelog.partbot.io/api/public/changelog/feed.json",
+      ),
       {
         COOEE_ORIGIN_HOST: "cooee-api-production.up.railway.app",
       },

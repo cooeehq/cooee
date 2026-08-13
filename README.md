@@ -224,9 +224,15 @@ using the [Railway setup guide](docs/self-hosting.md) and should leave
 
 ## Privacy and security
 
-Cooee sends sanitized PR metadata to the configured AI model by default: title,
-body, labels, merge time, repository, and the PR URL without query strings. It
-does not send diffs or repository contents.
+For public repositories, Cooee sends sanitized PR metadata to the configured AI
+model: title, body, labels, merge time, repository, and the PR URL without query
+strings. It does not send diffs or repository contents. Private-repository PRs
+are held for human review before AI processing or publication.
+
+GitHub-derived workspace membership is revalidated against current installation
+access on each authenticated request. A member must be able to access every
+GitHub App installation attached to the workspace; workspace owners are not
+derived from that external grant.
 
 The default skip labels are `cooee:skip` and `cooee:internal`; the default
 sensitive labels are `security` and `vulnerability`. Review these defaults for
@@ -255,10 +261,14 @@ bun run build
 bun audit
 ```
 
-Contributor guidance is in [CONTRIBUTING.md](CONTRIBUTING.md). The React package
-is published by the `react-v*` trusted-publishing workflow described in its
+Contributor guidance is in [CONTRIBUTING.md](CONTRIBUTING.md). See the
+[code of conduct](CODE_OF_CONDUCT.md), [support policy](SUPPORT.md), and
+[security policy](SECURITY.md) before opening an issue. The React package is
+published by the `react-v*` trusted-publishing workflow described in its
 [README](packages/embed-react/README.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Third-party material is listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and repository artwork is
+covered by [ASSET_LICENSES.md](ASSET_LICENSES.md).

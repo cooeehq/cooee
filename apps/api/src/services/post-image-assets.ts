@@ -25,9 +25,7 @@ export function isPublicPostImageUrl(
   const expectedPath = publicPostImageUrl(workspaceId, entryId);
   return (
     value === expectedPath ||
-    new RegExp(`^${escapeRegExp(expectedPath)}\\?v=[a-zA-Z0-9_-]+$`).test(
-      value,
-    )
+    new RegExp(`^${escapeRegExp(expectedPath)}\\?v=[a-zA-Z0-9_-]+$`).test(value)
   );
 }
 

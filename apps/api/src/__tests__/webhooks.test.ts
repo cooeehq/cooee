@@ -6,7 +6,15 @@ describe("webhook signatures", () => {
     const payload = JSON.stringify({ action: "closed" });
     const signature = await signPayload(payload, "top-secret");
 
-    expect(await verifyGitHubSignature({ payload, signature, secret: "top-secret" })).toBe(true);
-    expect(await verifyGitHubSignature({ payload, signature, secret: "wrong-secret" })).toBe(false);
+    expect(
+      await verifyGitHubSignature({ payload, signature, secret: "top-secret" }),
+    ).toBe(true);
+    expect(
+      await verifyGitHubSignature({
+        payload,
+        signature,
+        secret: "wrong-secret",
+      }),
+    ).toBe(false);
   });
 });

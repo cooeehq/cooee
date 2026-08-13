@@ -134,6 +134,7 @@ const postImageGenerationUnavailableMessage =
 const publicFeedCacheHeaders = {
   "cache-control": "public, max-age=60, stale-while-revalidate=300",
 };
+const maxPublicFeedEntries = 500;
 const publicChangelogThemeCookieName = "cooee_public_changelog_theme";
 const cliSetupCookieName = "__Host-cooee-cli-setup";
 const cliSetupSessionLifetimeMs = 15 * 60 * 1000;
@@ -632,44 +633,49 @@ export function createApp(options: AppOptions = {}): App {
             authenticatedEmail = session.user.email;
             authenticatedUserId = session.user.id;
 
-            let memberships = await store.listWorkspaceMemberships(
+            const storedMemberships = await store.listWorkspaceMemberships(
               session.user.id,
             );
-            let preferredWorkspaceId = await findConnectedWorkspaceId(
+            let memberships = storedMemberships;
+            if (auth.listAccessibleGitHubResources) {
+              const githubAccess = await auth.listAccessibleGitHubResources(
+                request.headers,
+              );
+              if (githubAccess === null) {
+                memberships = storedMemberships.filter(
+                  (membership) =>
+                    membership.role === "owner" ||
+                    membership.source === "local",
+                );
+                if (memberships.length === 0 && env.NODE_ENV === "production") {
+                  return json(
+                    {
+                      error:
+                        "GitHub access could not be verified. Please try again.",
+                    },
+                    { status: 503 },
+                  );
+                }
+              } else {
+                memberships = await store.ensureGitHubInstallationMemberships({
+                  userId: session.user.id,
+                  installationIds: githubAccess.installationIds,
+                  repositoryFullNames: githubAccess.repositoryFullNames,
+                });
+              }
+            }
+            const preferredWorkspaceId = await findConnectedWorkspaceId(
               store,
               memberships,
             );
-            if (
-              !preferredWorkspaceId &&
-              auth.listAccessibleGitHubInstallationIds
-            ) {
-              const installationIds =
-                await auth.listAccessibleGitHubInstallationIds(request.headers);
-              if (
-                installationIds === null &&
-                memberships.length === 0 &&
-                env.NODE_ENV === "production"
-              ) {
-                return json(
-                  {
-                    error:
-                      "GitHub access could not be verified. Please try again.",
-                  },
-                  { status: 503 },
-                );
-              }
-              if (installationIds) {
-                memberships = await store.ensureGitHubInstallationMemberships({
-                  userId: session.user.id,
-                  installationIds,
-                });
-                preferredWorkspaceId = await findConnectedWorkspaceId(
-                  store,
-                  memberships,
-                );
-              }
-            }
+            const requestedWorkspaceId = url.searchParams.get("workspaceId");
             if (memberships.length === 0) {
+              if (storedMemberships.length > 0 || requestedWorkspaceId) {
+                return json(
+                  { error: "You do not have access to this workspace." },
+                  { status: 403 },
+                );
+              }
               memberships = [
                 await store.ensureUserWorkspace({
                   userId: session.user.id,
@@ -682,7 +688,6 @@ export function createApp(options: AppOptions = {}): App {
               ];
             }
 
-            const requestedWorkspaceId = url.searchParams.get("workspaceId");
             const membership = requestedWorkspaceId
               ? memberships.find(
                   (item) => item.workspaceId === requestedWorkspaceId,
@@ -5936,11 +5941,12 @@ async function publicFeedForChangelog(
   if (!workspaceSettings.publicChangelog) {
     return json({ error: "Changelog not found" }, { status: 404 });
   }
-  const entries = await store.listEntries(changelog.id);
-  const feedWindow = getPublicFeedWindow(
-    entries,
+  const feedWindow = await getPublicFeedWindow(
+    store,
+    changelog.id,
     changelog.settings.scheduleFrequency,
     query.data.before,
+    limit,
   );
   const feed = publicFeedSchema.parse(
     serializePublicFeed({
@@ -5980,21 +5986,19 @@ async function publicFeedForChangelog(
         categoryDefinitions: changelog.settings.categoryDefinitions,
         groupEntriesByCategory: changelog.settings.groupEntriesByCategory,
       },
-      entries: feedWindow.entries
-        .slice(0, limit ?? feedWindow.entries.length)
-        .map((entry) => ({
-          ...entry,
-          imageUrl: resolvePublicAssetUrl(
-            entry.imageUrl
-              ? publicChangelogPostImageUrl(
-                  changelog.slug,
-                  entry.id,
-                  entry.imageUrl,
-                )
-              : null,
-            publicUrl,
-          ),
-        })),
+      entries: feedWindow.entries.map((entry) => ({
+        ...entry,
+        imageUrl: resolvePublicAssetUrl(
+          entry.imageUrl
+            ? publicChangelogPostImageUrl(
+                changelog.slug,
+                entry.id,
+                entry.imageUrl,
+              )
+            : null,
+          publicUrl,
+        ),
+      })),
       includePullRequestLinks: changelog.settings.includePullRequestLinks,
       pagination: feedWindow.pagination,
     }),
@@ -6021,12 +6025,9 @@ async function publicArticleForChangelog(
   }
 
   const feed = publicFeedSchema.parse(await feedResponse.json());
-  const entry = (await store.listEntries(changelog.id)).find(
-    (candidate) =>
-      candidate.status === "published" &&
-      candidate.articleSlug === articleSlug &&
-      Boolean(candidate.articleMarkdown?.trim()) &&
-      Boolean(candidate.publishedAt),
+  const entry = await store.getPublishedArticleBySlug(
+    changelog.id,
+    articleSlug,
   );
 
   if (!entry?.articleSlug || !entry.articleMarkdown || !entry.publishedAt) {
@@ -6090,28 +6091,32 @@ function resolvePublicAssetUrl(
   }
 }
 
-function getPublicFeedWindow(
-  entries: StoredEntry[],
+async function getPublicFeedWindow(
+  store: Store,
+  changelogId: string,
   frequency: ChangelogSettings["scheduleFrequency"],
   before: string | null,
-): { entries: StoredEntry[]; pagination: PublicFeedPagination } {
+  requestedLimit?: number,
+): Promise<{ entries: StoredEntry[]; pagination: PublicFeedPagination }> {
   const now = new Date();
-  const publishedEntries = entries
-    .map((entry) => ({ entry, publishedAt: parsePublicFeedDate(entry) }))
-    .filter(
-      (
-        item,
-      ): item is {
-        entry: StoredEntry;
-        publishedAt: Date;
-      } => Boolean(item.publishedAt),
-    )
-    .filter(({ publishedAt }) => publishedAt.getTime() <= now.getTime())
-    .sort(
-      (left, right) => right.publishedAt.getTime() - left.publishedAt.getTime(),
-    );
+  const requestedCursorDate = parsePublicFeedCursor(before);
+  const cursorDate =
+    requestedCursorDate && requestedCursorDate.getTime() <= now.getTime()
+      ? requestedCursorDate
+      : null;
+  const [latestEntry] = cursorDate
+    ? []
+    : await store.listPublicEntries({
+        changelogId,
+        publishedAtOrBefore: now.toISOString(),
+        limit: 1,
+      });
+  const latestPublishedAt = latestEntry
+    ? parsePublicFeedDate(latestEntry)
+    : null;
+  const windowEndedAt = cursorDate ?? latestPublishedAt;
 
-  if (publishedEntries.length === 0) {
+  if (!windowEndedAt) {
     return {
       entries: [],
       pagination: {
@@ -6123,30 +6128,37 @@ function getPublicFeedWindow(
     };
   }
 
-  const cursorDate = parsePublicFeedCursor(before);
-  const windowEndedAt = cursorDate ?? publishedEntries[0].publishedAt;
   const windowStartedAt = subtractPublicFeedWindow(windowEndedAt, frequency);
-  const windowEntries = publishedEntries
-    .filter(({ publishedAt }) => {
-      const timestamp = publishedAt.getTime();
-      const windowEndTimestamp = windowEndedAt.getTime();
-      return (
-        timestamp >= windowStartedAt.getTime() &&
-        (cursorDate
-          ? timestamp < windowEndTimestamp
-          : timestamp <= windowEndTimestamp)
-      );
-    })
-    .map(({ entry }) => entry);
-  const hasMore = publishedEntries.some(
-    ({ publishedAt }) => publishedAt.getTime() < windowStartedAt.getTime(),
+  const pageSize = Math.min(
+    requestedLimit ?? maxPublicFeedEntries,
+    maxPublicFeedEntries,
   );
+  const windowEntries = await store.listPublicEntries({
+    changelogId,
+    publishedAtOrAfter: windowStartedAt.toISOString(),
+    ...(cursorDate
+      ? { publishedBefore: windowEndedAt.toISOString() }
+      : { publishedAtOrBefore: windowEndedAt.toISOString() }),
+    limit: pageSize + 1,
+  });
+  const hasMoreInWindow = windowEntries.length > pageSize;
+  const entries = windowEntries.slice(0, pageSize);
+  const hasEarlierWindow = await store.hasPublicEntryBefore(
+    changelogId,
+    windowStartedAt.toISOString(),
+  );
+  const hasMore = hasMoreInWindow || hasEarlierWindow;
+  const nextBefore = hasMoreInWindow
+    ? (entries.at(-1)?.publishedAt ?? windowStartedAt.toISOString())
+    : hasEarlierWindow
+      ? windowStartedAt.toISOString()
+      : null;
 
   return {
-    entries: windowEntries,
+    entries,
     pagination: {
       hasMore,
-      nextBefore: hasMore ? windowStartedAt.toISOString() : null,
+      nextBefore,
       windowEndedAt: windowEndedAt.toISOString(),
       windowStartedAt: windowStartedAt.toISOString(),
     },

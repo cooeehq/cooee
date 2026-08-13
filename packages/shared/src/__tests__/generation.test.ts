@@ -292,6 +292,25 @@ describe("AI generation contracts", () => {
     });
   });
 
+  test("holds generated credentials before publication", () => {
+    for (const secret of [
+      `AKIA${"1234567890ABCDEF"}`,
+      `sk_${"live_1234567890abcdef"}`,
+      `whsec_${"1234567890abcdef"}`,
+      `-----BEGIN ${"PRIVATE KEY"}-----`,
+    ]) {
+      expect(
+        validateGeneratedEntry({
+          title: "Integration update",
+          summary: `Use ${secret} for the integration.`,
+          category: "improvement",
+          confidence: 0.99,
+          sensitive: false,
+        }),
+      ).toEqual({ ok: false, reason: "sensitive-output" });
+    }
+  });
+
   test("validates structured change items for multi-change posts", () => {
     expect(
       validateGeneratedEntry({

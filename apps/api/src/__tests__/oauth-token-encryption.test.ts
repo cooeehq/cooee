@@ -13,9 +13,9 @@ describe("OAuth token encryption", () => {
 
     expect(encrypted).not.toBeNull();
     expect(isEncryptedOAuthToken(encrypted ?? "")).toBe(true);
-    expect(
-      await symmetricDecrypt({ data: encrypted ?? "", key: secret }),
-    ).toBe("gho_plaintext-token");
+    expect(await symmetricDecrypt({ data: encrypted ?? "", key: secret })).toBe(
+      "gho_plaintext-token",
+    );
   });
 
   test("is idempotent for current and legacy encrypted values", async () => {

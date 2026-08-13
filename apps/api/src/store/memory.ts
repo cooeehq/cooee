@@ -19,6 +19,7 @@ import type {
   GitHubRepository,
   MarkEntryNotRelevantInput,
   MergeGenerationJob,
+  ListPublicEntriesInput,
   NewEntryInput,
   Store,
   StoredChangelog,
@@ -540,6 +541,7 @@ export class InMemoryStore implements Store {
       workspaceId,
       userId: input.userId,
       role: "owner",
+      source: "local",
     };
     this.memberships.push(membership);
     return membership;
@@ -549,6 +551,9 @@ export class InMemoryStore implements Store {
     input: EnsureGitHubInstallationMembershipsInput,
   ): Promise<WorkspaceMembership[]> {
     const accessibleInstallationIds = new Set(input.installationIds);
+    const accessibleRepositoryFullNames = new Set(
+      input.repositoryFullNames.map((fullName) => fullName.toLowerCase()),
+    );
     const workspaceIds = new Set(
       this.githubInstallations
         .filter((installation) =>
@@ -557,7 +562,35 @@ export class InMemoryStore implements Store {
         .map((installation) => installation.workspaceId),
     );
 
-    for (const workspaceId of workspaceIds) {
+    const authorizedWorkspaceIds = new Set(
+      [...workspaceIds].filter((workspaceId) => {
+        const installationIds = this.githubInstallations
+          .filter((installation) => installation.workspaceId === workspaceId)
+          .map((installation) => installation.installationId);
+        const repositoryFullNames = this.repositories
+          .filter((repository) => repository.workspaceId === workspaceId)
+          .map((repository) => repository.fullName.toLowerCase());
+        return (
+          installationIds.length > 0 &&
+          installationIds.every((installationId) =>
+            accessibleInstallationIds.has(installationId),
+          ) &&
+          repositoryFullNames.every((fullName) =>
+            accessibleRepositoryFullNames.has(fullName),
+          )
+        );
+      }),
+    );
+
+    this.memberships = this.memberships.filter(
+      (membership) =>
+        membership.userId !== input.userId ||
+        membership.role === "owner" ||
+        (membership.source !== "github" && membership.source !== undefined) ||
+        authorizedWorkspaceIds.has(membership.workspaceId),
+    );
+
+    for (const workspaceId of authorizedWorkspaceIds) {
       const existing = this.memberships.find(
         (membership) =>
           membership.userId === input.userId &&
@@ -569,6 +602,7 @@ export class InMemoryStore implements Store {
           workspaceId,
           userId: input.userId,
           role: "member",
+          source: "github",
         });
       }
     }
@@ -1003,6 +1037,76 @@ export class InMemoryStore implements Store {
     return this.entries
       .filter((entry) => entry.changelogId === changelogId)
       .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
+  }
+
+  async listPublicEntries(
+    input: ListPublicEntriesInput,
+  ): Promise<StoredEntry[]> {
+    const changelog = this.changelogs.find(
+      (item) => item.id === input.changelogId,
+    );
+    const publishedAtOrAfter = input.publishedAtOrAfter
+      ? Date.parse(input.publishedAtOrAfter)
+      : null;
+    const publishedBefore = input.publishedBefore
+      ? Date.parse(input.publishedBefore)
+      : null;
+    const publishedAtOrBefore = input.publishedAtOrBefore
+      ? Date.parse(input.publishedAtOrBefore)
+      : null;
+
+    return this.entries
+      .filter((entry) => {
+        if (
+          entry.changelogId !== input.changelogId ||
+          entry.status !== "published" ||
+          !entry.publishedAt
+        ) {
+          return false;
+        }
+        const publishedAt = Date.parse(entry.publishedAt);
+        return (
+          (publishedAtOrAfter === null || publishedAt >= publishedAtOrAfter) &&
+          (publishedBefore === null || publishedAt < publishedBefore) &&
+          (publishedAtOrBefore === null || publishedAt <= publishedAtOrBefore)
+        );
+      })
+      .sort((left, right) =>
+        (right.publishedAt ?? "").localeCompare(left.publishedAt ?? ""),
+      )
+      .slice(0, Math.min(Math.max(Math.trunc(input.limit), 1), 501))
+      .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
+  }
+
+  async hasPublicEntryBefore(
+    changelogId: string,
+    publishedBefore: string,
+  ): Promise<boolean> {
+    const boundary = Date.parse(publishedBefore);
+    return this.entries.some(
+      (entry) =>
+        entry.changelogId === changelogId &&
+        entry.status === "published" &&
+        Boolean(entry.publishedAt) &&
+        Date.parse(entry.publishedAt ?? "") < boundary,
+    );
+  }
+
+  async getPublishedArticleBySlug(
+    changelogId: string,
+    articleSlug: string,
+  ): Promise<StoredEntry | null> {
+    const entry = this.entries.find(
+      (candidate) =>
+        candidate.changelogId === changelogId &&
+        candidate.status === "published" &&
+        candidate.articleSlug === articleSlug &&
+        Boolean(candidate.articleMarkdown?.trim()) &&
+        Boolean(candidate.publishedAt) &&
+        Date.parse(candidate.publishedAt ?? "") <= Date.now(),
+    );
+    const changelog = this.changelogs.find((item) => item.id === changelogId);
+    return entry ? this.withSourcePullRequestMergedAt(entry, changelog) : null;
   }
 
   async listPullRequestsForWindow(

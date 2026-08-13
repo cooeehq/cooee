@@ -520,13 +520,32 @@ describe("api routes", () => {
     expect(olderFeedJson.pagination.nextBefore).toBeNull();
   });
 
+  test("public feed does not use the unbounded administrative entry listing", async () => {
+    const store = InMemoryStore.seeded();
+    store.listEntries = async () => {
+      throw new Error("public routes must use bounded storage queries");
+    };
+    const app = createApp({ store });
+
+    const feed = await app.fetch(
+      new Request("http://cooee.test/api/public/changelogs/acme-app/feed.json"),
+    );
+
+    expect(feed.status).toBe(200);
+    expect((await feed.json()).entries).toHaveLength(2);
+  });
+
   test("public feed omits scheduled future posts", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [
-      publishedEntry({
-        id: "entry_scheduled",
-        publishedAt: "2999-06-13T12:00:00.000Z",
-      }),
+      {
+        ...publishedEntry({
+          id: "entry_scheduled",
+          publishedAt: "2999-06-13T12:00:00.000Z",
+        }),
+        articleSlug: "scheduled-update",
+        articleMarkdown: "# Scheduled update",
+      },
       publishedEntry({
         id: "entry_visible",
         publishedAt: "2026-06-13T12:00:00.000Z",
@@ -544,6 +563,23 @@ describe("api routes", () => {
       "entry_visible",
     ]);
     expect(JSON.stringify(feedJson)).not.toContain("entry_scheduled");
+
+    const futureCursorFeed = await app.fetch(
+      new Request(
+        "http://cooee.test/api/public/changelogs/acme-app/feed.json?before=2999-12-31T00%3A00%3A00.000Z",
+      ),
+    );
+    expect(futureCursorFeed.status).toBe(200);
+    expect(JSON.stringify(await futureCursorFeed.json())).not.toContain(
+      "entry_scheduled",
+    );
+
+    const scheduledArticle = await app.fetch(
+      new Request(
+        "http://cooee.test/api/public/changelogs/acme-app/articles/scheduled-update",
+      ),
+    );
+    expect(scheduledArticle.status).toBe(404);
   });
 
   test("public feed expands the initial window for weekly and monthly changelog schedules", async () => {

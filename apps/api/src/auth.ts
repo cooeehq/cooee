@@ -6,13 +6,18 @@ import { accounts, sessions, users, verifications } from "./db/schema";
 export type AuthRuntime = {
   handler(request: Request): Promise<Response>;
   getSession(headers: Headers): Promise<AuthSession | null>;
-  listAccessibleGitHubInstallationIds?(
+  listAccessibleGitHubResources?(
     headers: Headers,
-  ): Promise<number[] | null>;
+  ): Promise<GitHubAccess | null>;
   canAccessGitHubInstallation(
     headers: Headers,
     installationId: number,
   ): Promise<boolean>;
+};
+
+export type GitHubAccess = {
+  installationIds: number[];
+  repositoryFullNames: string[];
 };
 
 export type AuthSession = {
@@ -113,42 +118,16 @@ export function createAuth(
     },
   });
 
-  async function listAccessibleGitHubInstallationIds(
+  async function listAccessibleGitHubResources(
     headers: Headers,
-  ): Promise<number[] | null> {
+  ): Promise<GitHubAccess | null> {
     try {
       const token = await auth.api.getAccessToken({
         body: { providerId: "github" },
         headers,
       });
-      const installationIds = new Set<number>();
-      let pageUrl: string | null =
-        "https://api.github.com/user/installations?per_page=100";
-
-      for (let page = 0; page < 10 && pageUrl; page += 1) {
-        const response = await fetch(pageUrl, {
-          headers: {
-            accept: "application/vnd.github+json",
-            authorization: `Bearer ${token.accessToken}`,
-            "x-github-api-version": "2022-11-28",
-          },
-        });
-        if (!response.ok) return null;
-        const body = (await response.json()) as {
-          installations?: Array<{ id?: number }>;
-        };
-        for (const installation of body.installations ?? []) {
-          if (
-            Number.isInteger(installation.id) &&
-            (installation.id ?? 0) > 0
-          ) {
-            installationIds.add(installation.id as number);
-          }
-        }
-        pageUrl = readNextLink(response.headers.get("link"));
-      }
-
-      return [...installationIds];
+      const access = await listGitHubAccess(token.accessToken);
+      return access;
     } catch {
       return null;
     }
@@ -168,14 +147,70 @@ export function createAuth(
           }
         : null;
     },
-    async listAccessibleGitHubInstallationIds(headers) {
-      return listAccessibleGitHubInstallationIds(headers);
+    async listAccessibleGitHubResources(headers) {
+      return listAccessibleGitHubResources(headers);
     },
     async canAccessGitHubInstallation(headers, installationId) {
-      const installationIds =
-        await listAccessibleGitHubInstallationIds(headers);
-      return installationIds?.includes(installationId) ?? false;
+      const access = await listAccessibleGitHubResources(headers);
+      return access?.installationIds.includes(installationId) ?? false;
     },
+  };
+}
+
+export async function listGitHubAccess(
+  accessToken: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GitHubAccess | null> {
+  const installationIds = new Set<number>();
+  const repositoryFullNames = new Set<string>();
+  let pageUrl: string | null =
+    "https://api.github.com/user/installations?per_page=100";
+
+  for (let page = 0; page < 10 && pageUrl; page += 1) {
+    const response = await fetcher(pageUrl, {
+      headers: githubUserAccessHeaders(accessToken),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      installations?: Array<{ id?: number }>;
+    };
+    for (const installation of body.installations ?? []) {
+      if (Number.isInteger(installation.id) && (installation.id ?? 0) > 0) {
+        installationIds.add(installation.id as number);
+      }
+    }
+    pageUrl = readNextLink(response.headers.get("link"));
+  }
+
+  for (const installationId of installationIds) {
+    pageUrl = `https://api.github.com/user/installations/${installationId}/repositories?per_page=100`;
+    for (let page = 0; page < 10 && pageUrl; page += 1) {
+      const response = await fetcher(pageUrl, {
+        headers: githubUserAccessHeaders(accessToken),
+      });
+      if (!response.ok) return null;
+      const body = (await response.json()) as {
+        repositories?: Array<{ full_name?: string }>;
+      };
+      for (const repository of body.repositories ?? []) {
+        const fullName = repository.full_name?.trim().toLowerCase();
+        if (fullName) repositoryFullNames.add(fullName);
+      }
+      pageUrl = readNextLink(response.headers.get("link"));
+    }
+  }
+
+  return {
+    installationIds: [...installationIds],
+    repositoryFullNames: [...repositoryFullNames],
+  };
+}
+
+function githubUserAccessHeaders(accessToken: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${accessToken}`,
+    "x-github-api-version": "2022-11-28",
   };
 }
 

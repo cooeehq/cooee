@@ -12,10 +12,25 @@ export type HeldPullRequest = {
 };
 
 const DEFAULT_SECRET_PATTERNS = [
-  /\b(?:authorization:\s*bearer)\s+[a-z0-9._~+/=-]+/gi,
-  /\b((?:[a-z0-9_]*)(?:token|secret|password|api_key|apikey|private_key|database_url)(?:[a-z0-9_]*))\s*[:=]\s*([^\s'"]+)/gi,
-  /\bgh[pousr]_[a-z0-9_]{20,}\b/gi,
-  /\bsk-[a-z0-9_-]{16,}\b/gi,
+  /\b(?:authorization:\s*bearer)\s+[a-z0-9._~+/=-]+/i,
+  /\b((?:[a-z0-9_]*)(?:token|secret|password|api_key|apikey|private_key|database_url)(?:[a-z0-9_]*))\s*[:=]\s*([^\s'"]+)/i,
+  /\bgh[pousr]_[a-z0-9_]{20,}\b/i,
+  /\bgithub_pat_[a-z0-9_]{40,}\b/i,
+  /\bsk-[a-z0-9_-]{16,}\b/i,
+  /\b(?:sk|rk)_(?:live|test)_[a-z0-9]{16,}\b/i,
+  /\bwhsec_[a-z0-9]{16,}\b/i,
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/,
+  /\bglpat-[a-z0-9_-]{20,}\b/i,
+  /\bxox[baprs]-[a-z0-9-]{10,}\b/i,
+  /\bnpm_[a-z0-9]{20,}\b/i,
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/i,
+];
+
+const PROMPT_INJECTION_PATTERNS = [
+  /\b(?:ignore|disregard|override|forget)\b.{0,80}\b(?:previous|prior|above|system|developer)\b.{0,40}\b(?:instruction|prompt|message|rule)s?\b/i,
+  /\b(?:system|developer)\s+(?:prompt|message|instruction)s?\b/i,
+  /\b(?:reveal|print|repeat|expose|publish)\b.{0,80}\b(?:system prompt|private detail|secret|credential|other pull request)s?\b/i,
+  /\b(?:jailbreak|prompt injection)\b/i,
 ];
 
 const SENSITIVE_CONTENT_PATTERNS = [
@@ -83,7 +98,11 @@ export function filterPublishablePullRequests(
       continue;
     }
 
-    if (containsSensitiveContent(`${pr.title}\n${pr.body}`)) {
+    if (
+      containsSensitiveContent(
+        `${pr.title}\n${pr.body}\n${pr.labels.join("\n")}`,
+      )
+    ) {
       held.push({ pr, reason: "sensitive-content" });
       continue;
     }
@@ -102,7 +121,7 @@ export function sanitizePullRequest(
     number: pr.number,
     title: sanitizeText(pr.title),
     body: sanitizeBody(pr.body),
-    labels: pr.labels,
+    labels: pr.labels.map(sanitizeText),
     mergedAt: pr.mergedAt,
     url: stripQueryString(pr.url),
     repository: pr.repository,
@@ -137,7 +156,27 @@ export function sanitizeText(value: string): string {
   );
 
   sanitized = sanitized.replace(/\bgh[pousr]_[a-z0-9_]{20,}\b/gi, "[redacted]");
+  sanitized = sanitized.replace(
+    /\bgithub_pat_[a-z0-9_]{40,}\b/gi,
+    "[redacted]",
+  );
   sanitized = sanitized.replace(/\bsk-[a-z0-9_-]{16,}\b/gi, "[redacted]");
+  sanitized = sanitized.replace(
+    /\b(?:sk|rk)_(?:live|test)_[a-z0-9]{16,}\b/gi,
+    "[redacted]",
+  );
+  sanitized = sanitized.replace(/\bwhsec_[a-z0-9]{16,}\b/gi, "[redacted]");
+  sanitized = sanitized.replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, "[redacted]");
+  sanitized = sanitized.replace(/\bglpat-[a-z0-9_-]{20,}\b/gi, "[redacted]");
+  sanitized = sanitized.replace(
+    /\bxox[baprs]-[a-z0-9-]{10,}\b/gi,
+    "[redacted]",
+  );
+  sanitized = sanitized.replace(/\bnpm_[a-z0-9]{20,}\b/gi, "[redacted]");
+  sanitized = sanitized.replace(
+    /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/gi,
+    "[private key removed]",
+  );
   sanitized = sanitized.replace(/https?:\/\/[^\s)]+/g, (url) =>
     stripQueryString(url),
   );
@@ -149,8 +188,13 @@ export function containsSensitiveContent(value: string): boolean {
   return (
     SENSITIVE_CONTENT_PATTERNS.some((pattern) => pattern.test(value)) ||
     containsPersonallyIdentifiableContent(value) ||
-    DEFAULT_SECRET_PATTERNS.some((pattern) => pattern.test(value))
+    containsSecretContent(value) ||
+    PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(value))
   );
+}
+
+export function containsSecretContent(value: string): boolean {
+  return DEFAULT_SECRET_PATTERNS.some((pattern) => pattern.test(value));
 }
 
 export function containsPersonallyIdentifiableContent(value: string): boolean {

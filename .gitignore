@@ -12,6 +12,7 @@ posthog-warehouse-report.md
 .vite
 .playwright-mcp
 coverage
+media/
 *.tsbuildinfo
 **/*.tsbuildinfo
 **/*.d.ts.map

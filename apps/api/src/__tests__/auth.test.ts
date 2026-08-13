@@ -3,6 +3,7 @@ import {
   GITHUB_OAUTH_SCOPES,
   getGitHubContactEmail,
   getGitHubProfileEmail,
+  listGitHubAccess,
 } from "../auth";
 
 describe("GitHub authentication", () => {
@@ -30,5 +31,37 @@ describe("GitHub authentication", () => {
 
   test("requests permission to discover accessible GitHub App installations", () => {
     expect(GITHUB_OAUTH_SCOPES).toContain("read:org");
+  });
+
+  test("resolves repository-level access for every accessible installation", async () => {
+    const urls: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/user/installations?")) {
+        return Response.json({ installations: [{ id: 12345 }] });
+      }
+      if (url.includes("/user/installations/12345/repositories?")) {
+        return Response.json({
+          repositories: [{ full_name: "Acme/App" }, { full_name: "acme/docs" }],
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    await expect(listGitHubAccess("github-token", fetcher)).resolves.toEqual({
+      installationIds: [12345],
+      repositoryFullNames: ["acme/app", "acme/docs"],
+    });
+    expect(urls).toHaveLength(2);
+  });
+
+  test("fails closed when repository-level GitHub access cannot be read", async () => {
+    const fetcher = (async (input: string | URL | Request) =>
+      String(input).includes("/user/installations?")
+        ? Response.json({ installations: [{ id: 12345 }] })
+        : new Response(null, { status: 403 })) as typeof fetch;
+
+    await expect(listGitHubAccess("github-token", fetcher)).resolves.toBeNull();
   });
 });

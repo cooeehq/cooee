@@ -156,7 +156,10 @@ test("reuses existing GitHub access and lets the paired CLI save its choices", a
     getSession: async () => ({
       user: { id: "user_1", name: "Mona", email: "mona@example.com" },
     }),
-    listAccessibleGitHubInstallationIds: async () => [12345],
+    listAccessibleGitHubResources: async () => ({
+      installationIds: [12345],
+      repositoryFullNames: ["acme/app"],
+    }),
     canAccessGitHubInstallation: async () => true,
   };
   const app = createApp({
@@ -270,7 +273,10 @@ test("binds the GitHub App callback to the paired setup session", async () => {
     getSession: async () => ({
       user: { id: "user_1", name: "Mona", email: "mona@example.com" },
     }),
-    listAccessibleGitHubInstallationIds: async () => [],
+    listAccessibleGitHubResources: async () => ({
+      installationIds: [],
+      repositoryFullNames: [],
+    }),
     canAccessGitHubInstallation: async () => true,
   };
   const githubClient: GitHubAppClient = {

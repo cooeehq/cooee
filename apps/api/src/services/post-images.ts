@@ -101,11 +101,7 @@ export class PostImageOrchestrator {
         generated.requestId,
       );
     }
-    const body = await normalizePostImage(
-      source,
-      input.settings,
-      input.title,
-    );
+    const body = await normalizePostImage(source, input.settings, input.title);
     return {
       body,
       contentType: "image/webp",
@@ -180,7 +176,9 @@ async function renderBrandCard(
     source = new Uint8Array(await readFile(assetUrl));
   } else {
     source = new Uint8Array(
-      await sharp(Buffer.from(brandCardSvg(settings))).png().toBuffer(),
+      await sharp(Buffer.from(brandCardSvg(settings)))
+        .png()
+        .toBuffer(),
     );
   }
 
@@ -472,7 +470,8 @@ function wrapPostImageTitle(value: string): string[] {
   const consumed = lines.join(" ").split(" ").length;
   if (consumed < words.length) {
     const finalLine = lines.at(-1) ?? "";
-    lines[lines.length - 1] = `${finalLine.slice(0, maxCharacters - 1).trimEnd()}…`;
+    lines[lines.length - 1] =
+      `${finalLine.slice(0, maxCharacters - 1).trimEnd()}…`;
   }
 
   return lines.slice(0, 3);

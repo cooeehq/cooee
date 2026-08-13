@@ -3,7 +3,10 @@ import { generateHistoricalChangelog } from "../services/historical";
 import { loadConfig } from "../config";
 import { createGitHubAppClient } from "../services/github";
 import { createStore } from "../store";
-import { createAiTokenUsageReporter, createStripeClient } from "../services/stripe";
+import {
+  createAiTokenUsageReporter,
+  createStripeClient,
+} from "../services/stripe";
 
 const options = parseArgs(Bun.argv.slice(2), Bun.env);
 const store = createStore(Bun.env);
