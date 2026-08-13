@@ -8,8 +8,8 @@
 
 Cooee (`/ˈkuːiː/`) turns merged GitHub pull requests into a privacy-first,
 publishable product changelog. It collects PR metadata, drafts customer-facing
-updates with AI, holds sensitive or uncertain output for review, and publishes
-a hosted changelog, JSON API, React popup, and read-only MCP tool.
+updates with AI, and keeps generated posts in review unless an operator opts in
+to automatic publishing. Sensitive or uncertain output is always held.
 
 [Website](https://cooee.sh) · [Developer docs](https://cooee.sh/docs) ·
 [OpenAPI](https://api.cooee.sh/api/public/openapi.json) ·
@@ -186,13 +186,13 @@ access.
 
 For an installation hosted at `https://changelog.example.com`, configure:
 
-| Integration            | URL or permission                                              |
-| ---------------------- | -------------------------------------------------------------- |
-| OAuth callback         | `https://changelog.example.com/api/auth/callback/github`       |
-| GitHub App callback    | `https://changelog.example.com/api/github/callback`            |
-| GitHub App webhook     | `https://changelog.example.com/api/webhooks/github`            |
-| Repository permissions | Pull requests read-only; metadata read-only                    |
-| Webhook events         | Pull request; release; installation; installation repositories |
+| Integration            | URL or permission                                               |
+| ---------------------- | --------------------------------------------------------------- |
+| OAuth callback         | `https://changelog.example.com/api/auth/callback/github`        |
+| GitHub App callback    | `https://changelog.example.com/api/github/callback`             |
+| GitHub App webhook     | `https://changelog.example.com/api/webhooks/github`             |
+| Repository permissions | Pull requests read-only; contents read-only; metadata read-only |
+| Webhook events         | Pull request; release; installation; installation repositories  |
 
 Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_SLUG`,
 `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. The
@@ -224,10 +224,13 @@ using the [Railway setup guide](docs/self-hosting.md) and should leave
 
 ## Privacy and security
 
-For public repositories, Cooee sends sanitized PR metadata to the configured AI
-model: title, body, labels, merge time, repository, and the PR URL without query
-strings. It does not send diffs or repository contents. Private-repository PRs
-are held for human review before AI processing or publication.
+For selected public or private repositories, Cooee sends sanitized PR metadata
+to the configured AI model: title, body, labels, merge time, repository, and the
+PR URL without query strings. It does not send diffs or repository contents.
+Private repositories use stricter writing instructions that suppress internal
+implementation details. Generated posts stay in review by default; operators
+can opt in to automatic publishing for drafts that pass privacy and confidence
+checks. Sensitive or uncertain drafts remain held for review.
 
 GitHub-derived workspace membership is revalidated against current installation
 access on each authenticated request. A member must be able to access every

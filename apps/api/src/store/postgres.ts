@@ -921,7 +921,8 @@ export class PostgresStore implements Store {
 
       if (
         input.repositoryLimit !== null &&
-        input.repositoryLimit !== undefined
+        input.repositoryLimit !== undefined &&
+        input.repositoryLimit > 0
       ) {
         const usage = await sql`
           select count(distinct repository_id)::int as count

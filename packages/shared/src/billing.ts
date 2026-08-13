@@ -75,7 +75,7 @@ export const hostedPlanEntitlements: Record<
   },
   lobster: {
     id: "lobster",
-    repositoryLimit: 1,
+    repositoryLimit: 0,
     monthlyIncludedCredits: 100,
     estimatedMonthlyPullRequests: 25,
     aiGeneration: true,
@@ -85,7 +85,7 @@ export const hostedPlanEntitlements: Record<
   },
   pineapple: {
     id: "pineapple",
-    repositoryLimit: 3,
+    repositoryLimit: 0,
     monthlyIncludedCredits: 400,
     estimatedMonthlyPullRequests: 100,
     aiGeneration: true,
@@ -95,7 +95,7 @@ export const hostedPlanEntitlements: Record<
   },
   watermelon: {
     id: "watermelon",
-    repositoryLimit: 15,
+    repositoryLimit: 0,
     monthlyIncludedCredits: 1_000,
     estimatedMonthlyPullRequests: 250,
     aiGeneration: true,
@@ -115,6 +115,10 @@ export function canConnectRepository(
   input: RepositoryEntitlementInput,
 ): boolean {
   if (input.billingMode === "self-hosted") {
+    return true;
+  }
+
+  if (input.repositoryLimit === 0) {
     return true;
   }
 

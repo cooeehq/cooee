@@ -159,6 +159,7 @@ export class InMemoryStore implements Store {
           private: false,
         },
       ],
+      workspaceSettings: [["ws_acme", { autoPublish: true }]],
       changelogs: [
         {
           id: "cl_acme",
@@ -943,6 +944,7 @@ export class InMemoryStore implements Store {
     if (
       input.repositoryLimit !== null &&
       input.repositoryLimit !== undefined &&
+      input.repositoryLimit > 0 &&
       new Set(
         this.changelogs
           .filter((changelog) => changelog.workspaceId === input.workspaceId)

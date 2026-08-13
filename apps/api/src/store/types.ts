@@ -148,6 +148,7 @@ export type WorkspaceSettings = {
   aiAudience: "product-users" | "technical-users";
   aiPersonality: "product-user" | "concise" | "technical";
   aiFailClosed: boolean;
+  autoPublish: boolean;
   createImagesPerUpdate: boolean;
   generationSource: ChangelogGenerationSource;
   scheduleFrequency: ScheduleFrequency;

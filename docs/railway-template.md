@@ -41,7 +41,7 @@ release and let Railway rebuild the affected services from the repository.
 
 - A Railway account and workspace.
 - A GitHub OAuth app for user sign-in.
-- A GitHub App with read-only pull-request and metadata access.
+- A GitHub App with read-only pull-request, contents, and metadata access.
 - An OpenAI API key for changelog drafting.
 - The public Cooee repository, once released, for GitHub-integrated builds.
 

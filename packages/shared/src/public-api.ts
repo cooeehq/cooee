@@ -135,7 +135,7 @@ const publicFeedExample = {
       summary: "Search results now arrive sooner.",
       category: "improvement",
       publishedAt: "2026-07-22T08:00:00.000Z",
-      imageUrl: "https://cooee.sh/api/public/assets/update_123.png",
+      imageUrl: "https://api.cooee.sh/api/public/assets/update_123.png",
     },
   ],
   groups: {},

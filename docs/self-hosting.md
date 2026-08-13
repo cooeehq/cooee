@@ -55,7 +55,7 @@ URL and is intended for operators offering Cooee as a service.
 ## GitHub configuration
 
 GitHub OAuth handles account sign-in. The GitHub App grants access to selected
-repositories and delivers installation and pull-request webhooks.
+repositories and delivers installation, pull-request, and release webhooks.
 
 For `https://changelog.example.com`, configure:
 
@@ -65,8 +65,9 @@ GitHub App callback: https://changelog.example.com/api/github/callback
 GitHub App webhook:  https://changelog.example.com/api/webhooks/github
 ```
 
-Grant the GitHub App read-only pull-request and metadata permissions. Subscribe
-it to `pull_request`, `installation`, and `installation_repositories` events.
+Grant the GitHub App read-only pull-request, contents, and metadata permissions.
+Subscribe it to `pull_request`, `release`, `installation`, and
+`installation_repositories` events.
 Use a unique webhook secret and place the same value in
 `GITHUB_WEBHOOK_SECRET`.
 
