@@ -18,6 +18,8 @@ import type {
   GitHubInstallation,
   GitHubRepository,
   MarkEntryNotRelevantInput,
+  ResolveHeldEntryInput,
+  ResolveHeldEntryResult,
   MergeGenerationJob,
   ListPublicEntriesInput,
   NewEntryInput,
@@ -1613,6 +1615,54 @@ export class InMemoryStore implements Store {
     this.aiFeedback.unshift(feedback);
     this.entries = this.entries.filter((item) => item.id !== entry.id);
     return feedback;
+  }
+
+  async resolveHeldEntry(
+    input: ResolveHeldEntryInput,
+  ): Promise<ResolveHeldEntryResult | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    if (!entry || entry.status !== "held") {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+
+    const shouldPublish = input.resolution === "should-publish";
+    if (shouldPublish) {
+      entry.title = input.title ?? entry.title;
+      entry.summary = input.summary ?? entry.summary;
+      entry.category = input.category ?? entry.category;
+    }
+    const feedback: AiFeedback = {
+      id: `ai_feedback_${this.aiFeedback.length + 1}_${Date.now()}`,
+      workspaceId: input.workspaceId,
+      changelogId: entry.changelogId,
+      entryId: entry.id,
+      title: entry.title,
+      summary: entry.summary,
+      category: entry.category,
+      note: input.note?.trim() || null,
+      feedbackKind: shouldPublish ? "relevant" : "dismissed",
+      sourcePullRequests: entry.sourcePullRequests,
+      createdAt: new Date().toISOString(),
+    };
+    this.aiFeedback.unshift(feedback);
+
+    if (!shouldPublish) {
+      this.entries = this.entries.filter((item) => item.id !== entry.id);
+      return { feedback, entry: null };
+    }
+
+    entry.status = "published";
+    entry.publishedAt =
+      entry.publishedAt ?? this.getEntrySourcePullRequestMergedAt(entry);
+    entry.holdReason = undefined;
+    return { feedback, entry };
   }
 
   async listAiFeedback(

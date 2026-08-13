@@ -20,6 +20,8 @@ import type {
   GitHubInstallation,
   GitHubRepository,
   MarkEntryNotRelevantInput,
+  ResolveHeldEntryInput,
+  ResolveHeldEntryResult,
   MergeGenerationJob,
   ListPublicEntriesInput,
   NewEntryInput,
@@ -1789,6 +1791,106 @@ export class PostgresStore implements Store {
       `;
 
       return mapAiFeedback(feedbackRows[0]);
+    });
+  }
+
+  async resolveHeldEntry(
+    input: ResolveHeldEntryInput,
+  ): Promise<ResolveHeldEntryResult | null> {
+    return this.sql.begin(async (sql) => {
+      const existingRows = await sql`
+        select e.*, c.workspace_id, c.repository_id
+        from changelog_entries e
+        join changelogs c on c.id = e.changelog_id
+        where e.id = ${input.entryId}
+          and c.workspace_id = ${input.workspaceId}
+          and e.status = 'held'
+        limit 1
+        for update
+      `;
+      const entry = existingRows[0];
+      if (!entry) {
+        return null;
+      }
+
+      const shouldPublish = input.resolution === "should-publish";
+      const title = shouldPublish ? (input.title ?? entry.title) : entry.title;
+      const summary = shouldPublish
+        ? (input.summary ?? entry.summary)
+        : entry.summary;
+      const category = shouldPublish
+        ? (input.category ?? entry.category)
+        : entry.category;
+      const feedbackRows = await sql`
+        insert into ai_feedback (
+          id,
+          workspace_id,
+          changelog_id,
+          entry_id,
+          title,
+          summary,
+          category,
+          note,
+          feedback_kind,
+          source_pull_requests
+        ) values (
+          ${crypto.randomUUID()},
+          ${input.workspaceId},
+          ${entry.changelog_id},
+          ${entry.id},
+          ${title},
+          ${summary},
+          ${category},
+          ${input.note?.trim() || null},
+          ${shouldPublish ? "relevant" : "dismissed"},
+          ${sql.json(entry.source_pull_requests ?? [])}
+        )
+        returning *
+      `;
+
+      if (!shouldPublish) {
+        await sql`
+          delete from changelog_entries
+          where id = ${entry.id}
+        `;
+        return { feedback: mapAiFeedback(feedbackRows[0]), entry: null };
+      }
+
+      const publishedRows = await sql`
+        update changelog_entries e
+        set status = 'published',
+          title = ${title},
+          summary = ${summary},
+          category = ${category},
+          hold_reason = null,
+          published_at = coalesce(
+            e.published_at,
+            (
+              select max(pr.merged_at)
+              from jsonb_array_elements(e.source_pull_requests) source(value)
+              join pull_requests pr
+                on pr.repository_id = ${entry.repository_id}
+               and (
+                  (
+                    (source.value->>'number') ~ '^[0-9]+$'
+                    and pr.number = (source.value->>'number')::int
+                  )
+                  or lower(trim(trailing '/' from pr.url)) = lower(
+                    trim(trailing '/' from coalesce(source.value->>'url', ''))
+                  )
+                )
+            ),
+            now()
+          ),
+          updated_at = now()
+        where e.id = ${entry.id}
+        returning e.*
+      `;
+
+      return {
+        feedback: mapAiFeedback(feedbackRows[0]),
+        entry: mapEntry(publishedRows[0]),
+      };
     });
   }
 

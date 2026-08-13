@@ -2038,6 +2038,100 @@ describe("api routes", () => {
     ]);
   });
 
+  test("resolves held drafts with dismissal or publication learnings", async () => {
+    const store = InMemoryStore.seeded();
+    const heldCorrect = await store.createEntry({
+      changelogId: "cl_acme",
+      title: "Internal dependency maintenance",
+      summary: "Internal packages were refreshed.",
+      category: "maintenance",
+      status: "held",
+      publishedAt: null,
+      holdReason: "publication-eligibility-review",
+      windowEndedAt: "2026-06-07T23:00:00.000Z",
+      sourcePullRequests: [
+        {
+          number: 47,
+          title: "Refresh internal packages",
+          url: "https://github.com/acme/app/pull/47",
+        },
+      ],
+    });
+    const shouldPublish = await store.createEntry({
+      changelogId: "cl_acme",
+      title: "Clearer activity exports",
+      summary: "Activity exports now use clearer filenames.",
+      category: "improvement",
+      status: "held",
+      publishedAt: null,
+      holdReason: "low-confidence",
+      windowEndedAt: "2026-06-07T23:00:00.000Z",
+      sourcePullRequests: [
+        {
+          number: 48,
+          title: "Improve activity export filenames",
+          url: "https://github.com/acme/app/pull/48",
+        },
+      ],
+    });
+    const app = createApp({ store });
+
+    const confirmed = await app.fetch(
+      new Request(
+        `http://cooee.test/api/admin/changelog-entries/${heldCorrect.id}/resolve-hold`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            resolution: "hold-correct",
+            note: "Dependency maintenance is not customer-facing.",
+          }),
+        },
+      ),
+    );
+    expect(confirmed.status).toBe(204);
+    expect(store.entries.some((entry) => entry.id === heldCorrect.id)).toBe(
+      false,
+    );
+
+    const corrected = await app.fetch(
+      new Request(
+        `http://cooee.test/api/admin/changelog-entries/${shouldPublish.id}/resolve-hold`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            resolution: "should-publish",
+            note: "Export changes are useful to readers.",
+            title: "Clearer export filenames",
+            summary: "Downloaded activity exports are easier to identify.",
+            category: "improvement",
+          }),
+        },
+      ),
+    );
+    expect(corrected.status).toBe(200);
+    expect(await corrected.json()).toMatchObject({
+      id: shouldPublish.id,
+      status: "published",
+      title: "Clearer export filenames",
+      summary: "Downloaded activity exports are easier to identify.",
+      holdReason: null,
+    });
+    expect(store.aiFeedback).toEqual([
+      expect.objectContaining({
+        entryId: shouldPublish.id,
+        feedbackKind: "relevant",
+        note: "Export changes are useful to readers.",
+      }),
+      expect.objectContaining({
+        entryId: heldCorrect.id,
+        feedbackKind: "dismissed",
+        note: "Dependency maintenance is not customer-facing.",
+      }),
+    ]);
+  });
+
   test("hides label-skipped holds but keeps reviewable holds actionable", async () => {
     const store = InMemoryStore.seeded();
     store.pullRequests.push({

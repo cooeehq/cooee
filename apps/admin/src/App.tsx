@@ -33,6 +33,8 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   SunIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
   Trash2Icon,
   UploadIcon,
   UserCircleIcon,
@@ -213,6 +215,8 @@ type HeldEntry = {
     mergedAt?: string;
   }>;
 };
+
+type HeldResolution = "hold-correct" | "should-publish";
 
 type HeldReasonDetails = {
   title: string;
@@ -603,7 +607,7 @@ type PostImageGenerationAvailability =
   | { status: "unavailable"; reason: string };
 
 const initialPublishedEntries: PublishedEntry[] = [];
-const initialHeldEntries: HeldEntry[] = [];
+const defaultInitialHeldEntries: HeldEntry[] = [];
 const initialLogEvents: LogEvent[] = [];
 const defaultPublishedEntriesPageSize = 10;
 const publishedEntriesPageSizeOptions = [10, 25, 50] as const;
@@ -1132,6 +1136,7 @@ type AppProps = {
   initialBillingUsage?: BillingUsageDetails | null;
   initialGitHubConnection?: GitHubConnectionState;
   initialEntries?: PublishedEntry[];
+  initialHeldEntries?: HeldEntry[];
   initialRepositorySearch?: string;
   initialSurface?: SurfaceId;
   initialView?: ViewId;
@@ -1147,6 +1152,7 @@ export function App({
   initialBillingUsage = null,
   initialGitHubConnection = defaultGitHubConnection,
   initialEntries = initialPublishedEntries,
+  initialHeldEntries = defaultInitialHeldEntries,
   initialRepositorySearch = "",
   initialSurface,
   initialOnboardingStep = 0,
@@ -2734,48 +2740,115 @@ export function App({
     }
   }
 
-  async function markHeldEntryRelevant(entry: HeldEntry) {
+  function resolveHeldEntry(entry: HeldEntry, resolution: HeldResolution) {
+    const holdWasCorrect = resolution === "hold-correct";
+    setConfirmationDialogInput("");
+    setConfirmationDialog({
+      title: holdWasCorrect
+        ? "Confirm this hold was correct?"
+        : "Publish this held draft?",
+      description: holdWasCorrect
+        ? `Cooee will clear "${entry.title}" and learn that similar changes should stay out of the public changelog.`
+        : `Cooee will publish "${entry.title}" and learn that similar changes should be considered relevant in future.`,
+      actionLabel: holdWasCorrect ? "Confirm hold" : "Publish and learn",
+      variant: holdWasCorrect ? "destructive" : undefined,
+      input: {
+        label: "What should Cooee learn? (optional)",
+        placeholder: holdWasCorrect
+          ? "For example: internal security maintenance should not be published."
+          : "For example: reader-visible security controls belong in our changelog.",
+        maxLength: 500,
+      },
+      onConfirm: (feedback) =>
+        performResolveHeldEntry(entry, resolution, feedback),
+    });
+  }
+
+  async function performResolveHeldEntry(
+    entry: HeldEntry,
+    resolution: HeldResolution,
+    feedback: string,
+  ) {
     try {
       const removesVisibleHeldEntry = publishedEntries.some(
         (item) => item.id === entry.id,
       );
+      const shouldPublish = resolution === "should-publish";
+      const summary = (draftCopy[entry.source] ?? entry.copy).trim();
+      if (shouldPublish && !summary) {
+        openHeldEntryReview(entry);
+        toast.error("Add draft copy before publishing.");
+        return;
+      }
       const response = await fetch(
-        `/api/admin/changelog-entries/${encodeURIComponent(entry.id)}/relevant`,
+        `/api/admin/changelog-entries/${encodeURIComponent(entry.id)}/resolve-hold`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            note: "User marked a skipped PR as customer-relevant.",
+            resolution,
+            note:
+              feedback.trim() ||
+              (shouldPublish
+                ? "The held draft should have been considered publishable."
+                : "The hold correctly kept this change out of the changelog."),
+            ...(shouldPublish
+              ? {
+                  title: entry.title,
+                  summary,
+                  category: toApiCategory(entry.category),
+                }
+              : {}),
           }),
         },
       );
       if (!response.ok) {
-        throw new Error(`Held entry relevance failed with ${response.status}`);
+        throw new Error(`Held entry resolution failed with ${response.status}`);
       }
 
       setHeldEntries((entries) =>
         entries.filter((item) => item.id !== entry.id),
       );
-      setPublishedEntries((entries) =>
-        entries.filter((item) => item.id !== entry.id),
-      );
-      if (removesVisibleHeldEntry) {
+      if (shouldPublish) {
+        const publishedEntry = toPublishedEntry(
+          (await response.json()) as ApiChangelogEntry,
+        );
+        setPublishedEntries((entries) => [
+          publishedEntry,
+          ...entries.filter((item) => item.id !== entry.id),
+        ]);
+        if (!removesVisibleHeldEntry) {
+          setPublishedEntriesTotal((total) => total + 1);
+        }
+      } else {
+        setPublishedEntries((entries) =>
+          entries.filter((item) => item.id !== entry.id),
+        );
+      }
+      if (!shouldPublish && removesVisibleHeldEntry) {
         setPublishedEntriesTotal((total) => Math.max(0, total - 1));
       }
       void loadHeldEntryCountEvent();
       setLogEvents((events) => [
         {
-          title: "Skipped PR marked relevant",
-          detail: `${entry.title} was saved as positive AI feedback.`,
+          title: shouldPublish ? "Held draft published" : "Hold confirmed",
+          detail: shouldPublish
+            ? `${entry.title} was published and saved as positive AI feedback.`
+            : `${entry.title} was cleared and saved as dismissal feedback.`,
           time: "Now",
         },
         ...events,
       ]);
-      toast.success("Marked relevant.", {
-        description: "Cooee will use this correction in future AI syncs.",
-      });
+      toast.success(
+        shouldPublish ? "Published and learned." : "Hold confirmed.",
+        {
+          description: shouldPublish
+            ? "The post is live and Cooee will use this correction in future syncs."
+            : "The draft was cleared and Cooee will use this learning in future syncs.",
+        },
+      );
     } catch {
-      toast.error("Could not mark skipped PR as relevant.");
+      toast.error("Could not resolve held draft.");
     }
   }
 
@@ -3937,7 +4010,7 @@ export function App({
                   editingSource={editingSource}
                   heldEntries={heldEntries}
                   regeneratingHeldEntryIds={regeneratingHeldEntryIds}
-                  onMarkHeldEntryRelevant={markHeldEntryRelevant}
+                  onResolveHeldEntry={resolveHeldEntry}
                   onPublishHeldEntry={publishHeldEntry}
                   onRegenerateHeldEntry={regenerateHeldEntry}
                   setDraftCopy={setDraftCopy}
@@ -8487,7 +8560,7 @@ function PrivacyReviewView({
   editingSource,
   heldEntries,
   regeneratingHeldEntryIds,
-  onMarkHeldEntryRelevant,
+  onResolveHeldEntry,
   onPublishHeldEntry,
   onRegenerateHeldEntry,
   setDraftCopy,
@@ -8497,7 +8570,7 @@ function PrivacyReviewView({
   editingSource: string | null;
   heldEntries: HeldEntry[];
   regeneratingHeldEntryIds: Set<string>;
-  onMarkHeldEntryRelevant: (entry: HeldEntry) => void;
+  onResolveHeldEntry: (entry: HeldEntry, resolution: HeldResolution) => void;
   onPublishHeldEntry: (entry: HeldEntry) => void;
   onRegenerateHeldEntry: (entry: HeldEntry) => void;
   setDraftCopy: Dispatch<SetStateAction<Record<string, string>>>;
@@ -8645,11 +8718,20 @@ function PrivacyReviewView({
                     {isRegenerating ? "Regenerating" : "Regenerate draft"}
                   </Button>
                   <Button
-                    onClick={() => onMarkHeldEntryRelevant(entry)}
+                    onClick={() => onResolveHeldEntry(entry, "hold-correct")}
                     size="sm"
                     variant="outline"
                   >
-                    Mark relevant
+                    <ThumbsUpIcon data-icon="inline-start" aria-hidden />
+                    Hold was correct
+                  </Button>
+                  <Button
+                    onClick={() => onResolveHeldEntry(entry, "should-publish")}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <ThumbsDownIcon data-icon="inline-start" aria-hidden />
+                    Should be posted
                   </Button>
                 </div>
               </article>

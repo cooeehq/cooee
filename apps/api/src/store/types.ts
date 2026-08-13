@@ -351,6 +351,21 @@ export type MarkEntryNotRelevantInput = {
   feedbackKind?: AiFeedback["feedbackKind"];
 };
 
+export type ResolveHeldEntryInput = {
+  workspaceId: string;
+  entryId: string;
+  resolution: "hold-correct" | "should-publish";
+  note?: string | null;
+  title?: string;
+  summary?: string;
+  category?: ChangelogEntry["category"];
+};
+
+export type ResolveHeldEntryResult = {
+  feedback: AiFeedback;
+  entry: StoredEntry | null;
+};
+
 export type CreateChangelogInput = {
   workspaceId: string;
   repositoryId: string;
@@ -624,6 +639,9 @@ export type Store = {
   markEntryNotRelevant(
     input: MarkEntryNotRelevantInput,
   ): Promise<AiFeedback | null>;
+  resolveHeldEntry(
+    input: ResolveHeldEntryInput,
+  ): Promise<ResolveHeldEntryResult | null>;
   listAiFeedback(
     workspaceId: string,
     changelogId: string,

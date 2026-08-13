@@ -2142,6 +2142,90 @@ export function createApp(options: AppOptions = {}): App {
             return new Response(null, { status: 204 });
           }
 
+          const heldEntryResolutionMatch =
+            /^\/api\/admin\/changelog-entries\/([^/]+)\/resolve-hold$/.exec(
+              url.pathname,
+            );
+          if (request.method === "POST" && heldEntryResolutionMatch) {
+            const body = (await request.json().catch(() => ({}))) as Record<
+              string,
+              unknown
+            >;
+            const resolution = body.resolution;
+            if (
+              resolution !== "hold-correct" &&
+              resolution !== "should-publish"
+            ) {
+              return json(
+                { error: "A valid held-draft resolution is required." },
+                { status: 400 },
+              );
+            }
+
+            const note =
+              typeof body.note === "string"
+                ? body.note.trim().slice(0, 500)
+                : null;
+            const publishUpdate =
+              resolution === "should-publish"
+                ? normalizeEntryUpdate(body)
+                : null;
+            if (resolution === "should-publish" && !publishUpdate) {
+              return json(
+                { error: "Title, summary, and category are required." },
+                { status: 400 },
+              );
+            }
+
+            const result = await store.resolveHeldEntry({
+              workspaceId: getWorkspaceId(url),
+              entryId: decodeURIComponent(heldEntryResolutionMatch[1]),
+              resolution,
+              note,
+              ...(publishUpdate
+                ? {
+                    title: publishUpdate.title,
+                    summary: publishUpdate.summary,
+                    category: publishUpdate.category,
+                  }
+                : {}),
+            });
+            if (!result) {
+              return json(
+                { error: "Held changelog entry not found" },
+                { status: 404 },
+              );
+            }
+
+            if (!result.entry) {
+              return new Response(null, { status: 204 });
+            }
+
+            const selected = await findWorkspaceEntry({
+              entryId: result.entry.id,
+              store,
+              workspaceId: getWorkspaceId(url),
+            });
+            const categoryDefinition = selected
+              ? getChangelogCategoryDefinition(
+                  result.entry.category,
+                  selected.changelog.settings.categoryDefinitions,
+                )
+              : null;
+            const publishedEntry =
+              selected?.changelog.settings.postImageSettings.enabled &&
+              categoryDefinition &&
+              isPostLikeDisplayType(categoryDefinition.displayType) &&
+              !result.entry.imageUrl
+                ? ((await store.enqueuePostImageGeneration({
+                    entryId: result.entry.id,
+                    workspaceId: getWorkspaceId(url),
+                  })) ?? result.entry)
+                : result.entry;
+
+            return json(serializeAdminChangelogEntry(publishedEntry));
+          }
+
           const changelogEntryPublishMatch =
             /^\/api\/admin\/changelog-entries\/([^/]+)\/publish$/.exec(
               url.pathname,

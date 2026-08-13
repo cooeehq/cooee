@@ -70,6 +70,44 @@ describe("Cooee admin app", () => {
     expect(html).toContain('aria-label="Loading held-review count"');
   });
 
+  test("offers explicit learning-backed resolutions for held drafts", () => {
+    const html = renderToStaticMarkup(
+      <App
+        deploymentMode="admin"
+        initialAuthUser={{ name: "Rod ONeill", email: "rod@example.com" }}
+        initialHeldEntries={[
+          {
+            id: "held_47",
+            title: "Clearer activity exports",
+            reason: {
+              title: "Needs publication review",
+              detail: "Cooee could not confidently classify this change.",
+              pullRequestReason: "Needs review",
+            },
+            source: "held:47",
+            copy: "Activity exports now use clearer filenames.",
+            category: "improvement",
+            sourcePullRequests: [
+              {
+                number: 47,
+                title: "Improve activity exports",
+                url: "https://github.com/acme/app/pull/47",
+              },
+            ],
+          },
+        ]}
+        initialIsSignedIn
+        initialSurface="app"
+        initialView="privacy"
+        showOnboarding={false}
+      />,
+    );
+
+    expect(html).toContain("Hold was correct");
+    expect(html).toContain("Should be posted");
+    expect(html).toContain("Clearer activity exports");
+  });
+
   test("renders per-changelog branded image settings with responsive pattern choices", () => {
     const html = renderToStaticMarkup(
       <App
