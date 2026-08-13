@@ -684,28 +684,10 @@ describe("launch security boundaries", () => {
     );
   });
 
-  test("enforces hosted repository limits when selecting a changelog repository", async () => {
+  test("enforces the hosted Free repository limit when selecting a changelog repository", async () => {
     const store = InMemoryStore.seeded();
     store.workspaces[0].billingMode = "hosted";
     store.workspaces[0].repositoryLimit = 1;
-    store.billingSubscriptions.push({
-      id: "billing_lobster",
-      workspaceId: "ws_acme",
-      stripeSubscriptionId: "sub_lobster",
-      stripeCustomerId: "cus_lobster",
-      status: "active",
-      planId: "lobster",
-      billingCadence: "monthly",
-      priceId: "price_lobster",
-      repositoryLimit: 1,
-      currentPeriodStart: null,
-      currentPeriodEnd: null,
-      billingEmail: null,
-      cancelAtPeriodEnd: false,
-      cancelAt: null,
-      endedAt: null,
-      lastPaymentFailedAt: null,
-    });
     store.repositories.push({
       id: "repo_extra",
       workspaceId: "ws_acme",

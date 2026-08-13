@@ -180,6 +180,7 @@ const defaultWorkspaceSettings: WorkspaceSettings = {
   aiAudience: "product-users",
   aiPersonality: "product-user",
   aiFailClosed: true,
+  autoPublish: false,
   createImagesPerUpdate: false,
   generationSource: "pull-requests",
   scheduleFrequency: "daily",
@@ -3050,7 +3051,8 @@ async function billingSubscriptionDetails({
             accessState: getSubscriptionAccessState(subscription.status),
             planId: subscription.planId,
             billingCadence: subscription.billingCadence,
-            repositoryLimit: subscription.repositoryLimit,
+            repositoryLimit: getHostedPlanEntitlements(subscription.planId)
+              .repositoryLimit,
             currentPeriodEnd: subscription.currentPeriodEnd,
             cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
             cancelAt: subscription.cancelAt,
@@ -7295,6 +7297,10 @@ function normalizeWorkspaceSettings(
     aiFailClosed: readBoolean(
       settings.aiFailClosed,
       defaultWorkspaceSettings.aiFailClosed,
+    ),
+    autoPublish: readBoolean(
+      settings.autoPublish,
+      defaultWorkspaceSettings.autoPublish,
     ),
     createImagesPerUpdate: readBoolean(
       settings.createImagesPerUpdate,

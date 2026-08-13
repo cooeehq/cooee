@@ -167,7 +167,7 @@ describe("api routes", () => {
     expect(await response.json()).toMatchObject({
       accessSource: "complimentary",
       planId: "watermelon",
-      repositoryLimit: 15,
+      repositoryLimit: 0,
       complimentaryAccess: { planId: "watermelon", expiresAt: null },
       managementState: "unavailable",
       portalUrl: null,
@@ -2664,7 +2664,7 @@ describe("api routes", () => {
       enabled: true,
       billingMode: "hosted",
       currency: "gbp",
-      repositoryLimit: 3,
+      repositoryLimit: 0,
       usage: {
         connectedRepositories: 2,
         pullRequestsThisPeriod: 2,
@@ -2678,17 +2678,17 @@ describe("api routes", () => {
           annualAmount: 200,
           priceLabel: "£20",
           annualPriceLabel: "£200",
-          repositoryLimit: 1,
+          repositoryLimit: 0,
           monthlyPullRequestLimit: 25,
         },
         {
           id: "pineapple",
-          repositoryLimit: 3,
+          repositoryLimit: 0,
           monthlyPullRequestLimit: 100,
         },
         {
           id: "watermelon",
-          repositoryLimit: 15,
+          repositoryLimit: 0,
           monthlyPullRequestLimit: 250,
         },
       ],
@@ -2696,7 +2696,7 @@ describe("api routes", () => {
       managementState: "unavailable",
       subscription: {
         status: "active",
-        repositoryLimit: 3,
+        repositoryLimit: 0,
         currentPeriodEnd: "2026-06-13T00:00:00.000Z",
       },
     });
@@ -3117,7 +3117,7 @@ describe("api routes", () => {
     expect(await response.json()).toEqual({ received: true });
     await expect(store.getWorkspace("ws_acme")).resolves.toMatchObject({
       billingMode: "hosted",
-      repositoryLimit: 3,
+      repositoryLimit: 0,
       stripeCustomerId: "cus_123",
     });
     await expect(
@@ -3129,7 +3129,7 @@ describe("api routes", () => {
       planId: "pineapple",
       billingCadence: "monthly",
       priceId: "price_starter",
-      repositoryLimit: 3,
+      repositoryLimit: 0,
       currentPeriodStart: "2026-06-13T00:00:00.000Z",
       currentPeriodEnd: "2026-07-13T00:00:00.000Z",
     });

@@ -125,6 +125,8 @@ async function assertActiveRepositoryEntitlement(
   if (!workspace || workspace.billingMode === "self-hosted") return;
   const entitlements = await getWorkspaceEntitlements(store, workspace.id);
 
+  if (entitlements.repositoryLimit === 0) return;
+
   const allowedRepositoryIds = [
     ...new Set(
       (await store.listChangelogs(workspace.id)).map(
@@ -257,6 +259,15 @@ async function generateChangelogForWindowUnlocked(input: {
     input.store.listAiFeedback(changelog.workspaceId, changelog.id),
     resolveAiWritingOptions({ changelog, store: input.store }),
   ]);
+  const autoPublish =
+    (await input.store.getWorkspaceSettings(changelog.workspaceId))
+      ?.autoPublish === true;
+  const generatedStatus: ChangelogEntry["status"] = autoPublish
+    ? "published"
+    : "held";
+  const generatedHoldReason = autoPublish
+    ? undefined
+    : "editorial-review-required";
 
   const privacyHeldEntries = await createHeldPullRequestEntries({
     changelogId: changelog.id,
@@ -265,25 +276,6 @@ async function generateChangelogForWindowUnlocked(input: {
     store: input.store,
     windowEnd,
   });
-
-  if (writerOptions.repositoryVisibility === "private") {
-    const privateRepositoryEntries = await createGeneratedHoldEntries({
-      changelogId: changelog.id,
-      holdReason: "private-repository-review",
-      pullRequests: filtered.publishable,
-      generationKey: input.generationKey,
-      store: input.store,
-      windowEndedAt: windowEnd,
-    });
-    const entries = [...privacyHeldEntries, ...privateRepositoryEntries];
-    await input.store.markGenerated(changelog.id, windowEnd);
-    return {
-      status: "held",
-      entry: entries[0],
-      entries,
-      holdReason: "private-repository-review",
-    };
-  }
 
   let publicationPullRequests = filtered.publishable;
   let publicationHeldEntries: StoredEntry[] = privacyHeldEntries;
@@ -478,8 +470,9 @@ async function generateChangelogForWindowUnlocked(input: {
         title: item.title,
         summary: item.summary,
         category: group.category,
-        status: "published",
-        publishedAt: itemPublishedAt,
+        status: generatedStatus,
+        publishedAt: autoPublish ? itemPublishedAt : null,
+        holdReason: generatedHoldReason,
         windowEndedAt: windowEnd,
         items: [],
         sourcePullRequests: group.pullRequests.map(toSourcePullRequest),
@@ -507,8 +500,13 @@ async function generateChangelogForWindowUnlocked(input: {
             pullRequest.labels,
             changelog.settings.categoryDefinitions,
           ) ?? item.category,
-        status: "published",
-        publishedAt: input.windowStart ? pullRequest.mergedAt : windowEnd,
+        status: generatedStatus,
+        publishedAt: autoPublish
+          ? input.windowStart
+            ? pullRequest.mergedAt
+            : windowEnd
+          : null,
+        holdReason: generatedHoldReason,
         windowEndedAt: windowEnd,
         items: [],
         sourcePullRequests: [toSourcePullRequest(pullRequest)],
@@ -571,8 +569,13 @@ async function generateChangelogForWindowUnlocked(input: {
               pullRequest.labels,
               changelog.settings.categoryDefinitions,
             ) ?? item.category,
-          status: "published",
-          publishedAt: input.windowStart ? pullRequest.mergedAt : windowEnd,
+          status: generatedStatus,
+          publishedAt: autoPublish
+            ? input.windowStart
+              ? pullRequest.mergedAt
+              : windowEnd
+            : null,
+          holdReason: generatedHoldReason,
           windowEndedAt: windowEnd,
           items: [],
           sourcePullRequests: [toSourcePullRequest(pullRequest)],

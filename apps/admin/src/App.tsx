@@ -285,6 +285,7 @@ type SettingsState = {
   aiAudience: "product-users" | "technical-users";
   aiPersonality: AiPersonality;
   aiFailClosed: boolean;
+  autoPublish: boolean;
   createImagesPerUpdate: boolean;
   postImageSettings: PostImageSettings;
   generationSource: "pull-requests" | "releases";
@@ -427,14 +428,15 @@ const defaultBillingPlans: BillingPlan[] = [
     annualPriceLabel: "$200",
     annualAmount: 200,
     annualCadence: "year",
-    repositoryLimit: 1,
+    repositoryLimit: 0,
     monthlyPullRequestLimit: 25,
     monthlyIncludedCredits: 100,
     estimatedMonthlyPullRequests: 25,
     features: [
       "100 AI credits / month (~25 PRs)",
+      "Unlimited repositories",
       "Manual and AI-drafted posts",
-      "Scheduled publishing and AI runs",
+      "Review-first drafts or opt-in auto-publishing",
       "Custom logo, custom domain, and product link",
       "Privacy checks and editorial review",
     ],
@@ -442,20 +444,19 @@ const defaultBillingPlans: BillingPlan[] = [
   {
     id: "pineapple",
     name: "Pineapple",
-    description: "For teams publishing from multiple repositories.",
+    description: "For product teams with regular release volume.",
     priceLabel: "$50",
     monthlyAmount: 50,
     cadence: "month",
     annualPriceLabel: "$500",
     annualAmount: 500,
     annualCadence: "year",
-    repositoryLimit: 3,
+    repositoryLimit: 0,
     monthlyPullRequestLimit: 100,
     monthlyIncludedCredits: 400,
     estimatedMonthlyPullRequests: 100,
     features: [
       "Everything in Lobster",
-      "Multiple repositories",
       "400 AI credits / month (~100 PRs)",
       "Better value for regular release volume",
     ],
@@ -470,7 +471,7 @@ const defaultBillingPlans: BillingPlan[] = [
     annualPriceLabel: "$1,000",
     annualAmount: 1_000,
     annualCadence: "year",
-    repositoryLimit: 15,
+    repositoryLimit: 0,
     monthlyPullRequestLimit: 250,
     monthlyIncludedCredits: 1_000,
     estimatedMonthlyPullRequests: 250,
@@ -680,6 +681,7 @@ const defaultSettings: SettingsState = {
   aiAudience: "product-users",
   aiPersonality: "product-user",
   aiFailClosed: true,
+  autoPublish: false,
   createImagesPerUpdate: false,
   postImageSettings: defaultPostImageSettings,
   generationSource: "pull-requests",
@@ -8333,8 +8335,7 @@ function RepositoriesView({
   const selectedRepositoryCount = githubConnection.repositories.filter(
     (repository) => repository.selected,
   ).length;
-  const repositoryAllowance =
-    githubConnection.repositoryLimit ?? repositoryTotalCount;
+  const repositoryAllowance = githubConnection.repositoryLimit;
   const orderedRepositories = orderRepositoriesForDisplay(
     githubConnection.repositories,
   );
@@ -8422,7 +8423,9 @@ function RepositoriesView({
               />
             </label>
             <div className="text-sm leading-6 text-muted-foreground">
-              {selectedRepositoryCount} of {repositoryAllowance} connected
+              {repositoryAllowance === 0
+                ? `${selectedRepositoryCount} connected · unlimited on paid plans`
+                : `${selectedRepositoryCount} of ${repositoryAllowance ?? repositoryTotalCount} connected`}
             </div>
           </div>
         ) : null}
@@ -9409,7 +9412,7 @@ function getUsagePercent(used: number, limit: number): number {
 
 function formatUsageCount(used: number, limit: number): string {
   if (limit <= 0) {
-    return formatCompactCount(used);
+    return `${formatCompactCount(used)} of unlimited`;
   }
 
   return `${formatCompactCount(used)} of ${formatCompactCount(limit)}`;
@@ -10403,7 +10406,7 @@ function SettingsView({
           </SettingsSection>
 
           <SettingsSection
-            description="Choose which GitHub event creates changelog drafts, then set the cadence for merged pull requests."
+            description="Choose what creates changelog drafts, when generation runs, and whether approved drafts can publish automatically."
             id="settings-schedule"
             title="Publishing schedule"
           >
@@ -10492,7 +10495,7 @@ function SettingsView({
             {settings.generationSource === "pull-requests" &&
             settings.scheduleFrequency !== "on-merge" ? (
               <SettingsRow
-                description="Cooee waits until this local time before publishing a due update."
+                description="Cooee waits until this local time before generating a due update."
                 htmlFor="settings-publish-time"
                 title="Run time"
               >
@@ -10526,6 +10529,22 @@ function SettingsView({
                 value={settings.timeZone}
               />
             </SettingsRow>
+
+            <SettingsRow
+              description="Off by default. When enabled, drafts that pass privacy and confidence checks publish without manual review. Held drafts still require your approval."
+              title="Publish approved drafts automatically"
+            >
+              <SettingsSwitch
+                checked={settings.autoPublish}
+                label="Publish approved drafts automatically"
+                onCheckedChange={(checked) =>
+                  setSettings((current) => ({
+                    ...current,
+                    autoPublish: checked,
+                  }))
+                }
+              />
+            </SettingsRow>
           </SettingsSection>
 
           <SettingsSection
@@ -10534,7 +10553,7 @@ function SettingsView({
             title="Images"
           >
             <SettingsRow
-              description="New Post-style entries publish immediately, then receive their image in the background."
+              description="Published Post-style entries receive their image in the background."
               title="Automatic images"
             >
               <SettingsSwitch
@@ -10811,7 +10830,7 @@ function SettingsView({
             </SettingsRow>
 
             <SettingsRow
-              description="Higher confidence means Cooee holds more drafts for review instead of publishing automatically."
+              description="Higher confidence means Cooee holds more drafts for review. This always applies when automatic publishing is enabled."
               title="Review threshold"
             >
               <SelectField
@@ -12357,10 +12376,19 @@ function formatHoldReasonDetails(
 
   if (reason === "private-repository-review") {
     return {
-      title: "Private repository review",
+      title: "Legacy private repository review",
       detail:
-        "Cooee does not automatically send or publish private-repository changes. Review the source PR before creating public copy.",
-      pullRequestReason: "Private repository review",
+        "This draft was held under an earlier private-repository policy. Review the source PR and draft before publishing.",
+      pullRequestReason: "Legacy private repository review",
+    };
+  }
+
+  if (reason === "editorial-review-required") {
+    return {
+      title: "Ready for editorial review",
+      detail:
+        "Automatic publishing is off. Review and edit this generated draft, then publish it when it is ready.",
+      pullRequestReason: "Editorial review required",
     };
   }
 
