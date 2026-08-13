@@ -10,17 +10,10 @@ import {
 } from "../billing";
 
 describe("hosted billing entitlements", () => {
-  test("allows self-hosted and unlimited paid repositories while enforcing finite limits", () => {
+  test("allows self-hosted deployments without billing and limits hosted plans by repository count", () => {
     expect(
       canConnectRepository({
         billingMode: "self-hosted",
-        connectedRepositories: 100,
-        repositoryLimit: 0,
-      }),
-    ).toBe(true);
-    expect(
-      canConnectRepository({
-        billingMode: "hosted",
         connectedRepositories: 100,
         repositoryLimit: 0,
       }),
@@ -41,7 +34,7 @@ describe("hosted billing entitlements", () => {
     ).toBe(false);
   });
 
-  test("keeps Free at one repository and makes paid plans unlimited", () => {
+  test("controls repository access by hosted plan", () => {
     expect(getHostedPlanEntitlements("free")).toMatchObject({
       repositoryLimit: 1,
       aiGeneration: false,
@@ -49,13 +42,13 @@ describe("hosted billing entitlements", () => {
       customBranding: false,
     });
     expect(getHostedPlanEntitlements("lobster")).toMatchObject({
-      repositoryLimit: 0,
+      repositoryLimit: 1,
       aiGeneration: true,
       customDomain: true,
       customBranding: true,
     });
-    expect(getHostedPlanEntitlements("pineapple").repositoryLimit).toBe(0);
-    expect(getHostedPlanEntitlements("watermelon").repositoryLimit).toBe(0);
+    expect(getHostedPlanEntitlements("pineapple").repositoryLimit).toBe(3);
+    expect(getHostedPlanEntitlements("watermelon").repositoryLimit).toBe(15);
   });
 
   test("keeps paid access during past-due retries and restricts terminal states", () => {

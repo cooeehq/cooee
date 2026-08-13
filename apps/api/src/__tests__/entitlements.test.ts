@@ -38,7 +38,7 @@ describe("workspace entitlements", () => {
     expect(await getWorkspaceEntitlements(store, "ws_acme")).toMatchObject({
       id: "watermelon",
       accessSource: "complimentary",
-      repositoryLimit: 0,
+      repositoryLimit: 15,
       monthlyIncludedCredits: 1_000,
       subscriptionStatus: null,
       complimentaryExpiresAt: "2099-01-01T00:00:00.000Z",

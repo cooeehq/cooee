@@ -33,7 +33,7 @@ describe("billing lifecycle webhooks", () => {
   test("keeps past-due accounts in grace, notifies once, then restricts unpaid accounts", async () => {
     const store = InMemoryStore.seeded();
     store.workspaces[0].billingMode = "hosted";
-    store.workspaces[0].repositoryLimit = 0;
+    store.workspaces[0].repositoryLimit = 3;
     await store.upsertBillingSubscription({
       workspaceId: "ws_acme",
       stripeSubscriptionId: "sub_lifecycle",
@@ -42,7 +42,7 @@ describe("billing lifecycle webhooks", () => {
       planId: "pineapple",
       billingCadence: "monthly",
       priceId: "price_pineapple",
-      repositoryLimit: 0,
+      repositoryLimit: 3,
       currentPeriodStart: "2026-07-01T00:00:00.000Z",
       currentPeriodEnd: "2026-08-01T00:00:00.000Z",
       billingEmail: "owner@example.com",
@@ -103,7 +103,7 @@ describe("billing lifecycle webhooks", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.subject).toContain("couldn’t process");
     expect(await store.getWorkspace("ws_acme")).toMatchObject({
-      repositoryLimit: 0,
+      repositoryLimit: 3,
     });
     expect(await store.getBillingSubscription("ws_acme")).toMatchObject({
       status: "past_due",

@@ -428,13 +428,13 @@ const defaultBillingPlans: BillingPlan[] = [
     annualPriceLabel: "$200",
     annualAmount: 200,
     annualCadence: "year",
-    repositoryLimit: 0,
+    repositoryLimit: 1,
     monthlyPullRequestLimit: 25,
     monthlyIncludedCredits: 100,
     estimatedMonthlyPullRequests: 25,
     features: [
       "100 AI credits / month (~25 PRs)",
-      "Unlimited repositories",
+      "1 repository",
       "Manual and AI-drafted posts",
       "Review-first drafts or opt-in auto-publishing",
       "Custom logo, custom domain, and product link",
@@ -451,12 +451,13 @@ const defaultBillingPlans: BillingPlan[] = [
     annualPriceLabel: "$500",
     annualAmount: 500,
     annualCadence: "year",
-    repositoryLimit: 0,
+    repositoryLimit: 3,
     monthlyPullRequestLimit: 100,
     monthlyIncludedCredits: 400,
     estimatedMonthlyPullRequests: 100,
     features: [
       "Everything in Lobster",
+      "Up to 3 repositories",
       "400 AI credits / month (~100 PRs)",
       "Better value for regular release volume",
     ],
@@ -471,12 +472,13 @@ const defaultBillingPlans: BillingPlan[] = [
     annualPriceLabel: "$1,000",
     annualAmount: 1_000,
     annualCadence: "year",
-    repositoryLimit: 0,
+    repositoryLimit: 15,
     monthlyPullRequestLimit: 250,
     monthlyIncludedCredits: 1_000,
     estimatedMonthlyPullRequests: 250,
     features: [
       "Everything in Pineapple",
+      "Up to 15 repositories",
       "1,000 AI credits / month (~250 PRs)",
       "Multiple changelogs for different products or audiences",
     ],
@@ -8335,7 +8337,8 @@ function RepositoriesView({
   const selectedRepositoryCount = githubConnection.repositories.filter(
     (repository) => repository.selected,
   ).length;
-  const repositoryAllowance = githubConnection.repositoryLimit;
+  const repositoryAllowance =
+    githubConnection.repositoryLimit ?? repositoryTotalCount;
   const orderedRepositories = orderRepositoriesForDisplay(
     githubConnection.repositories,
   );
@@ -8423,9 +8426,7 @@ function RepositoriesView({
               />
             </label>
             <div className="text-sm leading-6 text-muted-foreground">
-              {repositoryAllowance === 0
-                ? `${selectedRepositoryCount} connected · unlimited on paid plans`
-                : `${selectedRepositoryCount} of ${repositoryAllowance ?? repositoryTotalCount} connected`}
+              {selectedRepositoryCount} of {repositoryAllowance} connected
             </div>
           </div>
         ) : null}
