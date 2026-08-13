@@ -99,9 +99,9 @@ async function cloudflareRequest<TBody = CloudflareApiResponse>(input: {
       body: input.body ? JSON.stringify(input.body) : undefined,
     },
   );
-  const body = (await response.json().catch(() => null)) as
-    | CloudflareApiResponse
-    | null;
+  const body = (await response
+    .json()
+    .catch(() => null)) as CloudflareApiResponse | null;
 
   if (!response.ok || body?.success === false) {
     throw new Error(readCloudflareError(body, response.status));

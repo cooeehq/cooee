@@ -8,7 +8,7 @@ describe("public feed serialization", () => {
         slug: "acme-app",
         name: "Acme App",
         description: "Latest product updates",
-        publicUrl: "https://cooee.example.com/acme-app"
+        publicUrl: "https://cooee.example.com/acme-app",
       },
       entries: [
         {
@@ -22,15 +22,22 @@ describe("public feed serialization", () => {
             {
               title: "Saved filters",
               summary: "Users can save filter views and return to them later.",
-              category: "feature"
+              category: "feature",
             },
             {
               title: "Login recovery",
-              summary: "Expired sessions now recover without interrupting work.",
-              category: "fix"
-            }
+              summary:
+                "Expired sessions now recover without interrupting work.",
+              category: "fix",
+            },
           ],
-          sourcePullRequests: [{ number: 42, url: "https://github.com/acme/app/pull/42", author: "octocat" }]
+          sourcePullRequests: [
+            {
+              number: 42,
+              url: "https://github.com/acme/app/pull/42",
+              author: "octocat",
+            },
+          ],
         },
         {
           id: "entry_2",
@@ -39,10 +46,10 @@ describe("public feed serialization", () => {
           category: "maintenance",
           status: "held",
           publishedAt: null,
-          sourcePullRequests: []
-        }
+          sourcePullRequests: [],
+        },
       ],
-      includePullRequestLinks: false
+      includePullRequestLinks: false,
     });
 
     expect(feed.changelog.publicTheme).toBe("light");
@@ -51,13 +58,13 @@ describe("public feed serialization", () => {
       {
         title: "Saved filters",
         summary: "Users can save filter views and return to them later.",
-        category: "feature"
+        category: "feature",
       },
       {
         title: "Login recovery",
         summary: "Expired sessions now recover without interrupting work.",
-        category: "fix"
-      }
+        category: "fix",
+      },
     ]);
     expect(feed.entries[0]?.sourcePullRequests).toBeUndefined();
     expect(feed.groups.feature).toHaveLength(1);
@@ -70,7 +77,7 @@ describe("public feed serialization", () => {
         slug: "acme-app",
         name: "Acme App",
         description: "Latest product updates",
-        publicUrl: "https://cooee.example.com/acme-app"
+        publicUrl: "https://cooee.example.com/acme-app",
       },
       entries: [
         {
@@ -80,7 +87,7 @@ describe("public feed serialization", () => {
           category: "maintenance",
           status: "published",
           publishedAt: "2026-06-05T23:00:00.000Z",
-          sourcePullRequests: []
+          sourcePullRequests: [],
         },
         {
           id: "entry_fix",
@@ -89,7 +96,7 @@ describe("public feed serialization", () => {
           category: "fix",
           status: "published",
           publishedAt: "2026-06-05T23:00:00.000Z",
-          sourcePullRequests: []
+          sourcePullRequests: [],
         },
         {
           id: "entry_feature",
@@ -102,25 +109,25 @@ describe("public feed serialization", () => {
             {
               title: "Maintenance item",
               summary: "Maintenance details.",
-              category: "maintenance"
+              category: "maintenance",
             },
             {
               title: "Feature item",
               summary: "Feature details.",
-              category: "feature"
+              category: "feature",
             },
             {
               title: "Fix item",
               summary: "Fix details.",
-              category: "fix"
+              category: "fix",
             },
             {
               title: "Improvement item",
               summary: "Improvement details.",
-              category: "improvement"
-            }
+              category: "improvement",
+            },
           ],
-          sourcePullRequests: []
+          sourcePullRequests: [],
         },
         {
           id: "entry_improvement",
@@ -129,23 +136,23 @@ describe("public feed serialization", () => {
           category: "improvement",
           status: "published",
           publishedAt: "2026-06-05T23:00:00.000Z",
-          sourcePullRequests: []
-        }
+          sourcePullRequests: [],
+        },
       ],
-      includePullRequestLinks: false
+      includePullRequestLinks: false,
     });
 
     expect(feed.entries.map((entry) => entry.id)).toEqual([
       "entry_feature",
       "entry_improvement",
       "entry_fix",
-      "entry_maintenance"
+      "entry_maintenance",
     ]);
     expect(feed.entries[0]?.items?.map((item) => item.category)).toEqual([
       "feature",
       "improvement",
       "fix",
-      "maintenance"
+      "maintenance",
     ]);
   });
 
@@ -156,10 +163,10 @@ describe("public feed serialization", () => {
         name: "Acme App",
         description: "Latest product updates",
         publicUrl: "https://cooee.example.com/acme-app",
-        publicTheme: "dark"
+        publicTheme: "dark",
       },
       entries: [],
-      includePullRequestLinks: false
+      includePullRequestLinks: false,
     });
 
     expect(feed.changelog.publicTheme).toBe("dark");

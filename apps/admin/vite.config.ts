@@ -14,10 +14,7 @@ export default defineConfig({
       transformIndexHtml(html) {
         return html
           .replaceAll("__COOEE_TITLE__", "Cooee")
-          .replaceAll(
-            "__COOEE_DESCRIPTION__",
-            "Manage your Cooee changelog.",
-          )
+          .replaceAll("__COOEE_DESCRIPTION__", "Manage your Cooee changelog.")
           .replaceAll("__COOEE_ROBOTS__", "noindex, nofollow, noarchive")
           .replaceAll(
             "__COOEE_SOCIAL_IMAGE_ALT__",

@@ -133,6 +133,7 @@ export const memberships = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("owner"),
+    source: text("source").notNull().default("local"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -368,6 +369,11 @@ export const changelogEntries = pgTable(
       .defaultNow(),
   },
   (table) => [
+    index("changelog_entries_public_feed_idx")
+      .on(table.changelogId, table.publishedAt)
+      .where(
+        sql`${table.status} = 'published' and ${table.publishedAt} is not null`,
+      ),
     uniqueIndex("changelog_entries_article_slug_idx")
       .on(table.changelogId, table.articleSlug)
       .where(sql`${table.articleSlug} is not null`),

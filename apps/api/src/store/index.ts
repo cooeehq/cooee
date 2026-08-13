@@ -3,7 +3,9 @@ import { PostgresStore } from "./postgres";
 import type { Store } from "./types";
 import { isProductionRuntime } from "../config";
 
-export function createStore(env: Record<string, string | undefined> = Bun.env): Store {
+export function createStore(
+  env: Record<string, string | undefined> = Bun.env,
+): Store {
   if (env.DATABASE_URL) {
     return PostgresStore.fromDatabaseUrl(env.DATABASE_URL);
   }

@@ -147,14 +147,12 @@ describe("historical changelog generation", () => {
     ]);
   });
 
-  test("passes workspace writer style and repository visibility to the summarizer", async () => {
+  test("passes workspace writer style and public repository visibility to the summarizer", async () => {
     const store = InMemoryStore.seeded();
     const repository = store.repositories.find(
       (item) => item.id === "repo_acme",
     );
-    if (repository) {
-      repository.private = true;
-    }
+    if (repository) repository.private = false;
     store.workspaceSettings.set("ws_acme", {
       aiAudience: "technical-users",
       aiPersonality: "technical",
@@ -193,7 +191,7 @@ describe("historical changelog generation", () => {
     expect(seenOptions).toMatchObject({
       aiAudience: "technical-users",
       aiPersonality: "technical",
-      repositoryVisibility: "private",
+      repositoryVisibility: "public",
     });
   });
 
@@ -980,7 +978,7 @@ describe("historical changelog generation", () => {
     ).toEqual([72, 73]);
   });
 
-  test("keeps mixed held PRs out of publication result bookkeeping", async () => {
+  test("holds every private-repository PR before AI publication", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [];
     store.repositories[0]!.private = true;
@@ -998,34 +996,13 @@ describe("historical changelog generation", () => {
         mergedAt: "2026-06-03T05:15:00.000Z",
       }),
     );
+    let classifyCalls = 0;
     let summarizeCalls = 0;
     const gatedSummarizer: AiSummarizer = {
-      classifyPublication: async () => ({
-        decisions: [
-          {
-            pullRequestNumber: 70,
-            decision: "hold",
-            reason: "Authentication internals require review.",
-            matchedFeedbackIds: [],
-            privateRepositoryGuardrailTopics: ["authentication"],
-            directUxOrDxImpact: false,
-            shouldTellUsers: false,
-            knowledgeBenefitsUxOrDx: false,
-            confidence: 0.99,
-          },
-          {
-            pullRequestNumber: 71,
-            decision: "publish",
-            reason: "Adds a directly visible filtering control.",
-            matchedFeedbackIds: [],
-            privateRepositoryGuardrailTopics: [],
-            directUxOrDxImpact: true,
-            shouldTellUsers: true,
-            knowledgeBenefitsUxOrDx: true,
-            confidence: 0.98,
-          },
-        ],
-      }),
+      classifyPublication: async () => {
+        classifyCalls += 1;
+        throw new Error("private repository PRs must not reach the classifier");
+      },
       summarize: async () => {
         summarizeCalls += 1;
         return {
@@ -1046,12 +1023,12 @@ describe("historical changelog generation", () => {
       windowEnd: "2026-06-03T23:00:00.000Z",
     });
 
-    expect(summarizeCalls).toBe(1);
-    expect(result.status).toBe("published");
-    expect(result.entry?.status).toBe("published");
-    expect(result.entry?.sourcePullRequests[0]?.number).toBe(71);
+    expect(classifyCalls).toBe(0);
+    expect(summarizeCalls).toBe(0);
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("private-repository-review");
     expect(result.entries?.map((entry) => entry.status)).toEqual([
-      "published",
+      "held",
       "held",
     ]);
   });
@@ -1103,11 +1080,11 @@ describe("historical changelog generation", () => {
 
     expect(summarizeCalled).toBe(false);
     expect(result.status).toBe("held");
-    expect(result.holdReason).toBe("publication-eligibility-review");
+    expect(result.holdReason).toBe("private-repository-review");
     expect(result.entry?.sourcePullRequests[0]?.number).toBe(67);
   });
 
-  test("publishes direct private-repository UX changes with clean guardrails", async () => {
+  test("holds direct private-repository UX changes for human review", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [];
     store.repositories[0]!.private = true;
@@ -1119,6 +1096,7 @@ describe("historical changelog generation", () => {
         mergedAt: "2026-06-03T04:15:00.000Z",
       }),
     );
+    let summarizeCalled = false;
     const gatedSummarizer: AiSummarizer = {
       classifyPublication: async () => ({
         decisions: [
@@ -1135,21 +1113,10 @@ describe("historical changelog generation", () => {
           },
         ],
       }),
-      summarize: async () => ({
-        title: "Saved shipment filters",
-        summary: "Shipment filters can now be saved for later use.",
-        category: "feature",
-        confidence: 0.97,
-        sensitive: false,
-        items: [
-          {
-            title: "Saved shipment filters",
-            summary: "Shipment filters can now be saved for later use.",
-            category: "feature",
-            sourcePullRequestNumbers: [68],
-          },
-        ],
-      }),
+      summarize: async () => {
+        summarizeCalled = true;
+        throw new Error("private repository PRs must not auto-publish");
+      },
     };
 
     const result = await generateChangelogForWindow({
@@ -1160,7 +1127,9 @@ describe("historical changelog generation", () => {
       windowEnd: "2026-06-03T23:00:00.000Z",
     });
 
-    expect(result.status).toBe("published");
+    expect(summarizeCalled).toBe(false);
+    expect(result.status).toBe("held");
+    expect(result.holdReason).toBe("private-repository-review");
     expect(result.entry?.sourcePullRequests[0]?.number).toBe(68);
   });
 
@@ -1208,7 +1177,7 @@ describe("historical changelog generation", () => {
     });
 
     expect(result.status).toBe("held");
-    expect(result.holdReason).toBe("publication-eligibility-review");
+    expect(result.holdReason).toBe("private-repository-review");
     expect(result.entry?.sourcePullRequests[0]?.number).toBe(69);
   });
 

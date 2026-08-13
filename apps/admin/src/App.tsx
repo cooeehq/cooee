@@ -12355,6 +12355,15 @@ function formatHoldReasonDetails(
     };
   }
 
+  if (reason === "private-repository-review") {
+    return {
+      title: "Private repository review",
+      detail:
+        "Cooee does not automatically send or publish private-repository changes. Review the source PR before creating public copy.",
+      pullRequestReason: "Private repository review",
+    };
+  }
+
   const title = value
     .split(/[_\s-]+/)
     .filter(Boolean)

@@ -1,5 +1,6 @@
 import {
   containsPersonallyIdentifiableContent,
+  containsSecretContent,
   sanitizePullRequest,
 } from "./privacy";
 import {
@@ -247,7 +248,10 @@ export function validateGeneratedEntry(
     ...items.flatMap((item) => [item.title, item.summary]),
   ].join("\n");
 
-  if (containsPersonallyIdentifiableContent(outputText)) {
+  if (
+    containsPersonallyIdentifiableContent(outputText) ||
+    containsSecretContent(outputText)
+  ) {
     return { ok: false, reason: "sensitive-output" };
   }
 

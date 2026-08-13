@@ -132,7 +132,10 @@ describe("launch security boundaries", () => {
     const app = createApp({
       auth: {
         ...authenticatedAs("user_teammate"),
-        listAccessibleGitHubInstallationIds: async () => [12345],
+        listAccessibleGitHubResources: async () => ({
+          installationIds: [12345],
+          repositoryFullNames: ["acme/app"],
+        }),
       },
       env: { NODE_ENV: "production" },
       store,
@@ -160,6 +163,130 @@ describe("launch security boundaries", () => {
     );
   });
 
+  test("does not grant a multi-installation workspace from partial GitHub access", async () => {
+    const store = InMemoryStore.seeded();
+    store.githubInstallations.push({
+      id: "ghi_private",
+      workspaceId: "ws_acme",
+      installationId: 67890,
+      accountLogin: "private-org",
+      accountType: "Organization",
+      suspendedAt: null,
+    });
+    const app = createApp({
+      auth: {
+        ...authenticatedAs("user_partial"),
+        listAccessibleGitHubResources: async () => ({
+          installationIds: [12345],
+          repositoryFullNames: ["acme/app"],
+        }),
+      },
+      env: { NODE_ENV: "production" },
+      store,
+    });
+
+    const response = await app.fetch(
+      new Request(
+        "https://cooee.test/api/admin/github/app?workspaceId=ws_acme",
+      ),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await store.listWorkspaceMemberships("user_partial")).toEqual([]);
+  });
+
+  test("does not grant a workspace when one repository is outside GitHub access", async () => {
+    const store = InMemoryStore.seeded();
+    store.repositories.push({
+      id: "repo_private",
+      workspaceId: "ws_acme",
+      githubInstallationId: "ghi_acme",
+      owner: "acme",
+      name: "private-app",
+      fullName: "acme/private-app",
+      private: true,
+    });
+    const app = createApp({
+      auth: {
+        ...authenticatedAs("user_partial_repo"),
+        listAccessibleGitHubResources: async () => ({
+          installationIds: [12345],
+          repositoryFullNames: ["acme/app"],
+        }),
+      },
+      env: { NODE_ENV: "production" },
+      store,
+    });
+
+    const response = await app.fetch(
+      new Request(
+        "https://cooee.test/api/admin/github/app?workspaceId=ws_acme",
+      ),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await store.listWorkspaceMemberships("user_partial_repo")).toEqual(
+      [],
+    );
+  });
+
+  test("revokes GitHub-derived access when the upstream grant disappears", async () => {
+    const store = InMemoryStore.seeded();
+    let githubAccess = {
+      installationIds: [12345],
+      repositoryFullNames: ["acme/app"],
+    };
+    const app = createApp({
+      auth: {
+        ...authenticatedAs("user_revoked"),
+        listAccessibleGitHubResources: async () => githubAccess,
+      },
+      env: { NODE_ENV: "production" },
+      store,
+    });
+
+    const initial = await app.fetch(
+      new Request("https://cooee.test/api/admin/github/app"),
+    );
+    expect(initial.status).toBe(200);
+
+    githubAccess = { installationIds: [], repositoryFullNames: [] };
+    const revoked = await app.fetch(
+      new Request(
+        "https://cooee.test/api/admin/github/app?workspaceId=ws_acme",
+      ),
+    );
+
+    expect(revoked.status).toBe(403);
+  });
+
+  test("does not revalidate owner memberships against GitHub installations", async () => {
+    const store = InMemoryStore.seeded();
+    store.memberships.push({
+      id: "membership_owner",
+      workspaceId: "ws_acme",
+      userId: "user_owner",
+      role: "owner",
+    });
+    const app = createApp({
+      auth: {
+        ...authenticatedAs(),
+        listAccessibleGitHubResources: async () => ({
+          installationIds: [],
+          repositoryFullNames: [],
+        }),
+      },
+      env: { NODE_ENV: "production" },
+      store,
+    });
+
+    const response = await app.fetch(
+      new Request("https://cooee.test/api/admin/settings"),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("prefers the connected workspace when the GitHub user already has an empty workspace", async () => {
     const store = InMemoryStore.seeded();
     store.workspaces.push({
@@ -178,7 +305,10 @@ describe("launch security boundaries", () => {
     const app = createApp({
       auth: {
         ...authenticatedAs("user_teammate"),
-        listAccessibleGitHubInstallationIds: async () => [12345],
+        listAccessibleGitHubResources: async () => ({
+          installationIds: [12345],
+          repositoryFullNames: ["acme/app"],
+        }),
       },
       env: { NODE_ENV: "production" },
       store,
@@ -206,7 +336,7 @@ describe("launch security boundaries", () => {
     const app = createApp({
       auth: {
         ...authenticatedAs("user_teammate"),
-        listAccessibleGitHubInstallationIds: async () => null,
+        listAccessibleGitHubResources: async () => null,
       },
       env: { NODE_ENV: "production" },
       store,
@@ -221,12 +351,37 @@ describe("launch security boundaries", () => {
     expect(await store.listWorkspaceMemberships("user_teammate")).toEqual([]);
   });
 
+  test("preserves explicit local memberships when GitHub verification is unavailable", async () => {
+    const store = InMemoryStore.seeded();
+    store.memberships.push({
+      id: "membership_local_member",
+      workspaceId: "ws_acme",
+      userId: "user_local_member",
+      role: "member",
+      source: "local",
+    });
+    const app = createApp({
+      auth: {
+        ...authenticatedAs("user_local_member"),
+        listAccessibleGitHubResources: async () => null,
+      },
+      env: { NODE_ENV: "production" },
+      store,
+    });
+
+    const response = await app.fetch(
+      new Request("https://cooee.test/api/admin/settings"),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("allows a local OAuth App login to bootstrap a development workspace", async () => {
     const store = new InMemoryStore();
     const app = createApp({
       auth: {
         ...authenticatedAs("user_local"),
-        listAccessibleGitHubInstallationIds: async () => null,
+        listAccessibleGitHubResources: async () => null,
       },
       env: { NODE_ENV: "development", COOEE_RUNTIME_MODE: "hosted" },
       store,

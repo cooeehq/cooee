@@ -47,7 +47,10 @@ export async function encryptStoredOAuthTokens({
       let tokensEncrypted = 0;
 
       for (const account of accounts) {
-        const accessToken = await encryptOAuthToken(account.access_token, secret);
+        const accessToken = await encryptOAuthToken(
+          account.access_token,
+          secret,
+        );
         const refreshToken = await encryptOAuthToken(
           account.refresh_token,
           secret,

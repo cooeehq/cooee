@@ -258,8 +258,35 @@ async function generateChangelogForWindowUnlocked(input: {
     resolveAiWritingOptions({ changelog, store: input.store }),
   ]);
 
+  const privacyHeldEntries = await createHeldPullRequestEntries({
+    changelogId: changelog.id,
+    heldPullRequests: reviewableHeldPullRequests,
+    generationKey: input.generationKey,
+    store: input.store,
+    windowEnd,
+  });
+
+  if (writerOptions.repositoryVisibility === "private") {
+    const privateRepositoryEntries = await createGeneratedHoldEntries({
+      changelogId: changelog.id,
+      holdReason: "private-repository-review",
+      pullRequests: filtered.publishable,
+      generationKey: input.generationKey,
+      store: input.store,
+      windowEndedAt: windowEnd,
+    });
+    const entries = [...privacyHeldEntries, ...privateRepositoryEntries];
+    await input.store.markGenerated(changelog.id, windowEnd);
+    return {
+      status: "held",
+      entry: entries[0],
+      entries,
+      holdReason: "private-repository-review",
+    };
+  }
+
   let publicationPullRequests = filtered.publishable;
-  let publicationHeldEntries: StoredEntry[] = [];
+  let publicationHeldEntries: StoredEntry[] = privacyHeldEntries;
 
   if (input.summarizer.classifyPublication) {
     const classificationResult = await input.summarizer.classifyPublication(

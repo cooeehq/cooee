@@ -21,6 +21,7 @@ import type {
   GitHubRepository,
   MarkEntryNotRelevantInput,
   MergeGenerationJob,
+  ListPublicEntriesInput,
   NewEntryInput,
   Store,
   StoredChangelog,
@@ -334,7 +335,7 @@ export class PostgresStore implements Store {
     userId: string,
   ): Promise<WorkspaceMembership[]> {
     const rows = await this.sql`
-      select id, workspace_id, user_id, role
+      select id, workspace_id, user_id, role, source
       from memberships
       where user_id = ${userId}
       order by created_at asc
@@ -348,7 +349,7 @@ export class PostgresStore implements Store {
     return this.sql.begin(async (sql) => {
       await sql`select pg_advisory_xact_lock(hashtext(${input.userId}))`;
       const existing = await sql`
-        select id, workspace_id, user_id, role
+        select id, workspace_id, user_id, role, source
         from memberships
         where user_id = ${input.userId}
         order by created_at asc
@@ -367,9 +368,11 @@ export class PostgresStore implements Store {
         )
       `;
       const rows = await sql`
-        insert into memberships (id, workspace_id, user_id, role)
-        values (${crypto.randomUUID()}, ${workspaceId}, ${input.userId}, 'owner')
-        returning id, workspace_id, user_id, role
+        insert into memberships (id, workspace_id, user_id, role, source)
+        values (
+          ${crypto.randomUUID()}, ${workspaceId}, ${input.userId}, 'owner', 'local'
+        )
+        returning id, workspace_id, user_id, role, source
       `;
       return mapWorkspaceMembership(rows[0]);
     });
@@ -378,12 +381,16 @@ export class PostgresStore implements Store {
   async ensureGitHubInstallationMemberships(
     input: EnsureGitHubInstallationMembershipsInput,
   ): Promise<WorkspaceMembership[]> {
-    if (input.installationIds.length === 0) return [];
-
     return this.sql.begin(async (sql) => {
       await sql`select pg_advisory_xact_lock(hashtext(${input.userId}))`;
 
-      for (const installationId of new Set(input.installationIds)) {
+      const accessibleInstallationIds = new Set(input.installationIds);
+      const accessibleRepositoryFullNames = new Set(
+        input.repositoryFullNames.map((fullName) => fullName.toLowerCase()),
+      );
+      const candidateWorkspaceIds = new Set<string>();
+
+      for (const installationId of accessibleInstallationIds) {
         const installations = await sql`
           select workspace_id
           from github_installations
@@ -393,20 +400,70 @@ export class PostgresStore implements Store {
         const workspaceId = installations[0]?.workspace_id;
         if (!workspaceId) continue;
 
+        candidateWorkspaceIds.add(workspaceId);
+      }
+
+      const authorizedWorkspaceIds = new Set<string>();
+      for (const workspaceId of candidateWorkspaceIds) {
+        const installations = await sql`
+          select installation_id
+          from github_installations
+          where workspace_id = ${workspaceId}
+        `;
+        const repositories = await sql`
+          select full_name
+          from repositories
+          where workspace_id = ${workspaceId}
+        `;
+        if (
+          installations.length > 0 &&
+          installations.every((installation) =>
+            accessibleInstallationIds.has(installation.installation_id),
+          ) &&
+          repositories.every((repository) =>
+            accessibleRepositoryFullNames.has(
+              String(repository.full_name).toLowerCase(),
+            ),
+          )
+        ) {
+          authorizedWorkspaceIds.add(workspaceId);
+        }
+      }
+
+      for (const workspaceId of authorizedWorkspaceIds) {
         await sql`
-          insert into memberships (id, workspace_id, user_id, role)
+          insert into memberships (id, workspace_id, user_id, role, source)
           values (
             ${crypto.randomUUID()},
             ${workspaceId},
             ${input.userId},
-            'member'
+            'member',
+            'github'
           )
           on conflict (workspace_id, user_id) do nothing
         `;
       }
 
+      const existingMemberships = await sql`
+        select id, workspace_id, user_id, role, source
+        from memberships
+        where user_id = ${input.userId}
+        order by created_at asc
+      `;
+      for (const membership of existingMemberships) {
+        if (
+          membership.source === "github" &&
+          !authorizedWorkspaceIds.has(membership.workspace_id)
+        ) {
+          await sql`
+            delete from memberships
+            where id = ${membership.id} and source = 'github'
+          `;
+        }
+      }
+
       const rows = await sql`
-        select id, workspace_id, user_id, role
+        select id, workspace_id, user_id, role, source
         from memberships
         where user_id = ${input.userId}
         order by created_at asc
@@ -1026,6 +1083,69 @@ export class PostgresStore implements Store {
     `;
 
     return rows.map(mapEntry);
+  }
+
+  async listPublicEntries(
+    input: ListPublicEntriesInput,
+  ): Promise<StoredEntry[]> {
+    const publishedAtOrAfter = input.publishedAtOrAfter
+      ? new Date(input.publishedAtOrAfter)
+      : null;
+    const publishedBefore = input.publishedBefore
+      ? new Date(input.publishedBefore)
+      : null;
+    const publishedAtOrBefore = input.publishedAtOrBefore
+      ? new Date(input.publishedAtOrBefore)
+      : null;
+    const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 501);
+    const rows = await this.sql`
+      select *
+      from changelog_entries
+      where changelog_id = ${input.changelogId}
+        and status = 'published'
+        and published_at is not null
+        and (${publishedAtOrAfter}::timestamptz is null or published_at >= ${publishedAtOrAfter})
+        and (${publishedBefore}::timestamptz is null or published_at < ${publishedBefore})
+        and (${publishedAtOrBefore}::timestamptz is null or published_at <= ${publishedAtOrBefore})
+      order by published_at desc, created_at desc
+      limit ${limit}
+    `;
+
+    return rows.map(mapEntry);
+  }
+
+  async hasPublicEntryBefore(
+    changelogId: string,
+    publishedBefore: string,
+  ): Promise<boolean> {
+    const rows = await this.sql`
+      select 1
+      from changelog_entries
+      where changelog_id = ${changelogId}
+        and status = 'published'
+        and published_at < ${new Date(publishedBefore)}
+      limit 1
+    `;
+    return rows.length > 0;
+  }
+
+  async getPublishedArticleBySlug(
+    changelogId: string,
+    articleSlug: string,
+  ): Promise<StoredEntry | null> {
+    const rows = await this.sql`
+      select *
+      from changelog_entries
+      where changelog_id = ${changelogId}
+        and status = 'published'
+        and article_slug = ${articleSlug}
+        and article_markdown is not null
+        and btrim(article_markdown) <> ''
+        and published_at is not null
+        and published_at <= now()
+      limit 1
+    `;
+    return rows[0] ? mapEntry(rows[0]) : null;
   }
 
   async listPullRequestsForWindow(
@@ -1727,6 +1847,7 @@ function mapWorkspaceMembership(row: postgres.Row): WorkspaceMembership {
     workspaceId: row.workspace_id,
     userId: row.user_id,
     role: row.role === "owner" ? "owner" : "member",
+    source: row.source === "github" ? "github" : "local",
   };
 }
 

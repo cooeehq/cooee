@@ -26,6 +26,7 @@ export type WorkspaceMembership = {
   workspaceId: string;
   userId: string;
   role: "owner" | "member";
+  source?: "local" | "github";
 };
 
 export type EnsureUserWorkspaceInput = {
@@ -38,6 +39,7 @@ export type EnsureUserWorkspaceInput = {
 export type EnsureGitHubInstallationMembershipsInput = {
   userId: string;
   installationIds: number[];
+  repositoryFullNames: string[];
 };
 
 export type BillingSubscription = {
@@ -260,6 +262,14 @@ export type StoredEntry = ChangelogEntry & {
   imageGenerationStatus?: "pending" | "generating" | "failed" | null;
   imageGenerationError?: string | null;
   imageGenerationAttemptCount?: number;
+};
+
+export type ListPublicEntriesInput = {
+  changelogId: string;
+  publishedAtOrAfter?: string;
+  publishedBefore?: string;
+  publishedAtOrBefore?: string;
+  limit: number;
 };
 
 export type PostImageGenerationJob = {
@@ -512,6 +522,15 @@ export type Store = {
     repositoryFullName: string,
   ): Promise<StoredChangelog | null>;
   listEntries(changelogId: string): Promise<StoredEntry[]>;
+  listPublicEntries(input: ListPublicEntriesInput): Promise<StoredEntry[]>;
+  hasPublicEntryBefore(
+    changelogId: string,
+    publishedBefore: string,
+  ): Promise<boolean>;
+  getPublishedArticleBySlug(
+    changelogId: string,
+    articleSlug: string,
+  ): Promise<StoredEntry | null>;
   listPullRequestsForWindow(
     changelog: StoredChangelog,
     windowEnd: string,
