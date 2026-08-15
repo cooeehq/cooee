@@ -271,7 +271,7 @@ export const changelogs = pgTable(
         mode: "brand-card",
         accentColor: "#10B981",
         titleOverlay: true,
-        backgroundPattern: "space",
+        backgroundPattern: "glass-rainbow",
         referenceAssetKey: null,
         illustrationStyle: "soft-3d",
         defaultPrompt: "",

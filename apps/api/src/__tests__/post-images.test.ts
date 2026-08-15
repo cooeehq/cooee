@@ -70,14 +70,14 @@ describe("post image orchestrator", () => {
       ...common,
       settings: {
         ...defaultPostImageSettings,
-        backgroundPattern: "road",
+        backgroundPattern: "bright-rain",
       },
     });
     const withoutTitle = await orchestrator.render({
       ...common,
       settings: {
         ...defaultPostImageSettings,
-        backgroundPattern: "road",
+        backgroundPattern: "bright-rain",
         titleOverlay: false,
       },
     });
@@ -146,6 +146,27 @@ describe("post image orchestrator", () => {
     });
     expect(calls[0].startsWith("edit:")).toBe(true);
     expect(calls[1].startsWith("generate:")).toBe(true);
+  });
+
+  test("keeps generated artwork colours unchanged when no title is added", async () => {
+    const image = await sourceImage("#406080");
+    const imageUrl = `data:image/png;base64,${Buffer.from(image).toString("base64")}`;
+    const orchestrator = new PostImageOrchestrator({
+      generatePostImage: async () => ({ imageUrl }),
+    });
+    const output = await orchestrator.render({
+      category: "feature",
+      title: "Untinted artwork",
+      summary: "The source colour should survive normalization.",
+      settings: {
+        ...defaultPostImageSettings,
+        mode: "illustration",
+        titleOverlay: false,
+      },
+    });
+    const pixel = await sharp(output.body).raw().toBuffer();
+
+    expect(Array.from(pixel.subarray(0, 3))).toEqual([64, 95, 128]);
   });
 
   test("orders saved direction, post context, accent, and one-off direction safely", () => {

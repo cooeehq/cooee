@@ -8206,34 +8206,36 @@ function EditPublishedEntrySheet({
                     type="file"
                   />
                 </label>
-                <Button
-                  className="h-8 gap-1.5 px-2.5 text-xs"
-                  disabled={
-                    isGeneratingPostImage ||
-                    isUploadingPostImage ||
-                    isRemovingPostImage ||
-                    isPostImageTextMissing ||
-                    isPostImageGenerationLocked
-                  }
-                  onClick={onGeneratePostImage}
-                  type="button"
-                  variant="outline"
-                >
-                  {isPostImageGenerationLocked ? (
-                    <LockIcon data-icon="inline-start" aria-hidden />
-                  ) : (
-                    <ImageIcon data-icon="inline-start" aria-hidden />
-                  )}
-                  {isPostImageGenerationLocked
-                    ? postImageGenerationAvailabilityStatus === "checking"
-                      ? "Checking availability"
-                      : "Generation unavailable"
-                    : isGeneratingPostImage
-                      ? "Generating"
-                      : imageUrl
-                        ? "Regenerate image"
-                        : "Generate image"}
-                </Button>
+                {postImageAiUiEnabled ? (
+                  <Button
+                    className="h-8 gap-1.5 px-2.5 text-xs"
+                    disabled={
+                      isGeneratingPostImage ||
+                      isUploadingPostImage ||
+                      isRemovingPostImage ||
+                      isPostImageTextMissing ||
+                      isPostImageGenerationLocked
+                    }
+                    onClick={onGeneratePostImage}
+                    type="button"
+                    variant="outline"
+                  >
+                    {isPostImageGenerationLocked ? (
+                      <LockIcon data-icon="inline-start" aria-hidden />
+                    ) : (
+                      <ImageIcon data-icon="inline-start" aria-hidden />
+                    )}
+                    {isPostImageGenerationLocked
+                      ? postImageGenerationAvailabilityStatus === "checking"
+                        ? "Checking availability"
+                        : "Generation unavailable"
+                      : isGeneratingPostImage
+                        ? "Generating"
+                        : imageUrl
+                          ? "Regenerate image"
+                          : "Generate image"}
+                  </Button>
+                ) : null}
                 {imageUrl ? (
                   <Button
                     className="h-8 gap-1.5 px-2.5 text-xs"
@@ -8271,7 +8273,7 @@ function EditPublishedEntrySheet({
                   : imageGenerationStatus === "generating"
                     ? "Generating the automatic image now."
                     : imageGenerationStatus === "failed"
-                      ? "Automatic image generation failed. Use Generate image to retry."
+                      ? "Automatic image generation failed. Upload an image to replace it."
                       : "Add a cover image for this update."}
               </p>
               {imageGenerationStatus === "failed" && imageGenerationError ? (
@@ -8279,7 +8281,9 @@ function EditPublishedEntrySheet({
               ) : null}
             </div>
           )}
-          {canGeneratePostImage && imageMode !== "brand-card" ? (
+          {postImageAiUiEnabled &&
+          canGeneratePostImage &&
+          imageMode !== "brand-card" ? (
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">
                 Image instruction (optional)
@@ -8376,7 +8380,7 @@ function PostImageEditorPreview({ src }: { src: string }) {
 
   return (
     <img
-      alt="Generated post image preview"
+      alt="Post image preview"
       className="aspect-video w-full rounded-md border object-cover"
       onError={() => setFailedSrc(src)}
       src={src}
@@ -9635,19 +9639,20 @@ const settingsNavigationItems = [
   { id: "settings-privacy", label: "Privacy" },
 ];
 
+// The AI image implementation remains available for a future reintroduction,
+// but the product currently exposes only local brand cards and manual uploads.
+const postImageAiUiEnabled = false;
+
 const postImageBackgroundOptions: Array<{
   label: string;
   value: PostImageSettings["backgroundPattern"];
 }> = [
-  { value: "space", label: "Space" },
-  { value: "sky", label: "Sky" },
-  { value: "cyberpunk", label: "Cyberpunk" },
-  { value: "server-room", label: "Server room" },
-  { value: "road", label: "Road" },
-  { value: "soft-gradient", label: "Soft gradient" },
-  { value: "mesh-gradient", label: "Mesh gradient" },
-  { value: "soft-blobs", label: "Soft blobs" },
-  { value: "solid", label: "Solid brand colour" },
+  { value: "autumnal-peach", label: "Autumnal Peach" },
+  { value: "bright-rain", label: "Bright Rain" },
+  { value: "glass-rainbow", label: "Glass Rainbow" },
+  { value: "red-distortion", label: "Red Distortion" },
+  { value: "glaze", label: "Glaze" },
+  { value: "solid", label: "Solid colour" },
 ];
 
 const settingsFieldLabelClassName =
@@ -10643,135 +10648,77 @@ function SettingsView({
                 checked={settings.postImageSettings.enabled}
                 label="Create images for new Post updates"
                 onCheckedChange={(enabled) =>
-                  updatePostImageSettings({ enabled })
-                }
-              />
-            </SettingsRow>
-
-            <SettingsRow
-              description="Brand cards are instant and credit-free. Reference and Illustration use AI credits."
-              title="Image mode"
-            >
-              <RadioGroup
-                className="grid gap-3 md:grid-cols-3"
-                onValueChange={(mode) =>
                   updatePostImageSettings({
-                    mode: mode as PostImageSettings["mode"],
+                    enabled,
+                    mode: "brand-card",
+                    titleOverlay: true,
                   })
                 }
-                value={settings.postImageSettings.mode}
-              >
-                {[
-                  {
-                    value: "brand-card",
-                    label: "Brand card",
-                    detail: "Pattern + exact accent",
-                  },
-                  {
-                    value: "reference",
-                    label: "Reference style",
-                    detail: "Inspired by a master image",
-                  },
-                  {
-                    value: "illustration",
-                    label: "Illustration",
-                    detail: "Post-specific artwork",
-                  },
-                ].map((mode) => (
-                  <label
-                    className={cn(
-                      "grid cursor-pointer gap-3 rounded-2xl border p-3 transition-colors",
-                      settings.postImageSettings.mode === mode.value
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-border bg-background hover:bg-muted/50",
-                    )}
-                    key={mode.value}
-                  >
-                    <PostImageModePreview mode={mode.value} />
-                    <span className="flex items-start gap-2">
-                      <RadioGroupItem
-                        aria-label={mode.label}
-                        className="mt-0.5"
-                        value={mode.value}
-                      />
-                      <span>
-                        <span className="block text-sm font-medium">
-                          {mode.label}
-                        </span>
-                        <span
-                          className={cn(
-                            "mt-0.5 block text-xs",
-                            settings.postImageSettings.mode === mode.value
-                              ? "text-background/70"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {mode.detail}
-                        </span>
-                      </span>
-                    </span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </SettingsRow>
-
-            <SettingsRow
-              description="Colours solid backgrounds and adds a restrained tint and highlight to artwork."
-              title="Accent colour"
-            >
-              <AccentColorControl
-                onChange={(accentColor) =>
-                  updatePostImageSettings({ accentColor })
-                }
-                value={settings.postImageSettings.accentColor}
               />
             </SettingsRow>
 
-            <SettingsRow
-              description="Adds the post title with contrast adapted to the selected background."
-              title="Title overlay"
-            >
-              <SettingsSwitch
-                checked={settings.postImageSettings.titleOverlay}
-                label="Show the post title on generated images"
-                onCheckedChange={(titleOverlay) =>
-                  updatePostImageSettings({ titleOverlay })
-                }
-              />
-            </SettingsRow>
-
-            {settings.postImageSettings.mode === "brand-card" ? (
+            {postImageAiUiEnabled ? (
               <SettingsRow
-                description="Choose an understated greyscale scene or a simple graphic background."
-                title="Background"
+                description="Brand cards are instant and credit-free. Reference and Illustration use AI credits."
+                title="Image mode"
               >
                 <RadioGroup
-                  className="grid gap-3 sm:grid-cols-2"
-                  onValueChange={(backgroundPattern) =>
+                  className="grid gap-3 md:grid-cols-3"
+                  onValueChange={(mode) =>
                     updatePostImageSettings({
-                      backgroundPattern:
-                        backgroundPattern as PostImageSettings["backgroundPattern"],
+                      mode: mode as PostImageSettings["mode"],
                     })
                   }
-                  value={settings.postImageSettings.backgroundPattern}
+                  value={settings.postImageSettings.mode}
                 >
-                  {postImageBackgroundOptions.map(({ value, label }) => (
+                  {[
+                    {
+                      value: "brand-card",
+                      label: "Brand card",
+                      detail: "Pattern + exact accent",
+                    },
+                    {
+                      value: "reference",
+                      label: "Reference style",
+                      detail: "Inspired by a master image",
+                    },
+                    {
+                      value: "illustration",
+                      label: "Illustration",
+                      detail: "Post-specific artwork",
+                    },
+                  ].map((mode) => (
                     <label
                       className={cn(
-                        "grid cursor-pointer gap-2 rounded-2xl border p-2.5",
-                        settings.postImageSettings.backgroundPattern === value
-                          ? "border-foreground"
-                          : "border-border",
+                        "grid cursor-pointer gap-3 rounded-2xl border p-3 transition-colors",
+                        settings.postImageSettings.mode === mode.value
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border bg-background hover:bg-muted/50",
                       )}
-                      key={value}
+                      key={mode.value}
                     >
-                      <PostImagePatternPreview
-                        accent={settings.postImageSettings.accentColor}
-                        pattern={value}
-                      />
-                      <span className="flex items-center gap-2 px-1 pb-0.5 text-sm font-medium">
-                        <RadioGroupItem aria-label={label} value={value} />
-                        {label}
+                      <PostImageModePreview mode={mode.value} />
+                      <span className="flex items-start gap-2">
+                        <RadioGroupItem
+                          aria-label={mode.label}
+                          className="mt-0.5"
+                          value={mode.value}
+                        />
+                        <span>
+                          <span className="block text-sm font-medium">
+                            {mode.label}
+                          </span>
+                          <span
+                            className={cn(
+                              "mt-0.5 block text-xs",
+                              settings.postImageSettings.mode === mode.value
+                                ? "text-background/70"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {mode.detail}
+                          </span>
+                        </span>
                       </span>
                     </label>
                   ))}
@@ -10779,7 +10726,65 @@ function SettingsView({
               </SettingsRow>
             ) : null}
 
-            {settings.postImageSettings.mode === "reference" ? (
+            {settings.postImageSettings.backgroundPattern === "solid" ? (
+              <SettingsRow
+                description="Choose the background colour for solid cards."
+                title="Background colour"
+              >
+                <AccentColorControl
+                  onChange={(accentColor) =>
+                    updatePostImageSettings({
+                      accentColor,
+                      mode: "brand-card",
+                      titleOverlay: true,
+                    })
+                  }
+                  value={settings.postImageSettings.accentColor}
+                />
+              </SettingsRow>
+            ) : null}
+
+            <SettingsRow
+              description="Choose a finished Raycast wallpaper or a custom solid colour. The post title is added automatically."
+              title="Style"
+            >
+              <RadioGroup
+                className="grid gap-3 sm:grid-cols-2"
+                onValueChange={(backgroundPattern) =>
+                  updatePostImageSettings({
+                    mode: "brand-card",
+                    titleOverlay: true,
+                    backgroundPattern:
+                      backgroundPattern as PostImageSettings["backgroundPattern"],
+                  })
+                }
+                value={settings.postImageSettings.backgroundPattern}
+              >
+                {postImageBackgroundOptions.map(({ value, label }) => (
+                  <label
+                    className={cn(
+                      "grid cursor-pointer gap-2 rounded-2xl border p-2.5",
+                      settings.postImageSettings.backgroundPattern === value
+                        ? "border-foreground"
+                        : "border-border",
+                    )}
+                    key={value}
+                  >
+                    <PostImagePatternPreview
+                      accent={settings.postImageSettings.accentColor}
+                      pattern={value}
+                    />
+                    <span className="flex items-center gap-2 px-1 pb-0.5 text-sm font-medium">
+                      <RadioGroupItem aria-label={label} value={value} />
+                      {label}
+                    </span>
+                  </label>
+                ))}
+              </RadioGroup>
+            </SettingsRow>
+
+            {postImageAiUiEnabled &&
+            settings.postImageSettings.mode === "reference" ? (
               <>
                 <SettingsRow
                   description="PNG, JPEG, or WebP up to 10MB. Cooee strips metadata and uses its visual language, not its layout."
@@ -10832,7 +10837,8 @@ function SettingsView({
               </>
             ) : null}
 
-            {settings.postImageSettings.mode === "illustration" ? (
+            {postImageAiUiEnabled &&
+            settings.postImageSettings.mode === "illustration" ? (
               <>
                 <SettingsRow
                   description="Pick a repeatable visual treatment, or make the saved direction the primary style."
@@ -11326,56 +11332,22 @@ function PostImagePatternPreview({
   accent: string;
   pattern: PostImageSettings["backgroundPattern"];
 }) {
-  const environmental = [
-    "space",
-    "sky",
-    "cyberpunk",
-    "server-room",
-    "road",
-  ].includes(pattern);
-  const dark = pattern === "space" || pattern === "cyberpunk";
-  const solid = pattern === "solid";
+  if (pattern === "solid") {
+    return (
+      <div
+        aria-hidden
+        className="relative aspect-video overflow-hidden rounded-xl outline-1 -outline-offset-1 outline-black/10"
+        style={{ backgroundColor: accent }}
+      />
+    );
+  }
+
   return (
-    <div
-      aria-hidden
-      className={cn(
-        "relative aspect-video overflow-hidden rounded-xl border",
-        dark
-          ? "border-stone-700 bg-stone-900"
-          : "border-stone-200 bg-stone-100",
-      )}
-      style={{
-        backgroundColor: solid ? accent : undefined,
-        boxShadow: solid ? "inset 0 0 0 1px rgb(255 255 255 / 0.2)" : undefined,
-      }}
-    >
-      {environmental ? (
-        <img
-          alt=""
-          className="absolute inset-0 size-full object-cover"
-          src={`/post-image-backgrounds/${pattern}.webp`}
-        />
-      ) : pattern === "soft-gradient" ? (
-        <div className="absolute inset-0 bg-gradient-to-br from-stone-50 via-stone-300 to-stone-500" />
-      ) : pattern === "mesh-gradient" ? (
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,white_0,transparent_58%),radial-gradient(circle_at_82%_78%,rgb(87_83_78)_0,transparent_62%),rgb(168_162_158)]" />
-      ) : pattern === "soft-blobs" ? (
-        <>
-          <span className="absolute -left-8 -top-8 size-36 rounded-full bg-white blur-2xl" />
-          <span className="absolute -right-6 top-0 size-32 rounded-full bg-stone-500/80 blur-2xl" />
-          <span className="absolute -bottom-12 left-1/3 size-44 rounded-full bg-stone-400 blur-3xl" />
-          <span className="absolute -bottom-8 -left-8 size-28 rounded-full bg-stone-600 blur-2xl" />
-        </>
-      ) : null}
-      {!solid ? (
-        <span
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background: `radial-gradient(circle at 82% 18%, color-mix(in srgb, ${accent} 28%, transparent), transparent 62%), linear-gradient(to top right, color-mix(in srgb, ${accent} 20%, transparent), color-mix(in srgb, ${accent} 8%, transparent) 52%, color-mix(in srgb, ${accent} 16%, transparent)), color-mix(in srgb, ${accent} 38%, transparent)`,
-          }}
-        />
-      ) : null}
-    </div>
+    <img
+      alt=""
+      className="aspect-video w-full rounded-xl object-cover outline-1 -outline-offset-1 outline-black/10"
+      src={`/post-image-backgrounds/raycast-${pattern}.webp`}
+    />
   );
 }
 

@@ -170,116 +170,47 @@ async function renderBrandCard(
   input: RenderPostImageInput,
 ): Promise<RenderedPostImage> {
   const { settings } = input;
-  const assetUrl = environmentalBackgroundAssets[settings.backgroundPattern];
-  let source: Uint8Array;
-  if (assetUrl) {
-    source = new Uint8Array(await readFile(assetUrl));
-  } else {
-    source = new Uint8Array(
-      await sharp(Buffer.from(brandCardSvg(settings)))
-        .png()
-        .toBuffer(),
-    );
-  }
+  const wallpaperUrl = raycastWallpaperAssets[settings.backgroundPattern];
+  const source = wallpaperUrl
+    ? new Uint8Array(await readFile(wallpaperUrl))
+    : new Uint8Array(
+        await sharp(Buffer.from(solidBrandCardSvg(settings.accentColor)))
+          .png()
+          .toBuffer(),
+      );
 
   const body = await normalizePostImage(source, settings, input.title);
   return { body, contentType: "image/webp" };
 }
 
-const environmentalBackgroundAssets: Partial<
-  Record<PostImageBackgroundPattern, URL>
-> = {
-  space: new URL(
-    "../../../admin/public/post-image-backgrounds/space.webp",
-    import.meta.url,
-  ),
-  sky: new URL(
-    "../../../admin/public/post-image-backgrounds/sky.webp",
-    import.meta.url,
-  ),
-  cyberpunk: new URL(
-    "../../../admin/public/post-image-backgrounds/cyberpunk.webp",
-    import.meta.url,
-  ),
-  "server-room": new URL(
-    "../../../admin/public/post-image-backgrounds/server-room.webp",
-    import.meta.url,
-  ),
-  road: new URL(
-    "../../../admin/public/post-image-backgrounds/road.webp",
-    import.meta.url,
-  ),
-};
-
-function brandCardSvg(settings: PostImageSettings): string {
-  const accent = settings.accentColor;
-  const isSolid = settings.backgroundPattern === "solid";
-  const background = isSolid ? accent : "#E9E9E7";
-  const patterns: Partial<Record<PostImageBackgroundPattern, string>> = {
-    "soft-gradient": softGradientPattern(),
-    "mesh-gradient": meshGradientPattern(),
-    "soft-blobs": softBlobPattern(),
-    solid: "",
+const raycastWallpaperAssets: Partial<Record<PostImageBackgroundPattern, URL>> =
+  {
+    "autumnal-peach": new URL(
+      "../../../admin/public/post-image-backgrounds/raycast-autumnal-peach.webp",
+      import.meta.url,
+    ),
+    "bright-rain": new URL(
+      "../../../admin/public/post-image-backgrounds/raycast-bright-rain.webp",
+      import.meta.url,
+    ),
+    "glass-rainbow": new URL(
+      "../../../admin/public/post-image-backgrounds/raycast-glass-rainbow.webp",
+      import.meta.url,
+    ),
+    "red-distortion": new URL(
+      "../../../admin/public/post-image-backgrounds/raycast-red-distortion.webp",
+      import.meta.url,
+    ),
+    glaze: new URL(
+      "../../../admin/public/post-image-backgrounds/raycast-glaze.webp",
+      import.meta.url,
+    ),
   };
-  const pattern = patterns[settings.backgroundPattern];
 
+function solidBrandCardSvg(accent: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${postImageWidth}" height="${postImageHeight}" viewBox="0 0 ${postImageWidth} ${postImageHeight}">
-    <rect width="100%" height="100%" fill="${background}"/>
-    ${pattern ?? ""}
+    <rect width="100%" height="100%" fill="${accent}"/>
   </svg>`;
-}
-
-function accentOverlaySvg(accent: string): string {
-  return `<defs>
-    <linearGradient id="accent-wash" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="${accent}" stop-opacity=".2"/>
-      <stop offset=".52" stop-color="${accent}" stop-opacity=".08"/>
-      <stop offset="1" stop-color="${accent}" stop-opacity=".16"/>
-    </linearGradient>
-    <radialGradient id="accent-highlight" cx="82%" cy="18%" r="62%">
-      <stop offset="0" stop-color="${accent}" stop-opacity=".28"/>
-      <stop offset=".48" stop-color="${accent}" stop-opacity=".12"/>
-      <stop offset="1" stop-color="${accent}" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="100%" height="100%" fill="${accent}" fill-opacity=".38"/>
-  <rect width="100%" height="100%" fill="url(#accent-wash)"/>
-  <rect width="100%" height="100%" fill="url(#accent-highlight)"/>`;
-}
-
-function softGradientPattern(): string {
-  return `<defs>
-    <linearGradient id="soft-gradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#FAFAF9"/>
-      <stop offset=".48" stop-color="#D8D8D5"/>
-      <stop offset="1" stop-color="#8D8D89"/>
-    </linearGradient>
-  </defs>
-  <rect width="100%" height="100%" fill="url(#soft-gradient)"/>`;
-}
-
-function meshGradientPattern(): string {
-  return `<defs>
-    <radialGradient id="mesh-a" cx="0" cy="0" r="1" gradientTransform="translate(340 220) rotate(34) scale(930 720)">
-      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="mesh-b" cx="0" cy="0" r="1" gradientTransform="translate(1260 790) rotate(-145) scale(980 680)">
-      <stop stop-color="#686865"/><stop offset="1" stop-color="#686865" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="100%" height="100%" fill="#C8C8C4"/>
-  <rect width="100%" height="100%" fill="url(#mesh-a)"/>
-  <rect width="100%" height="100%" fill="url(#mesh-b)" opacity=".72"/>`;
-}
-
-function softBlobPattern(): string {
-  return `<defs><filter id="blur"><feGaussianBlur stdDeviation="95"/></filter></defs>
-    <g filter="url(#blur)" opacity=".72">
-      <ellipse cx="250" cy="250" rx="390" ry="300" fill="#FFFFFF"/>
-      <ellipse cx="1210" cy="250" rx="360" ry="270" fill="#777773"/>
-      <ellipse cx="880" cy="850" rx="520" ry="310" fill="#A5A5A1"/>
-      <ellipse cx="120" cy="920" rx="330" ry="240" fill="#555552"/>
-    </g>`;
 }
 
 function illustrationStylePrompt(style: PostImageIllustrationStyle): string {
@@ -306,17 +237,7 @@ async function normalizePostImage(
     .resize(postImageWidth, postImageHeight, { fit: "cover" })
     .png()
     .toBuffer();
-  const shouldTint =
-    settings.mode !== "brand-card" || settings.backgroundPattern !== "solid";
-  const accentOverlay = Buffer.from(
-    `<svg width="${postImageWidth}" height="${postImageHeight}" xmlns="http://www.w3.org/2000/svg">${accentOverlaySvg(settings.accentColor)}</svg>`,
-  );
-  const artwork = shouldTint
-    ? await sharp(normalized)
-        .composite([{ input: accentOverlay, blend: "over" }])
-        .png()
-        .toBuffer()
-    : normalized;
+  const artwork = normalized;
   const titleComposites = settings.titleOverlay
     ? await createTitleComposites(artwork, title)
     : [];
