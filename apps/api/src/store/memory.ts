@@ -1583,6 +1583,28 @@ export class InMemoryStore implements Store {
     return true;
   }
 
+  async deleteHeldEntriesOlderThan(cutoff: string): Promise<number> {
+    const cutoffTimestamp = Date.parse(cutoff);
+    if (!Number.isFinite(cutoffTimestamp)) {
+      return 0;
+    }
+
+    const previousCount = this.entries.length;
+    this.entries = this.entries.filter((entry) => {
+      if (entry.status !== "held" || !entry.processedAt) {
+        return true;
+      }
+
+      const processedAtTimestamp = Date.parse(entry.processedAt);
+      return (
+        !Number.isFinite(processedAtTimestamp) ||
+        processedAtTimestamp > cutoffTimestamp
+      );
+    });
+
+    return previousCount - this.entries.length;
+  }
+
   async markEntryNotRelevant(
     input: MarkEntryNotRelevantInput,
   ): Promise<AiFeedback | null> {

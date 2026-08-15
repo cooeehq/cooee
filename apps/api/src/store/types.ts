@@ -636,6 +636,7 @@ export type Store = {
   updateEntry(input: UpdateEntryInput): Promise<StoredEntry | null>;
   updateEntryImage(input: UpdateEntryImageInput): Promise<StoredEntry | null>;
   deleteEntry(workspaceId: string, entryId: string): Promise<boolean>;
+  deleteHeldEntriesOlderThan(cutoff: string): Promise<number>;
   markEntryNotRelevant(
     input: MarkEntryNotRelevantInput,
   ): Promise<AiFeedback | null>;

@@ -16,6 +16,48 @@ const summarizer: AiSummarizer = {
 };
 
 describe("daily changelog cron", () => {
+  test("deletes held reviews once they are 30 days old", async () => {
+    const store = InMemoryStore.seeded();
+    const template = store.entries[0]!;
+    store.changelogs[0]!.settings.scheduleFrequency = "on-merge";
+    store.entries.push(
+      {
+        ...template,
+        id: "entry_expired_hold",
+        status: "held",
+        processedAt: "2026-07-15T23:59:59.000Z",
+      },
+      {
+        ...template,
+        id: "entry_active_hold",
+        status: "held",
+        processedAt: "2026-07-16T00:00:01.000Z",
+      },
+      {
+        ...template,
+        id: "entry_old_published",
+        status: "published",
+        processedAt: "2026-07-01T00:00:00.000Z",
+      },
+    );
+
+    await runDailyChangelogCron({
+      now: new Date("2026-08-15T00:00:00.000Z"),
+      store,
+      summarizer,
+    });
+
+    expect(
+      store.entries.some((entry) => entry.id === "entry_expired_hold"),
+    ).toBe(false);
+    expect(
+      store.entries.some((entry) => entry.id === "entry_active_hold"),
+    ).toBe(true);
+    expect(
+      store.entries.some((entry) => entry.id === "entry_old_published"),
+    ).toBe(true);
+  });
+
   test("processes due changelogs and closes its store", async () => {
     const store = InMemoryStore.seeded();
     let closed = false;

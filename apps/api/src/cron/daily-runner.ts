@@ -1,4 +1,7 @@
-import { getLastCompletedScheduleWindow } from "@cooee/shared";
+import {
+  getHeldReviewExpiryCutoff,
+  getLastCompletedScheduleWindow,
+} from "@cooee/shared";
 import { generateChangelogForWindow } from "../services/generation";
 import {
   createDefaultImageGenerator,
@@ -61,6 +64,10 @@ export async function runDailyChangelogCron(
   });
 
   try {
+    await store.deleteHeldEntriesOlderThan(
+      getHeldReviewExpiryCutoff(now).toISOString(),
+    );
+
     const mergeJobs = await store.claimMergeGenerationJobs({
       now: now.toISOString(),
       limit: mergeGenerationBatchSize,
