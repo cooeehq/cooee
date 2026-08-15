@@ -19,7 +19,7 @@ describe("post image settings", () => {
         mode: "illustration",
         accentColor: "#aabbcc",
         titleOverlay: false,
-        backgroundPattern: "road",
+        backgroundPattern: "bright-rain",
         referenceAssetKey: " refs/master.webp ",
         illustrationStyle: "cut-paper",
         defaultPrompt: `  tactile paper ${"x".repeat(1_100)}  `,
@@ -29,7 +29,7 @@ describe("post image settings", () => {
       mode: "illustration",
       accentColor: "#AABBCC",
       titleOverlay: false,
-      backgroundPattern: "road",
+      backgroundPattern: "bright-rain",
       referenceAssetKey: "refs/master.webp",
       illustrationStyle: "cut-paper",
     });

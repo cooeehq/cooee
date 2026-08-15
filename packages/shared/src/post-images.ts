@@ -5,14 +5,11 @@ export const postImageModes = [
 ] as const;
 
 export const postImageBackgroundPatterns = [
-  "space",
-  "sky",
-  "cyberpunk",
-  "server-room",
-  "road",
-  "soft-gradient",
-  "mesh-gradient",
-  "soft-blobs",
+  "autumnal-peach",
+  "bright-rain",
+  "glass-rainbow",
+  "red-distortion",
+  "glaze",
   "solid",
 ] as const;
 
@@ -46,7 +43,7 @@ export const defaultPostImageSettings: PostImageSettings = {
   mode: "brand-card",
   accentColor: "#10B981",
   titleOverlay: true,
-  backgroundPattern: "space",
+  backgroundPattern: "glass-rainbow",
   referenceAssetKey: null,
   illustrationStyle: "soft-3d",
   defaultPrompt: "",

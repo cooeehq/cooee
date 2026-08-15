@@ -108,7 +108,7 @@ describe("Cooee admin app", () => {
     expect(html).toContain("Clearer activity exports");
   });
 
-  test("renders per-changelog branded image settings with responsive pattern choices", () => {
+  test("renders local post image settings without AI generation controls", () => {
     const html = renderToStaticMarkup(
       <App
         deploymentMode="admin"
@@ -121,22 +121,21 @@ describe("Cooee admin app", () => {
     );
 
     expect(html).toContain('href="#settings-images"');
-    expect(html).toContain("Brand card");
-    expect(html).toContain("Reference style");
-    expect(html).toContain("Illustration");
-    expect(html).toContain("Space");
-    expect(html).toContain("Sky");
-    expect(html).toContain("Cyberpunk");
-    expect(html).toContain("Server room");
-    expect(html).toContain("Road");
-    expect(html).toContain("Soft gradient");
-    expect(html).toContain("Mesh gradient");
-    expect(html).toContain("Soft blobs");
-    expect(html).toContain("Solid brand colour");
+    expect(html).not.toContain("Reference style");
+    expect(html).not.toContain("Illustration style");
+    expect(html).toContain("Autumnal Peach");
+    expect(html).toContain("Bright Rain");
+    expect(html).toContain("Glass Rainbow");
+    expect(html).toContain("Red Distortion");
+    expect(html).toContain("Glaze");
+    expect(html).toContain("Solid colour");
     expect(html).toContain("sm:grid-cols-2");
-    expect(html).toContain("Accent colour");
-    expect(html).toContain("Title overlay");
-    expect(html).toContain("Show the post title on generated images");
+    expect(html).not.toContain("Background colour");
+    expect(html).not.toContain("Title overlay");
+    expect(html).toContain("The post title is added automatically.");
+    expect(html).toContain(
+      "/post-image-backgrounds/raycast-glass-rainbow.webp",
+    );
   });
 
   test("uses a loading state instead of the sign-in page while checking an admin session", () => {
