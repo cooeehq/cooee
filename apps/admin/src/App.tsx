@@ -5,6 +5,7 @@ import {
   BookOpenIcon,
   CalendarIcon,
   CalendarClockIcon,
+  Clock3Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -72,6 +73,7 @@ import {
   getChangelogCategoryDefinition,
   getChangelogCategoryDisplayType,
   getChangelogCategoryLabel,
+  getHeldReviewDaysRemaining,
   getNextScheduledRun,
   normalizeChangelogCategoryDefinitions,
   normalizeChangelogCategoryId,
@@ -4011,6 +4013,7 @@ export function App({
                   draftCopy={draftCopy}
                   editingSource={editingSource}
                   heldEntries={heldEntries}
+                  now={scheduleNow}
                   regeneratingHeldEntryIds={regeneratingHeldEntryIds}
                   onResolveHeldEntry={resolveHeldEntry}
                   onPublishHeldEntry={publishHeldEntry}
@@ -8560,10 +8563,29 @@ function RepositoriesView({
   );
 }
 
+export function getHeldReviewCountdownLabel(
+  processedAt: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const daysRemaining = getHeldReviewDaysRemaining(processedAt, now);
+
+  if (daysRemaining === null) {
+    return "Deletes after 30 days";
+  }
+  if (daysRemaining === 0) {
+    return "Deleting soon";
+  }
+  if (daysRemaining === 1) {
+    return "Deletes in 1 day";
+  }
+  return `Deletes in ${daysRemaining} days`;
+}
+
 function PrivacyReviewView({
   draftCopy,
   editingSource,
   heldEntries,
+  now,
   regeneratingHeldEntryIds,
   onResolveHeldEntry,
   onPublishHeldEntry,
@@ -8574,6 +8596,7 @@ function PrivacyReviewView({
   draftCopy: Record<string, string>;
   editingSource: string | null;
   heldEntries: HeldEntry[];
+  now: Date;
   regeneratingHeldEntryIds: Set<string>;
   onResolveHeldEntry: (entry: HeldEntry, resolution: HeldResolution) => void;
   onPublishHeldEntry: (entry: HeldEntry) => void;
@@ -8600,14 +8623,18 @@ function PrivacyReviewView({
         ) : (
           heldEntries.map((entry) => {
             const isRegenerating = regeneratingHeldEntryIds.has(entry.id);
+            const expiryLabel = getHeldReviewCountdownLabel(
+              entry.processedAt,
+              now,
+            );
 
             return (
               <article
                 className="rounded-[1.5rem] border border-border/70 bg-card/70 p-5 sm:p-6"
                 key={entry.id}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
                     <h2 className="text-balance font-medium">{entry.title}</h2>
                     <p className="mt-1 text-balance text-sm text-muted-foreground">
                       Held after reviewing{" "}
@@ -8617,7 +8644,13 @@ function PrivacyReviewView({
                       )}
                     </p>
                   </div>
-                  <Badge variant="destructive">Held</Badge>
+                  <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+                    <Badge variant="destructive">Held</Badge>
+                    <Badge className="tabular-nums" variant="outline">
+                      <Clock3Icon data-icon="inline-start" />
+                      {expiryLabel}
+                    </Badge>
+                  </div>
                 </div>
 
                 <div className="mt-4 rounded-2xl bg-destructive/8 p-4">

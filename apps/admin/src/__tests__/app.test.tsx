@@ -8,6 +8,7 @@ import {
   getNextScheduledRunLabel,
   getLocalPublicChangelogUrl,
   getHostedPublicChangelogUrl,
+  getHeldReviewCountdownLabel,
   getApiUnavailableMessage,
   getPublicChangelogResourceUrls,
   getSurfaceFromPathname,
@@ -16,6 +17,20 @@ import {
 } from "../App";
 
 describe("Cooee admin app", () => {
+  test("shows the held review deletion countdown", () => {
+    const now = new Date("2026-07-29T12:00:01.000Z");
+
+    expect(getHeldReviewCountdownLabel("2026-07-01T12:00:00.000Z", now)).toBe(
+      "Deletes in 2 days",
+    );
+    expect(getHeldReviewCountdownLabel("2026-06-29T12:00:00.000Z", now)).toBe(
+      "Deleting soon",
+    );
+    expect(getHeldReviewCountdownLabel(null, now)).toBe(
+      "Deletes after 30 days",
+    );
+  });
+
   test("routes only admin and public changelog surfaces", () => {
     expect(getSurfaceFromPathname("/login")).toBe("login");
     expect(getSurfaceFromPathname("/changelog")).toBe("app");

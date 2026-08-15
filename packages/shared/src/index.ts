@@ -2,6 +2,7 @@ export * from "./billing";
 export * from "./categories";
 export * from "./feed";
 export * from "./generation";
+export * from "./held-reviews";
 export * from "./privacy";
 export * from "./post-images";
 export * from "./public-api";

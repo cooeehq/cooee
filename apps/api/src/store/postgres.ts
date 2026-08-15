@@ -1738,6 +1738,17 @@ export class PostgresStore implements Store {
     return rows.length > 0;
   }
 
+  async deleteHeldEntriesOlderThan(cutoff: string): Promise<number> {
+    const rows = await this.sql`
+      delete from changelog_entries
+      where status = 'held'
+        and created_at <= ${new Date(cutoff)}
+      returning id
+    `;
+
+    return rows.length;
+  }
+
   async markEntryNotRelevant(
     input: MarkEntryNotRelevantInput,
   ): Promise<AiFeedback | null> {
