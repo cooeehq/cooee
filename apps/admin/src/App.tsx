@@ -290,6 +290,7 @@ type SettingsState = {
   aiMinimumConfidence: string;
   aiAudience: "product-users" | "technical-users";
   aiPersonality: AiPersonality;
+  aiProductContext: string;
   aiFailClosed: boolean;
   autoPublish: boolean;
   createImagesPerUpdate: boolean;
@@ -668,6 +669,35 @@ const backfillActivitySteps = [
     progress: 92,
   },
 ] as const;
+const releaseBackfillActivitySteps = [
+  {
+    title: "Scanning official releases",
+    detail:
+      "Looking for published stable SemVer releases in the selected window.",
+    progress: 18,
+  },
+  {
+    title: "Skipping known releases",
+    detail: "Checking releases that already generated changelog posts.",
+    progress: 38,
+  },
+  {
+    title: "Applying privacy controls",
+    detail:
+      "Holding anything that looks confidential or personally identifying.",
+    progress: 58,
+  },
+  {
+    title: "Writing draft posts",
+    detail: "Asking AI for customer-facing release summaries.",
+    progress: 78,
+  },
+  {
+    title: "Refreshing the changelog",
+    detail: "Loading the newest generated release posts.",
+    progress: 92,
+  },
+] as const;
 const defaultSettings: SettingsState = {
   appName: "",
   publicChangelog: true,
@@ -688,6 +718,7 @@ const defaultSettings: SettingsState = {
   aiMinimumConfidence: "0.80",
   aiAudience: "product-users",
   aiPersonality: "product-user",
+  aiProductContext: "",
   aiFailClosed: true,
   autoPublish: false,
   createImagesPerUpdate: false,
@@ -4110,6 +4141,7 @@ export function App({
         <HistoricalBackfillDialog
           activeRepositoryName={activeRepository?.fullName ?? null}
           dateRange={backfillDateRange}
+          generationSource={settings.generationSource}
           onDateRangeChange={setBackfillDateRange}
           onOpenChange={(open) => {
             if (historicalBackfillStatus === "running") {
@@ -7401,6 +7433,7 @@ function OnboardingChoice({
 function HistoricalBackfillDialog({
   activeRepositoryName,
   dateRange,
+  generationSource,
   onDateRangeChange,
   onOpenChange,
   onRun,
@@ -7410,6 +7443,7 @@ function HistoricalBackfillDialog({
 }: {
   activeRepositoryName: string | null;
   dateRange: DateRange;
+  generationSource: SettingsState["generationSource"];
   onDateRangeChange: (range: DateRange) => void;
   onOpenChange: (open: boolean) => void;
   onRun: () => void;
@@ -7417,6 +7451,10 @@ function HistoricalBackfillDialog({
   result: string | null;
   status: HistoricalBackfillStatus;
 }) {
+  const isReleaseMode = generationSource === "releases";
+  const activitySteps = isReleaseMode
+    ? releaseBackfillActivitySteps
+    : backfillActivitySteps;
   const [activityIndex, setActivityIndex] = useState(0);
   const [isDateRangeOpen, setIsDateRangeOpen] = useState(false);
   const [draftDateRange, setDraftDateRange] = useState<DateRange | undefined>(
@@ -7427,7 +7465,7 @@ function HistoricalBackfillDialog({
     Boolean(activeRepositoryName) &&
     Boolean(dateRange.from && dateRange.to) &&
     !isRunning;
-  const currentActivity = backfillActivitySteps[activityIndex];
+  const currentActivity = activitySteps[activityIndex];
   const progressValue =
     status === "success"
       ? 100
@@ -7452,8 +7490,8 @@ function HistoricalBackfillDialog({
         : isRunning
           ? currentActivity.detail
           : dateRange.from && dateRange.to
-            ? `Cooee will scan merged PRs from ${formatDateRangeLabel(dateRange)}.`
-            : "Choose the dates to scan for merged PRs.";
+            ? `Cooee will scan ${isReleaseMode ? "official SemVer releases" : "merged PRs"} from ${formatDateRangeLabel(dateRange)}.`
+            : `Choose the dates to scan for ${isReleaseMode ? "official SemVer releases" : "merged PRs"}.`;
 
   useEffect(() => {
     if (!isDateRangeOpen) {
@@ -7472,12 +7510,12 @@ function HistoricalBackfillDialog({
     setActivityIndex(0);
     const activityTimer = window.setInterval(() => {
       setActivityIndex((index) =>
-        Math.min(index + 1, backfillActivitySteps.length - 1),
+        Math.min(index + 1, activitySteps.length - 1),
       );
     }, 1200);
 
     return () => window.clearInterval(activityTimer);
-  }, [open, status]);
+  }, [activitySteps.length, open, status]);
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -7485,7 +7523,9 @@ function HistoricalBackfillDialog({
         <DialogHeader className="px-6 pb-4 pt-6">
           <DialogTitle className="text-xl">Backfill updates</DialogTitle>
           <DialogDescription>
-            Scan merged PRs and draft changelog posts.
+            {isReleaseMode
+              ? "Scan official SemVer releases and draft changelog posts."
+              : "Scan merged PRs and draft changelog posts."}
           </DialogDescription>
         </DialogHeader>
 
@@ -10989,6 +11029,31 @@ function SettingsView({
                 options={aiAudienceOptions}
                 value={settings.aiAudience}
               />
+            </SettingsRow>
+
+            <SettingsRow
+              description="Help Cooee distinguish customer outcomes from admin, operator, and implementation details."
+              htmlFor="ai-product-context"
+              title="About your app"
+            >
+              <div className="grid gap-2">
+                <Textarea
+                  id="ai-product-context"
+                  maxLength={5_000}
+                  onChange={(event) =>
+                    setSettings((current) => ({
+                      ...current,
+                      aiProductContext: event.target.value,
+                    }))
+                  }
+                  placeholder="Tell us about your app. Who are your users, what do they care about? Add any additional instructions for changelog writing."
+                  rows={6}
+                  value={settings.aiProductContext}
+                />
+                <span className="justify-self-end text-xs text-muted-foreground">
+                  {settings.aiProductContext.length}/5,000
+                </span>
+              </div>
             </SettingsRow>
 
             <SettingsRow

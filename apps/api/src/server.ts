@@ -38,6 +38,7 @@ import {
 } from "./services/cloudflare";
 import {
   generateChangelogForWindow,
+  resolveAiContentContext,
   resolveAiWritingOptions,
 } from "./services/generation";
 import { generateHistoricalChangelog } from "./services/historical";
@@ -179,6 +180,7 @@ const defaultWorkspaceSettings: WorkspaceSettings = {
   aiMinimumConfidence: "0.80",
   aiAudience: "product-users",
   aiPersonality: "product-user",
+  aiProductContext: "",
   aiFailClosed: true,
   autoPublish: false,
   createImagesPerUpdate: false,
@@ -1919,6 +1921,9 @@ export function createApp(options: AppOptions = {}): App {
               store,
               summarizer,
               recordAiUsage,
+              githubClient: isGitHubAppConfigured(config)
+                ? githubClient
+                : undefined,
               changelogId: decodeURIComponent(generateMatch[1]),
               windowEnd: body.windowEnd ?? new Date().toISOString(),
             });
@@ -2032,6 +2037,9 @@ export function createApp(options: AppOptions = {}): App {
               store,
               summarizer,
               recordAiUsage,
+              githubClient: isGitHubAppConfigured(config)
+                ? githubClient
+                : undefined,
               workspaceId: getWorkspaceId(url),
               entryIds,
             });
@@ -7378,6 +7386,9 @@ function normalizeWorkspaceSettings(
       ["product-user", "concise", "technical"],
       "product-user",
     ),
+    aiProductContext: readString(settings.aiProductContext, "")
+      .trim()
+      .slice(0, 5_000),
     aiFailClosed: readBoolean(
       settings.aiFailClosed,
       defaultWorkspaceSettings.aiFailClosed,
@@ -8115,12 +8126,14 @@ function oneSecondAfter(value: string): string {
 
 async function mergeChangelogEntries({
   entryIds,
+  githubClient,
   store,
   summarizer,
   recordAiUsage,
   workspaceId,
 }: {
   entryIds: string[];
+  githubClient?: GitHubAppClient;
   store: Store;
   summarizer: AiSummarizer;
   recordAiUsage: (input: {
@@ -8161,13 +8174,15 @@ async function mergeChangelogEntries({
     return { status: "not-found" };
   }
 
-  const [learnings, writerOptions] = await Promise.all([
+  const [learnings, writerOptions, contentContext] = await Promise.all([
     store.listAiFeedback(workspaceId, changelog.id),
     resolveAiWritingOptions({ changelog, store }),
+    resolveAiContentContext({ changelog, githubClient, store }),
   ]);
   const summaryResult = summarizer.mergeEntries
     ? await summarizer.mergeEntries(selectedEntries, {
         ...writerOptions,
+        ...contentContext,
         categoryDefinitions: changelog.settings.categoryDefinitions,
         learnings,
       })

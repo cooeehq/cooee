@@ -17,8 +17,18 @@ export type SyncedGitHubConnection = {
   >;
 };
 
+export type GitHubReleaseMetadata = {
+  tagName: string;
+  publishedAt: string;
+};
+
 export type GitHubAppClient = {
   syncInstallation(installationId: number): Promise<SyncedGitHubConnection>;
+  getRepositoryReadme?(input: {
+    installationId: number;
+    owner: string;
+    repo: string;
+  }): Promise<string | null>;
   listMergedPullRequests(input: {
     installationId: number;
     owner: string;
@@ -26,6 +36,13 @@ export type GitHubAppClient = {
     since: string;
     until: string;
   }): Promise<PullRequestMetadata[]>;
+  listPublishedReleases?(input: {
+    installationId: number;
+    owner: string;
+    repo: string;
+    since: string;
+    until: string;
+  }): Promise<GitHubReleaseMetadata[]>;
 };
 
 export async function signPayload(
@@ -162,6 +179,49 @@ export function createGitHubAppClient(
         author: pullRequest.user?.login,
       }));
     },
+
+    async listPublishedReleases(input): Promise<GitHubReleaseMetadata[]> {
+      const jwt = createAppJwt();
+      const token = await createInstallationToken({
+        fetchImpl,
+        installationId: input.installationId,
+        jwt,
+      });
+      const releases = await listPublishedReleases({
+        fetchImpl,
+        token,
+        ...input,
+      });
+
+      return releases.map((release) => ({
+        tagName: release.tag_name,
+        publishedAt: release.published_at,
+      }));
+    },
+
+    async getRepositoryReadme(input): Promise<string | null> {
+      const jwt = createAppJwt();
+      const token = await createInstallationToken({
+        fetchImpl,
+        installationId: input.installationId,
+        jwt,
+      });
+      const readme = await githubJson<GitHubReadmeResponse>(
+        `https://api.github.com/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/readme`,
+        {
+          fetchImpl,
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (readme.encoding !== "base64" || !readme.content) {
+        return null;
+      }
+
+      return decodeBase64Utf8(readme.content);
+    },
   };
 }
 
@@ -210,6 +270,11 @@ type GitHubRepositoryResponse = {
   };
 };
 
+type GitHubReadmeResponse = {
+  content?: string;
+  encoding?: string;
+};
+
 type GitHubPullRequestResponse = {
   id: number;
   number: number;
@@ -223,6 +288,13 @@ type GitHubPullRequestResponse = {
   labels: Array<{
     name: string;
   }>;
+};
+
+type GitHubReleaseResponse = {
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+  published_at: string | null;
 };
 
 async function listInstallationRepositories({
@@ -347,6 +419,77 @@ async function listMergedPullRequests({
   );
 }
 
+async function listPublishedReleases({
+  fetchImpl,
+  owner,
+  repo,
+  since,
+  token,
+  until,
+}: {
+  fetchImpl: typeof fetch;
+  owner: string;
+  repo: string;
+  since: string;
+  token: string;
+  until: string;
+}): Promise<Array<GitHubReleaseResponse & { published_at: string }>> {
+  const releases: Array<GitHubReleaseResponse & { published_at: string }> = [];
+  let page = 1;
+
+  while (true) {
+    const body = await githubJson<GitHubReleaseResponse[]>(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases?per_page=100&page=${page}`,
+      {
+        fetchImpl,
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    for (const release of body) {
+      if (
+        release.draft ||
+        release.prerelease ||
+        !release.published_at ||
+        !isStableSemverTag(release.tag_name)
+      ) {
+        continue;
+      }
+
+      if (release.published_at >= since && release.published_at < until) {
+        releases.push({
+          ...release,
+          published_at: release.published_at,
+        });
+      }
+    }
+
+    if (
+      body.length < 100 ||
+      body.some(
+        (release) =>
+          release.published_at !== null && release.published_at < since,
+      )
+    ) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return releases.sort((left, right) =>
+    left.published_at.localeCompare(right.published_at),
+  );
+}
+
+function isStableSemverTag(value: string): boolean {
+  return /^v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
+    value,
+  );
+}
+
 async function githubJson<T>(
   url: string,
   input: {
@@ -373,6 +516,12 @@ async function githubJson<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function decodeBase64Utf8(value: string): string {
+  const binary = atob(value.replace(/\s/g, ""));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 function normalizePrivateKey(privateKey: string): string {

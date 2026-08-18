@@ -147,6 +147,7 @@ export type WorkspaceSettings = {
   aiMinimumConfidence: string;
   aiAudience: "product-users" | "technical-users";
   aiPersonality: "product-user" | "concise" | "technical";
+  aiProductContext: string;
   aiFailClosed: boolean;
   autoPublish: boolean;
   createImagesPerUpdate: boolean;
@@ -240,6 +241,23 @@ export type ChangelogSettings = {
   includePullRequestLinks: boolean;
   publicTheme: ChangelogPublicTheme;
   postImageSettings: PostImageSettings;
+  publicChangelog?: boolean;
+  publicLogoAlignment?: ChangelogLogoAlignment;
+  logoAssetKey?: string | null;
+  logoUrl?: string | null;
+  lightLogoAssetKey?: string | null;
+  lightLogoUrl?: string | null;
+  faviconAssetKey?: string | null;
+  faviconUrl?: string | null;
+  publicAppUrl?: string;
+  publicAppLabel?: string;
+  aiMinimumConfidence?: string;
+  aiAudience?: "product-users" | "technical-users";
+  aiPersonality?: "product-user" | "concise" | "technical";
+  aiProductContext?: string;
+  aiFailClosed?: boolean;
+  autoPublish?: boolean;
+  historicalBackfillDays?: number;
 };
 
 export type StoredChangelog = PublicChangelog & {

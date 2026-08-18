@@ -16,6 +16,7 @@ import type {
   ChangelogCategoryDefinition,
   PostImageSettings,
 } from "@cooee/shared";
+import type { ChangelogSettings } from "../store/types";
 
 export const billingMode = pgEnum("billing_mode", ["hosted", "self-hosted"]);
 export const changelogCategory = pgEnum("changelog_category", [
@@ -276,6 +277,10 @@ export const changelogs = pgTable(
         illustrationStyle: "soft-3d",
         defaultPrompt: "",
       }),
+    configuration: jsonb("configuration")
+      .$type<Partial<ChangelogSettings>>()
+      .notNull()
+      .default({}),
     lastGeneratedWindowEnd: timestamp("last_generated_window_end", {
       withTimezone: true,
     }),
