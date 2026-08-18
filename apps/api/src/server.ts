@@ -7475,7 +7475,7 @@ function serializeCliSetupPollSession(session: CliSetupSession) {
 
 function serializeCliSetupConfiguration({
   changelog,
-  workspaceSettings,
+  workspaceSettings: _workspaceSettings,
 }: {
   changelog: StoredChangelog;
   workspaceSettings: WorkspaceSettings;
