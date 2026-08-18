@@ -9767,6 +9767,9 @@ function SettingsView({
   >("idle");
   const [referencePreviewVersion, setReferencePreviewVersion] = useState(0);
   const cnameTarget = settings.customHostnameCnameTarget || "cloud.cooee.sh";
+  const brandingSettingsPath = changelogId
+    ? `/api/admin/changelogs/${encodeURIComponent(changelogId)}/settings`
+    : "/api/admin/settings";
   const domainStatusLabel = formatCustomHostnameStatus(
     settings.customHostnameStatus,
     "Waiting for save",
@@ -9953,7 +9956,7 @@ function SettingsView({
     setLogoUploadStatus("saving");
 
     try {
-      const response = await fetch("/api/admin/settings/logo", {
+      const response = await fetch(`${brandingSettingsPath}/logo`, {
         method: "POST",
         body: form,
       });
@@ -9993,7 +9996,7 @@ function SettingsView({
     setLogoUploadStatus("saving");
 
     try {
-      const response = await fetch("/api/admin/settings/logo", {
+      const response = await fetch(`${brandingSettingsPath}/logo`, {
         method: "DELETE",
       });
 
@@ -10041,7 +10044,7 @@ function SettingsView({
     setCustomBrandAssetStatus(kind);
 
     try {
-      const response = await fetch(`/api/admin/settings/${endpoint}`, {
+      const response = await fetch(`${brandingSettingsPath}/${endpoint}`, {
         method: "POST",
         body: form,
       });
@@ -10082,7 +10085,7 @@ function SettingsView({
     setCustomBrandAssetStatus(kind);
 
     try {
-      const response = await fetch(`/api/admin/settings/${endpoint}`, {
+      const response = await fetch(`${brandingSettingsPath}/${endpoint}`, {
         method: "DELETE",
       });
       if (!response.ok) {
