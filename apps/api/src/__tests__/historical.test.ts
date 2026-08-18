@@ -1390,6 +1390,82 @@ describe("historical changelog generation", () => {
     expect(store.pullRequests.map((pr) => pr.number)).toEqual([44]);
     expect(store.entries[0].title).toBe("PR 44");
   });
+
+  test("backfills only official SemVer releases in release mode", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests = [];
+    store.changelogs[0]!.settings.generationSource = "releases";
+    const githubClient: GitHubAppClient = {
+      syncInstallation: async () => {
+        throw new Error("not used");
+      },
+      listPublishedReleases: async (input) => {
+        expect(input).toMatchObject({
+          installationId: 12345,
+          owner: "acme",
+          repo: "app",
+          since: "2026-06-01T00:00:00.000Z",
+          until: "2026-06-07T00:00:00.000Z",
+        });
+        return [
+          { tagName: "v2.2.0-beta.1", publishedAt: "2026-06-02T00:00:00.000Z" },
+          {
+            tagName: "summer-release",
+            publishedAt: "2026-06-02T06:00:00.000Z",
+          },
+          { tagName: "v2.0.0", publishedAt: "2026-06-03T00:00:00.000Z" },
+          { tagName: "v2.1.0", publishedAt: "2026-06-05T00:00:00.000Z" },
+        ];
+      },
+      listMergedPullRequests: async () => [
+        pullRequest({
+          id: "pr_release_one",
+          number: 100,
+          title: "First release change",
+          mergedAt: "2026-06-02T12:00:00.000Z",
+        }),
+        pullRequest({
+          id: "pr_release_two",
+          number: 101,
+          title: "Second release change",
+          mergedAt: "2026-06-04T12:00:00.000Z",
+        }),
+        pullRequest({
+          id: "pr_after_release",
+          number: 102,
+          title: "Unreleased change",
+          mergedAt: "2026-06-06T12:00:00.000Z",
+        }),
+      ],
+    };
+
+    const result = await generateHistoricalChangelog({
+      store,
+      summarizer,
+      githubClient,
+      changelogId: "cl_acme",
+      range: {
+        startedAt: "2026-06-01T00:00:00.000Z",
+        endedAt: "2026-06-07T00:00:00.000Z",
+      },
+    });
+
+    expect(result.windows.map((window) => window.status)).toEqual([
+      "published",
+      "published",
+    ]);
+    expect(
+      store.entries
+        .map((entry) => entry.sourcePullRequests.map((pr) => pr.number))
+        .sort((left, right) => left[0] - right[0]),
+    ).toEqual([[100], [101]]);
+    expect(
+      store.entries.some((entry) =>
+        entry.sourcePullRequests.some((pr) => pr.number === 102),
+      ),
+    ).toBe(false);
+  });
 });
 
 function pullRequest(
