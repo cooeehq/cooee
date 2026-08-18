@@ -7634,7 +7634,10 @@ function PostEditorSheet({
       }}
       open
     >
-      <DrawerContent className="bg-card shadow-2xl outline-none data-[vaul-drawer-direction=right]:w-[calc(100%-1rem)] data-[vaul-drawer-direction=right]:sm:w-[calc(100%-1.5rem)] data-[vaul-drawer-direction=right]:sm:max-w-xl">
+      <DrawerContent
+        className="bg-card shadow-2xl outline-none data-[vaul-drawer-direction=right]:w-[calc(100%-1rem)] data-[vaul-drawer-direction=right]:sm:w-[calc(100%-1.5rem)] data-[vaul-drawer-direction=right]:sm:max-w-xl"
+        data-vaul-no-drag
+      >
         <DrawerHeader className="flex-row items-start justify-between gap-4 border-b px-6 py-5 text-left">
           <div className="grid gap-1.5">
             <DrawerTitle className="text-xl font-semibold tracking-normal">
