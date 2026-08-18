@@ -19,6 +19,7 @@ import type { Store } from "../store/types";
 import { createAssetStorage, type AssetStorage } from "../services/assets";
 import { PostImageOrchestrator } from "../services/post-images";
 import { processPostImageGenerationJobs } from "../services/post-image-jobs";
+import { createGitHubAppClient } from "../services/github";
 
 export type DailyCronResult = {
   processed: number;
@@ -56,6 +57,7 @@ export async function runDailyChangelogCron(
       ? createAssetStorage(env)
       : input.assetStorage;
   const config = loadConfig(env);
+  const githubClient = createGitHubAppClient(config);
   const logger = input.logger ?? console;
   const recordAiUsage = createAiTokenUsageReporter({
     config,
@@ -79,6 +81,7 @@ export async function runDailyChangelogCron(
           store,
           summarizer,
           recordAiUsage,
+          githubClient,
           changelogId: job.changelogId,
           windowStart: job.windowStartedAt,
           windowEnd: job.windowEndedAt,
@@ -134,6 +137,7 @@ export async function runDailyChangelogCron(
           store,
           summarizer,
           recordAiUsage,
+          githubClient,
           changelogId: changelog.id,
           windowEnd: window.endedAt.toISOString(),
         });

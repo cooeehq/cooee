@@ -13,6 +13,7 @@ import type {
   BillingNotificationType,
   BillingSubscription,
   CliSetupSession,
+  ChangelogSettings,
   ComplimentaryAccessGrant,
   CreateCliSetupSessionInput,
   CreateChangelogInput,
@@ -942,7 +943,8 @@ export class PostgresStore implements Store {
           publish_time, schedule_frequency, schedule_weekday,
           schedule_month_day, generation_source, skip_labels, sensitive_labels,
           category_definitions, group_entries_by_category,
-          include_pull_request_links, public_theme, image_settings
+          include_pull_request_links, public_theme, image_settings,
+          configuration
         ) values (
           ${crypto.randomUUID()}, ${input.workspaceId}, ${input.repositoryId},
           ${input.slug}, ${input.name}, ${input.description}, ${input.publicUrl},
@@ -959,7 +961,8 @@ export class PostgresStore implements Store {
           ${input.settings.groupEntriesByCategory},
           ${input.settings.includePullRequestLinks},
           ${input.settings.publicTheme},
-          ${sql.json(input.settings.postImageSettings)}
+          ${sql.json(input.settings.postImageSettings)},
+          ${sql.json(changelogConfiguration(input.settings))}
         )
         returning *
       `;
@@ -1002,6 +1005,7 @@ export class PostgresStore implements Store {
         include_pull_request_links = ${input.settings.includePullRequestLinks},
         public_theme = ${input.settings.publicTheme},
         image_settings = ${this.sql.json(input.settings.postImageSettings)},
+        configuration = ${this.sql.json(changelogConfiguration(input.settings))},
         updated_at = now()
       where id = ${input.changelogId}
         and workspace_id = ${input.workspaceId}
@@ -2108,8 +2112,31 @@ function mapChangelog(row: postgres.Row): StoredChangelog {
       includePullRequestLinks: row.include_pull_request_links,
       publicTheme: row.public_theme === "dark" ? "dark" : "light",
       postImageSettings: normalizePostImageSettings(row.image_settings),
+      ...((row.configuration as Partial<ChangelogSettings> | undefined) ?? {}),
     },
   };
+}
+
+function changelogConfiguration(
+  settings: ChangelogSettings,
+): Partial<ChangelogSettings> {
+  const {
+    skipLabels: _skipLabels,
+    sensitiveLabels: _sensitiveLabels,
+    categoryDefinitions: _categoryDefinitions,
+    groupEntriesByCategory: _groupEntriesByCategory,
+    generationSource: _generationSource,
+    scheduleFrequency: _scheduleFrequency,
+    scheduleWeekday: _scheduleWeekday,
+    scheduleMonthDay: _scheduleMonthDay,
+    publishTime: _publishTime,
+    timeZone: _timeZone,
+    includePullRequestLinks: _includePullRequestLinks,
+    publicTheme: _publicTheme,
+    postImageSettings: _postImageSettings,
+    ...configuration
+  } = settings;
+  return configuration;
 }
 
 function mapEntry(row: postgres.Row): StoredEntry {

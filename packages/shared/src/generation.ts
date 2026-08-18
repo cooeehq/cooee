@@ -19,6 +19,9 @@ import type {
 
 export type PromptPayload = {
   instructions: string;
+  aiProductContext?: string;
+  repositoryReadme?: string;
+  publicationGuidance?: AiPublicationGuidance[];
   rewriteInstructions?: string;
   learnings?: Array<{
     title: string;
@@ -39,6 +42,18 @@ export type PromptPayload = {
 export type AiAudience = "product-users" | "technical-users";
 export type AiPersonality = "product-user" | "concise" | "technical";
 export type RepositoryVisibility = "private" | "public";
+
+export type AiPublicationGuidance = {
+  pullRequestNumber: number;
+  publishableClaims: string[];
+  excludedClaims: string[];
+};
+
+export type AiContentContext = {
+  aiProductContext?: string;
+  repositoryReadme?: string;
+  publicationGuidance?: AiPublicationGuidance[];
+};
 
 export type AiWritingOptions = {
   aiAudience?: AiAudience;
@@ -83,7 +98,8 @@ export function buildPromptPayload(
     categoryDefinitions?: ChangelogCategoryDefinition[];
     learnings?: PromptPayload["learnings"];
     rewriteInstructions?: string;
-  } & AiWritingOptions,
+  } & AiWritingOptions &
+    AiContentContext,
 ): PromptPayload {
   const categories = normalizeChangelogCategoryDefinitions(
     options?.categoryDefinitions,
@@ -102,6 +118,7 @@ export function buildPromptPayload(
       buildAudienceInstruction(options),
       'Use a product-descriptive voice by default. Describe what the product, feature, or workflow does without repeatedly addressing the reader. Use second-person wording such as "you" and "your" only when direct address makes the meaning clearer or is needed to explain an action. Do not substitute third-person audience labels such as users, merchants, customers, store owners, or teams for unnecessary second-person wording unless the change genuinely affects a different group than the reader.',
       "Create one item per unique customer-facing change. Do not combine unrelated changes into one title or summary. Use only the configured category ids.",
+      "Distinguish the people who use the shipped product from the people who configure, administer, author, moderate, or maintain it. Common audiences include end users, workspace or team administrators, account owners, external developers, internal operators, and repository maintainers. Publish a capability when it is directly usable by the configured reader, or when the reader directly experiences its outcome. Do not present an operator-only control or authoring workflow as an end-user feature. When a change serves multiple audiences, write only the claims approved for the configured reader.",
       buildDefaultCategoryInstruction(categories),
       "Treat dismissed learnings as repository-specific publishing guidance. When a current pull request matches a dismissed learning and is not customer-facing, omit it from items and include its number in skippedPullRequestNumbers. Treat relevant learnings as corrections that similar pull requests should remain eligible. Treat merged learnings as guidance to combine directly related pull requests. Every current pull request must appear in exactly one item or in skippedPullRequestNumbers.",
       buildPersonalityInstruction(options),
@@ -115,6 +132,15 @@ export function buildPromptPayload(
       .filter(Boolean)
       .join(" "),
     ...(options?.learnings?.length ? { learnings: options.learnings } : {}),
+    ...(options?.aiProductContext?.trim()
+      ? { aiProductContext: options.aiProductContext.trim() }
+      : {}),
+    ...(options?.repositoryReadme?.trim()
+      ? { repositoryReadme: options.repositoryReadme.trim() }
+      : {}),
+    ...(options?.publicationGuidance?.length
+      ? { publicationGuidance: options.publicationGuidance }
+      : {}),
     ...(options?.rewriteInstructions?.trim()
       ? { rewriteInstructions: options.rewriteInstructions.trim() }
       : {}),

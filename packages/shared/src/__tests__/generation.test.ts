@@ -185,6 +185,34 @@ describe("AI generation contracts", () => {
     );
   });
 
+  test("keeps product context and audience-scoped claims separate from PR facts", () => {
+    const payload = buildPromptPayload([pr], {
+      aiProductContext:
+        "The product is used by support teams and their customers. Focus public copy on customer outcomes.",
+      repositoryReadme: "A longer product overview from the repository.",
+      publicationGuidance: [
+        {
+          pullRequestNumber: 42,
+          publishableClaims: ["Readers can save and reuse filter views."],
+          excludedClaims: [
+            "Internal admin controls for managing saved filters.",
+          ],
+        },
+      ],
+    });
+
+    expect(payload.aiProductContext).toContain("support teams");
+    expect(payload.repositoryReadme).toContain("product overview");
+    expect(payload.publicationGuidance?.[0]).toEqual({
+      pullRequestNumber: 42,
+      publishableClaims: ["Readers can save and reuse filter views."],
+      excludedClaims: ["Internal admin controls for managing saved filters."],
+    });
+    expect(payload.instructions).toContain(
+      "Distinguish the people who use the shipped product from the people who configure",
+    );
+  });
+
   test("includes structured repository feedback in the generation prompt", () => {
     const payload = buildPromptPayload([pr], {
       learnings: [

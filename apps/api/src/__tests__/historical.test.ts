@@ -225,6 +225,64 @@ describe("historical changelog generation", () => {
     });
   });
 
+  test("passes product context and repository README context to the summarizer", async () => {
+    const store = InMemoryStore.seeded();
+    store.workspaceSettings.set("ws_acme", {
+      aiProductContext:
+        "The product helps support teams answer customer questions.",
+    });
+    store.pullRequests.push(
+      pullRequest({
+        id: "pr_46",
+        number: 46,
+        title: "Add customer search",
+        mergedAt: "2026-06-06T04:15:00.000Z",
+      }),
+    );
+    let seenOptions: Parameters<AiSummarizer["summarize"]>[1] | undefined;
+    const recordingSummarizer: AiSummarizer = {
+      summarize: async (_pullRequests, options) => {
+        seenOptions = options;
+        return {
+          title: "Customer search",
+          summary: "Customer records are easier to find.",
+          category: "improvement",
+          confidence: 0.95,
+          sensitive: false,
+        };
+      },
+    };
+    const githubClient: GitHubAppClient = {
+      syncInstallation: async () => {
+        throw new Error("not used");
+      },
+      listMergedPullRequests: async () => [],
+      getRepositoryReadme: async (input) => {
+        expect(input).toMatchObject({
+          installationId: 12345,
+          owner: "acme",
+          repo: "app",
+        });
+        return "# Customer support app\n\nSearch customer records.";
+      },
+    };
+
+    await generateChangelogForWindow({
+      store,
+      summarizer: recordingSummarizer,
+      githubClient,
+      changelogId: "cl_acme",
+      windowStart: "2026-06-05T23:00:00.000Z",
+      windowEnd: "2026-06-06T23:00:00.000Z",
+    });
+
+    expect(seenOptions).toMatchObject({
+      aiProductContext:
+        "The product helps support teams answer customer questions.",
+      repositoryReadme: "# Customer support app\n\nSearch customer records.",
+    });
+  });
+
   test("returns empty when every pull request in the backfill window was already processed", async () => {
     const store = InMemoryStore.seeded();
     let summarizeCalls = 0;
@@ -828,6 +886,8 @@ describe("historical changelog generation", () => {
               directUxOrDxImpact: false,
               shouldTellUsers: false,
               knowledgeBenefitsUxOrDx: false,
+              publishableClaims: [],
+              excludedClaims: ["Internal billing implementation details."],
               confidence: 0.98,
             },
             {
@@ -839,15 +899,29 @@ describe("historical changelog generation", () => {
               directUxOrDxImpact: true,
               shouldTellUsers: true,
               knowledgeBenefitsUxOrDx: true,
+              publishableClaims: ["Shipment lists can be filtered by status."],
+              excludedClaims: ["Internal filter query implementation."],
               confidence: 0.96,
             },
           ],
         };
       },
-      summarize: async (pullRequests) => {
+      summarize: async (pullRequests, options) => {
         summarizedPullRequests.push(
           pullRequests.map((pullRequest) => pullRequest.number),
         );
+        expect(options?.publicationGuidance).toEqual([
+          {
+            pullRequestNumber: 63,
+            publishableClaims: [],
+            excludedClaims: ["Internal billing implementation details."],
+          },
+          {
+            pullRequestNumber: 64,
+            publishableClaims: ["Shipment lists can be filtered by status."],
+            excludedClaims: ["Internal filter query implementation."],
+          },
+        ]);
         return {
           title: "Shipment status filters",
           summary: "Shipment lists can now be filtered by status.",
@@ -1389,6 +1463,83 @@ describe("historical changelog generation", () => {
     ]);
     expect(store.pullRequests.map((pr) => pr.number)).toEqual([44]);
     expect(store.entries[0].title).toBe("PR 44");
+  });
+
+  test("backfills only official SemVer releases in release mode", async () => {
+    const store = InMemoryStore.seeded();
+    store.entries = [];
+    store.pullRequests = [];
+    store.changelogs[0]!.settings.generationSource = "releases";
+    store.changelogs[0]!.settings.autoPublish = true;
+    const githubClient: GitHubAppClient = {
+      syncInstallation: async () => {
+        throw new Error("not used");
+      },
+      listPublishedReleases: async (input) => {
+        expect(input).toMatchObject({
+          installationId: 12345,
+          owner: "acme",
+          repo: "app",
+          since: "2026-06-01T00:00:00.000Z",
+          until: "2026-06-07T00:00:00.000Z",
+        });
+        return [
+          { tagName: "v2.2.0-beta.1", publishedAt: "2026-06-02T00:00:00.000Z" },
+          {
+            tagName: "summer-release",
+            publishedAt: "2026-06-02T06:00:00.000Z",
+          },
+          { tagName: "v2.0.0", publishedAt: "2026-06-03T00:00:00.000Z" },
+          { tagName: "v2.1.0", publishedAt: "2026-06-05T00:00:00.000Z" },
+        ];
+      },
+      listMergedPullRequests: async () => [
+        pullRequest({
+          id: "pr_release_one",
+          number: 100,
+          title: "First release change",
+          mergedAt: "2026-06-02T12:00:00.000Z",
+        }),
+        pullRequest({
+          id: "pr_release_two",
+          number: 101,
+          title: "Second release change",
+          mergedAt: "2026-06-04T12:00:00.000Z",
+        }),
+        pullRequest({
+          id: "pr_after_release",
+          number: 102,
+          title: "Unreleased change",
+          mergedAt: "2026-06-06T12:00:00.000Z",
+        }),
+      ],
+    };
+
+    const result = await generateHistoricalChangelog({
+      store,
+      summarizer,
+      githubClient,
+      changelogId: "cl_acme",
+      range: {
+        startedAt: "2026-06-01T00:00:00.000Z",
+        endedAt: "2026-06-07T00:00:00.000Z",
+      },
+    });
+
+    expect(result.windows.map((window) => window.status)).toEqual([
+      "published",
+      "published",
+    ]);
+    expect(
+      store.entries
+        .map((entry) => entry.sourcePullRequests.map((pr) => pr.number))
+        .sort((left, right) => left[0] - right[0]),
+    ).toEqual([[100], [101]]);
+    expect(
+      store.entries.some((entry) =>
+        entry.sourcePullRequests.some((pr) => pr.number === 102),
+      ),
+    ).toBe(false);
   });
 });
 

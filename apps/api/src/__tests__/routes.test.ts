@@ -3277,6 +3277,7 @@ describe("api routes", () => {
         publicLogoAlignment: "left",
         scheduleFrequency: "daily",
         includePullRequestLinks: false,
+        aiProductContext: "",
       },
     });
 
@@ -3295,6 +3296,8 @@ describe("api routes", () => {
             publicLogoAlignment: "center",
             scheduleFrequency: "weekly",
             includePullRequestLinks: true,
+            aiProductContext:
+              "  Support teams use this app to help their customers.  ",
             aiProvider: "unknown-provider",
             aiModel: "gpt-from-browser",
             logoAssetKey: "workspaces/ws_acme/logo/evil.png",
@@ -3320,6 +3323,7 @@ describe("api routes", () => {
         publicLogoAlignment: "center",
         scheduleFrequency: "weekly",
         includePullRequestLinks: true,
+        aiProductContext: "Support teams use this app to help their customers.",
         logoAssetKey: null,
         logoDataUrl: null,
         logoUrl: null,
@@ -3345,6 +3349,7 @@ describe("api routes", () => {
         publicLogoAlignment: "center",
         scheduleFrequency: "weekly",
         includePullRequestLinks: true,
+        aiProductContext: "Support teams use this app to help their customers.",
         logoAssetKey: null,
         logoDataUrl: null,
         logoUrl: null,

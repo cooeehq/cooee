@@ -136,6 +136,10 @@ describe("Cooee admin app", () => {
     );
 
     expect(html).toContain('href="#settings-images"');
+    expect(html).toContain("About your app");
+    expect(html).toContain(
+      "Tell us about your app. Who are your users, what do they care about?",
+    );
     expect(html).not.toContain("Reference style");
     expect(html).not.toContain("Illustration style");
     expect(html).toContain("Autumnal Peach");

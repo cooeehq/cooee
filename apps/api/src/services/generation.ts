@@ -7,6 +7,7 @@ import {
   validateGeneratedEntry,
 } from "@cooee/shared";
 import type {
+  AiContentContext,
   AiWritingOptions,
   ChangelogCategoryDefinition,
   ChangelogEntry,
@@ -21,7 +22,9 @@ import {
   type AiSummarizer,
   type AiTokenUsage,
 } from "./openai";
+import type { GitHubAppClient } from "./github";
 import type { Store, StoredChangelog, StoredEntry } from "../store/types";
+import { resolveRepositoryScopedSettings } from "../store/changelog-settings";
 import {
   assertWorkspaceEntitlement,
   getWorkspaceEntitlements,
@@ -30,6 +33,7 @@ import {
 export async function generateChangelogForWindow(input: {
   store: Store;
   summarizer: AiSummarizer;
+  githubClient?: GitHubAppClient;
   recordAiUsage?: (input: {
     workspaceId: string;
     sourceId: string;
@@ -148,6 +152,7 @@ async function assertActiveRepositoryEntitlement(
 async function generateChangelogForWindowUnlocked(input: {
   store: Store;
   summarizer: AiSummarizer;
+  githubClient?: GitHubAppClient;
   recordAiUsage?: (input: {
     workspaceId: string;
     sourceId: string;
@@ -255,13 +260,21 @@ async function generateChangelogForWindowUnlocked(input: {
     workspaceId: changelog.workspaceId,
   });
 
-  const [learnings, writerOptions] = await Promise.all([
-    input.store.listAiFeedback(changelog.workspaceId, changelog.id),
-    resolveAiWritingOptions({ changelog, store: input.store }),
-  ]);
-  const autoPublish =
-    (await input.store.getWorkspaceSettings(changelog.workspaceId))
-      ?.autoPublish === true;
+  const [learnings, writerOptions, contentContext, workspaceSettings] =
+    await Promise.all([
+      input.store.listAiFeedback(changelog.workspaceId, changelog.id),
+      resolveAiWritingOptions({ changelog, store: input.store }),
+      resolveAiContentContext({
+        changelog,
+        githubClient: input.githubClient,
+        store: input.store,
+      }),
+      input.store.getWorkspaceSettings(changelog.workspaceId),
+    ]);
+  const autoPublish = resolveRepositoryScopedSettings(
+    changelog.settings,
+    workspaceSettings ?? undefined,
+  ).autoPublish;
   const generatedStatus: ChangelogEntry["status"] = autoPublish
     ? "published"
     : "held";
@@ -279,12 +292,14 @@ async function generateChangelogForWindowUnlocked(input: {
 
   let publicationPullRequests = filtered.publishable;
   let publicationHeldEntries: StoredEntry[] = privacyHeldEntries;
+  let publicationGuidance = contentContext.publicationGuidance;
 
   if (input.summarizer.classifyPublication) {
     const classificationResult = await input.summarizer.classifyPublication(
       filtered.publishable,
       {
         ...writerOptions,
+        ...contentContext,
         learnings,
       },
     );
@@ -322,6 +337,11 @@ async function generateChangelogForWindowUnlocked(input: {
     const decisionsByNumber = new Map(
       decisions.map((decision) => [decision.pullRequestNumber, decision]),
     );
+    publicationGuidance = decisions.map((decision) => ({
+      pullRequestNumber: decision.pullRequestNumber,
+      publishableClaims: decision.publishableClaims,
+      excludedClaims: decision.excludedClaims,
+    }));
     const dismissedFeedbackIds = new Set(
       learnings
         .filter((learning) => learning.feedbackKind === "dismissed")
@@ -381,6 +401,8 @@ async function generateChangelogForWindowUnlocked(input: {
     publicationPullRequests,
     {
       ...writerOptions,
+      ...contentContext,
+      publicationGuidance,
       categoryDefinitions: changelog.settings.categoryDefinitions,
       learnings,
     },
@@ -647,6 +669,14 @@ function normalizePublicationDecisions(
   for (const value of classification.decisions) {
     if (!value || typeof value !== "object") return null;
     const decision = value as Partial<AiPublicationDecision>;
+    const publishableClaims =
+      decision.publishableClaims ??
+      (decision.decision === "publish"
+        ? [
+            "The direct reader-facing outcome identified by the publication gate.",
+          ]
+        : []);
+    const excludedClaims = decision.excludedClaims ?? [];
     if (
       typeof decision.pullRequestNumber !== "number" ||
       !Number.isInteger(decision.pullRequestNumber) ||
@@ -664,6 +694,15 @@ function normalizePublicationDecisions(
       typeof decision.directUxOrDxImpact !== "boolean" ||
       typeof decision.shouldTellUsers !== "boolean" ||
       typeof decision.knowledgeBenefitsUxOrDx !== "boolean" ||
+      !Array.isArray(publishableClaims) ||
+      !publishableClaims.every(
+        (claim) => typeof claim === "string" && claim.trim().length > 0,
+      ) ||
+      !Array.isArray(excludedClaims) ||
+      !excludedClaims.every(
+        (claim) => typeof claim === "string" && claim.trim().length > 0,
+      ) ||
+      (decision.decision === "publish" && publishableClaims.length === 0) ||
       typeof decision.confidence !== "number" ||
       decision.confidence < 0 ||
       decision.confidence > 1
@@ -672,7 +711,11 @@ function normalizePublicationDecisions(
     }
 
     seenNumbers.add(decision.pullRequestNumber);
-    decisions.push(decision as AiPublicationDecision);
+    decisions.push({
+      ...decision,
+      publishableClaims,
+      excludedClaims,
+    } as AiPublicationDecision);
   }
 
   return seenNumbers.size === expectedNumbers.size ? decisions : null;
@@ -806,10 +849,14 @@ export async function resolveAiWritingOptions(input: {
   changelog: StoredChangelog;
   store: Store;
 }): Promise<Required<AiWritingOptions>> {
-  const [settings, repositories] = await Promise.all([
-    input.store.getWorkspaceSettings(input.changelog.workspaceId),
-    input.store.listRepositories(input.changelog.workspaceId),
-  ]);
+  const settings = resolveRepositoryScopedSettings(
+    input.changelog.settings,
+    (await input.store.getWorkspaceSettings(input.changelog.workspaceId)) ??
+      undefined,
+  );
+  const repositories = await input.store.listRepositories(
+    input.changelog.workspaceId,
+  );
   const repository = repositories.find(
     (item) => item.id === input.changelog.repositoryId,
   );
@@ -826,6 +873,63 @@ export async function resolveAiWritingOptions(input: {
         : "product-user",
     repositoryVisibility: repository?.private === false ? "public" : "private",
   };
+}
+
+export async function resolveAiContentContext(input: {
+  changelog: StoredChangelog;
+  githubClient?: GitHubAppClient;
+  store: Store;
+}): Promise<AiContentContext> {
+  const settings = resolveRepositoryScopedSettings(
+    input.changelog.settings,
+    (await input.store.getWorkspaceSettings(input.changelog.workspaceId)) ??
+      undefined,
+  );
+  const context: AiContentContext = {
+    aiProductContext:
+      typeof settings?.aiProductContext === "string"
+        ? settings.aiProductContext.trim().slice(0, 5_000)
+        : undefined,
+  };
+
+  if (!input.githubClient?.getRepositoryReadme) {
+    return context;
+  }
+
+  const repositories = await input.store.listRepositories(
+    input.changelog.workspaceId,
+  );
+  const repository = repositories.find(
+    (item) => item.id === input.changelog.repositoryId,
+  );
+  if (!repository?.githubInstallationId) {
+    return context;
+  }
+
+  const installations = await input.store.listGitHubInstallations(
+    input.changelog.workspaceId,
+  );
+  const installation = installations.find(
+    (item) => item.id === repository.githubInstallationId,
+  );
+  if (!installation) {
+    return context;
+  }
+
+  try {
+    const repositoryReadme = await input.githubClient.getRepositoryReadme({
+      installationId: installation.installationId,
+      owner: repository.owner,
+      repo: repository.name,
+    });
+    if (repositoryReadme?.trim()) {
+      context.repositoryReadme = repositoryReadme.trim().slice(0, 20_000);
+    }
+  } catch {
+    // README context is optional. A GitHub README failure must not block generation.
+  }
+
+  return context;
 }
 
 function getItemPullRequests(
