@@ -92,6 +92,11 @@ import {
   type BillingEmailSender,
 } from "./services/billing-notifications";
 import { createStore } from "./store";
+import {
+  defaultRepositoryScopedSettings,
+  repositoryScopedSettingsFromWorkspace,
+  resolveRepositoryScopedSettings,
+} from "./store/changelog-settings";
 import type {
   BillingNotificationType,
   BillingSubscription,
@@ -466,7 +471,7 @@ export function createApp(options: AppOptions = {}): App {
             const savedWorkspaceSettings = await store.updateWorkspaceSettings(
               session.workspaceId,
               {
-                ...configured.workspaceSettings,
+                ...workspaceSettings,
                 onboardingCompleted: true,
               },
             );
@@ -1021,11 +1026,7 @@ export function createApp(options: AppOptions = {}): App {
                 customDomain: normalized.customDomain,
                 provisioner: customHostnameProvisioner,
               });
-              const savedWorkspaceSettings =
-                await store.updateWorkspaceSettings(
-                  workspaceId,
-                  normalized.workspaceSettings,
-                );
+              const savedWorkspaceSettings = existingSettings;
               const updated = await store.updateChangelogSettings({
                 workspaceId,
                 changelogId: changelog.id,
@@ -1110,8 +1111,28 @@ export function createApp(options: AppOptions = {}): App {
             request.method === "POST" &&
             url.pathname === "/api/admin/settings/logo"
           ) {
-            return uploadWorkspaceLogo({
+            const workspaceId = getWorkspaceId(url);
+            const changelogs = await store.listChangelogs(workspaceId);
+            const changelog =
+              changelogs.length === 1 ? changelogs[0] : null;
+            if (!changelog) {
+              if (changelogs.length > 1) {
+                return json(
+                  { error: "Select a repository before changing branding." },
+                  { status: 409 },
+                );
+              }
+              return uploadWorkspaceLogo({
+                assetStorage,
+                request,
+                store,
+                workspaceId,
+              });
+            }
+            return uploadChangelogBrandAsset({
               assetStorage,
+              changelog,
+              kind: "logo",
               request,
               store,
               workspaceId: getWorkspaceId(url),
@@ -1122,11 +1143,81 @@ export function createApp(options: AppOptions = {}): App {
             request.method === "DELETE" &&
             url.pathname === "/api/admin/settings/logo"
           ) {
-            return deleteWorkspaceLogo({
-              assetStorage,
+            const workspaceId = getWorkspaceId(url);
+            const changelogs = await store.listChangelogs(workspaceId);
+            const changelog =
+              changelogs.length === 1 ? changelogs[0] : null;
+            if (!changelog) {
+              if (changelogs.length > 1) {
+                return json(
+                  { error: "Select a repository before changing branding." },
+                  { status: 409 },
+                );
+              }
+              return deleteWorkspaceLogo({
+                assetStorage,
+                store,
+                workspaceId,
+              });
+            }
+            return deleteChangelogBrandAsset({
+              changelog,
+              kind: "logo",
               store,
               workspaceId: getWorkspaceId(url),
             });
+          }
+
+          const changelogBrandSettingsMatch =
+            /^\/api\/admin\/changelogs\/([^/]+)\/settings\/(logo|light-logo|favicon)$/.exec(
+              url.pathname,
+            );
+          if (
+            changelogBrandSettingsMatch &&
+            (request.method === "POST" || request.method === "DELETE")
+          ) {
+            const workspaceId = getWorkspaceId(url);
+            const changelog = await store.getChangelogById(
+              decodeURIComponent(changelogBrandSettingsMatch[1]),
+            );
+            if (!changelog || changelog.workspaceId !== workspaceId) {
+              return json({ error: "Changelog not found" }, { status: 404 });
+            }
+            const kind = changelogBrandSettingsMatch[2];
+            if (kind !== "logo") {
+              await assertWorkspaceEntitlement({
+                store,
+                workspaceId,
+                capability: "customBranding",
+                message:
+                  "A paid plan is required to use theme logos and a custom favicon.",
+              });
+            }
+            return request.method === "POST"
+              ? uploadChangelogBrandAsset({
+                  assetStorage,
+                  changelog,
+                  kind:
+                    kind === "logo"
+                      ? "logo"
+                      : kind === "light-logo"
+                        ? "lightLogo"
+                        : "favicon",
+                  request,
+                  store,
+                  workspaceId,
+                })
+              : deleteChangelogBrandAsset({
+                  changelog,
+                  kind:
+                    kind === "logo"
+                      ? "logo"
+                      : kind === "light-logo"
+                        ? "lightLogo"
+                        : "favicon",
+                  store,
+                  workspaceId,
+                });
           }
 
           for (const asset of ["light-logo", "favicon"] as const) {
@@ -1142,16 +1233,42 @@ export function createApp(options: AppOptions = {}): App {
                 message:
                   "A paid plan is required to use theme logos and a custom favicon.",
               });
+              const changelogs = await store.listChangelogs(workspaceId);
+              const changelog =
+                changelogs.length === 1 ? changelogs[0] : null;
+              if (!changelog) {
+                if (changelogs.length > 1) {
+                  return json(
+                    { error: "Select a repository before changing branding." },
+                    { status: 409 },
+                  );
+                }
+                return request.method === "POST"
+                  ? uploadWorkspaceBrandAsset({
+                      assetStorage,
+                      kind: asset === "light-logo" ? "lightLogo" : "favicon",
+                      request,
+                      store,
+                      workspaceId,
+                    })
+                  : deleteWorkspaceBrandAsset({
+                      assetStorage,
+                      kind: asset === "light-logo" ? "lightLogo" : "favicon",
+                      store,
+                      workspaceId,
+                    });
+              }
               return request.method === "POST"
-                ? uploadWorkspaceBrandAsset({
+                ? uploadChangelogBrandAsset({
+                    changelog,
                     assetStorage,
                     kind: asset === "light-logo" ? "lightLogo" : "favicon",
                     request,
                     store,
                     workspaceId,
                   })
-                : deleteWorkspaceBrandAsset({
-                    assetStorage,
+                : deleteChangelogBrandAsset({
+                    changelog,
                     kind: asset === "light-logo" ? "lightLogo" : "favicon",
                     store,
                     workspaceId,
@@ -1544,10 +1661,7 @@ export function createApp(options: AppOptions = {}): App {
               customDomain: normalized.customDomain,
               provisioner: customHostnameProvisioner,
             });
-            const savedWorkspaceSettings = await store.updateWorkspaceSettings(
-              workspaceId,
-              normalized.workspaceSettings,
-            );
+            const savedWorkspaceSettings = workspaceSettings;
             const updated = await store.updateChangelogSettings({
               workspaceId,
               changelogId: changelog.id,
@@ -1831,14 +1945,14 @@ export function createApp(options: AppOptions = {}): App {
               return json({ error: "Brand asset not found" }, { status: 404 });
             }
             return publicCorsResponse(
-              await publicWorkspaceBrandAsset({
+              await publicChangelogBrandAsset({
                 assetStorage,
+                changelog,
                 kind:
                   changelogBrandAssetMatch[2] === "light-logo"
                     ? "lightLogo"
                     : "favicon",
                 store,
-                workspaceId: changelog.workspaceId,
               }),
             );
           }
@@ -1950,14 +2064,12 @@ export function createApp(options: AppOptions = {}): App {
               startDate?: unknown;
               endDate?: unknown;
             };
-            const repositories = await store.listRepositories(workspaceId);
-            const workspaceSettings = normalizeWorkspaceSettings(
-              await store.getWorkspaceSettings(workspaceId),
-              getDefaultAppName(repositories),
+            const repositorySettings = resolveRepositoryScopedSettings(
+              changelog.settings,
             );
             const days = readInteger(
               body.days,
-              workspaceSettings.historicalBackfillDays,
+              repositorySettings.historicalBackfillDays,
               1,
               365,
             );
@@ -4153,10 +4265,6 @@ async function selectRepositoryForChangelog({
       requestedSlug: slugifyRepository(repository.fullName),
       store,
     }));
-  const workspaceSettings = normalizeWorkspaceSettings(
-    await store.getWorkspaceSettings(workspaceId),
-    getDefaultAppName(repositories),
-  );
   const changelog =
     existing ??
     (await store.createChangelog({
@@ -4176,17 +4284,16 @@ async function selectRepositoryForChangelog({
         sensitiveLabels: ["security", "vulnerability"],
         categoryDefinitions: defaultChangelogCategoryDefinitions,
         groupEntriesByCategory: true,
-        generationSource: workspaceSettings.generationSource,
-        scheduleFrequency: workspaceSettings.scheduleFrequency,
-        scheduleWeekday: workspaceSettings.scheduleWeekday,
-        scheduleMonthDay: workspaceSettings.scheduleMonthDay,
-        publishTime: workspaceSettings.publishTime,
-        timeZone: workspaceSettings.timeZone,
-        includePullRequestLinks: workspaceSettings.includePullRequestLinks,
-        publicTheme: workspaceSettings.publicTheme,
-        postImageSettings: normalizePostImageSettings(undefined, {
-          legacyEnabled: workspaceSettings.createImagesPerUpdate,
-        }),
+        generationSource: "pull-requests",
+        scheduleFrequency: "daily",
+        scheduleWeekday: 1,
+        scheduleMonthDay: 1,
+        publishTime: "09:00",
+        timeZone: "UTC",
+        includePullRequestLinks: false,
+        publicTheme: "light",
+        postImageSettings: normalizePostImageSettings(undefined),
+        ...defaultRepositoryScopedSettings,
       },
     }));
   if (!changelog) {
@@ -4422,9 +4529,16 @@ function serializeChangelogSettings(
   workspaceSettings: WorkspaceSettings,
   customHostnameCnameTarget: string,
 ) {
+  const repositorySettings = resolveRepositoryScopedSettings(
+    changelog.settings,
+  );
   return {
-    ...workspaceSettings,
+    onboardingCompleted: workspaceSettings.onboardingCompleted,
     appName: changelog.name,
+    ...repositorySettings,
+    logoDataUrl: null,
+    lightLogoDataUrl: null,
+    faviconDataUrl: null,
     includePullRequestLinks: changelog.settings.includePullRequestLinks,
     publicTheme: changelog.settings.publicTheme,
     categoryDefinitions: changelog.settings.categoryDefinitions,
@@ -4551,12 +4665,12 @@ function normalizeChangelogSettings({
   workspaceSettings: WorkspaceSettings;
 } {
   const settings = isRecord(input) ? input : {};
-  const requestedWorkspaceSettings = normalizeWorkspaceSettings(
+  const requestedRepositorySettings = normalizeWorkspaceSettings(
     {
-      ...workspaceSettings,
+      ...resolveRepositoryScopedSettings(changelog.settings),
       ...settings,
     },
-    workspaceSettings.appName || "Cooee",
+    changelog.name || "Cooee",
   );
   const labels = readLabelList(
     settings.privacyLabels,
@@ -4660,32 +4774,27 @@ function normalizeChangelogSettings({
         changelog.settings.publicTheme,
       ),
       postImageSettings,
+      publicChangelog: requestedRepositorySettings.publicChangelog,
+      publicLogoAlignment: requestedRepositorySettings.publicLogoAlignment,
+      logoAssetKey: requestedRepositorySettings.logoAssetKey,
+      logoUrl: requestedRepositorySettings.logoUrl,
+      lightLogoAssetKey: requestedRepositorySettings.lightLogoAssetKey,
+      lightLogoUrl: requestedRepositorySettings.lightLogoUrl,
+      faviconAssetKey: requestedRepositorySettings.faviconAssetKey,
+      faviconUrl: requestedRepositorySettings.faviconUrl,
+      publicAppUrl: requestedRepositorySettings.publicAppUrl,
+      publicAppLabel: requestedRepositorySettings.publicAppLabel,
+      aiMinimumConfidence: requestedRepositorySettings.aiMinimumConfidence,
+      aiAudience: requestedRepositorySettings.aiAudience,
+      aiPersonality: requestedRepositorySettings.aiPersonality,
+      aiProductContext: requestedRepositorySettings.aiProductContext,
+      aiFailClosed: requestedRepositorySettings.aiFailClosed,
+      autoPublish: requestedRepositorySettings.autoPublish,
+      historicalBackfillDays:
+        requestedRepositorySettings.historicalBackfillDays,
     },
     slug,
-    workspaceSettings: {
-      ...requestedWorkspaceSettings,
-      appName: workspaceSettings.appName,
-      includePullRequestLinks: workspaceSettings.includePullRequestLinks,
-      publicTheme: workspaceSettings.publicTheme,
-      logoAssetKey: workspaceSettings.logoAssetKey,
-      logoDataUrl: null,
-      logoUrl: workspaceSettings.logoUrl,
-      lightLogoAssetKey: workspaceSettings.lightLogoAssetKey,
-      lightLogoDataUrl: null,
-      lightLogoUrl: workspaceSettings.lightLogoUrl,
-      faviconAssetKey: workspaceSettings.faviconAssetKey,
-      faviconDataUrl: null,
-      faviconUrl: workspaceSettings.faviconUrl,
-      scheduleFrequency: workspaceSettings.scheduleFrequency,
-      generationSource: workspaceSettings.generationSource,
-      scheduleWeekday: workspaceSettings.scheduleWeekday,
-      scheduleMonthDay: workspaceSettings.scheduleMonthDay,
-      publishTime: workspaceSettings.publishTime,
-      timeZone: workspaceSettings.timeZone,
-      publicSlug: workspaceSettings.publicSlug,
-      customDomain: workspaceSettings.customDomain,
-      privacyLabels: workspaceSettings.privacyLabels,
-    },
+    workspaceSettings,
   };
 }
 
@@ -4994,6 +5103,173 @@ function parseMergedPullRequestWebhook(
         : undefined,
     },
   };
+}
+
+type ChangelogBrandAssetKind = "logo" | CustomBrandAssetKind;
+
+function serializeChangelogBrandSettings(settings: ChangelogSettings) {
+  const resolved = resolveRepositoryScopedSettings(settings);
+  return {
+    ...resolved,
+    logoDataUrl: null,
+    lightLogoDataUrl: null,
+    faviconDataUrl: null,
+  };
+}
+
+async function updateChangelogBrandSettings({
+  changelog,
+  patch,
+  store,
+}: {
+  changelog: StoredChangelog;
+  patch: Partial<ChangelogSettings>;
+  store: Store;
+}): Promise<StoredChangelog | null> {
+  return store.updateChangelogSettings({
+    workspaceId: changelog.workspaceId,
+    changelogId: changelog.id,
+    slug: changelog.slug,
+    name: changelog.name,
+    description: changelog.description ?? "",
+    publicUrl: changelog.publicUrl,
+    customDomain: changelog.customDomain,
+    customHostnameId: changelog.customHostnameId,
+    customHostnameStatus: changelog.customHostnameStatus,
+    customHostnameSslStatus: changelog.customHostnameSslStatus,
+    settings: {
+      ...changelog.settings,
+      ...patch,
+    },
+  });
+}
+
+async function uploadChangelogBrandAsset({
+  assetStorage,
+  changelog,
+  kind,
+  request,
+  store,
+  workspaceId,
+}: {
+  assetStorage: AssetStorage | null;
+  changelog: StoredChangelog;
+  kind: ChangelogBrandAssetKind;
+  request: Request;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  const label =
+    kind === "logo"
+      ? "Logo"
+      : kind === "lightLogo"
+        ? "Light mode logo"
+        : "Favicon";
+  if (!assetStorage) {
+    return json(
+      { error: `${label} asset storage is not configured.` },
+      { status: 503 },
+    );
+  }
+
+  const form = await request.formData().catch(() => null);
+  const file = form?.get(kind === "favicon" ? "favicon" : "logo");
+  if (!(file instanceof File)) {
+    return json({ error: `${label} file is required.` }, { status: 400 });
+  }
+
+  const contentType = file.type.toLowerCase().split(";")[0].trim();
+  const supportedTypes =
+    kind === "favicon" ? faviconContentTypes : logoContentTypes;
+  const extension = supportedTypes.get(contentType);
+  if (!extension) {
+    return json(
+      {
+        error:
+          kind === "favicon"
+            ? "Favicon must be a PNG, SVG, or ICO image."
+            : `${label} must be a PNG, JPEG, WebP, GIF, or SVG image.`,
+      },
+      { status: 415 },
+    );
+  }
+
+  const maxSize = kind === "favicon" ? maxFaviconSizeBytes : maxLogoSizeBytes;
+  if (file.size > maxSize) {
+    return json(
+      {
+        error: `${label} must be ${kind === "favicon" ? "256" : "512"} KB or smaller.`,
+      },
+      { status: 413 },
+    );
+  }
+
+  const body = new Uint8Array(await file.arrayBuffer());
+  if (contentType === "image/svg+xml") {
+    const validationError = validateSvgLogo(body);
+    if (validationError) {
+      return json(
+        { error: validationError.replaceAll("logo", label.toLowerCase()) },
+        { status: 400 },
+      );
+    }
+  }
+
+  const assetPath =
+    kind === "logo" ? "logo" : kind === "lightLogo" ? "light-logo" : "favicon";
+  const key = `workspaces/${workspaceId}/changelogs/${changelog.id}/${assetPath}/${crypto.randomUUID()}.${extension}`;
+  await assetStorage.putObject({ body, contentType, key });
+
+  const publicUrl =
+    kind === "logo"
+      ? publicChangelogLogoUrl(changelog.slug)
+      : kind === "lightLogo"
+        ? publicChangelogLightLogoUrl(changelog.slug, key)
+        : publicChangelogFaviconUrl(changelog.slug, key);
+  const patch: Partial<ChangelogSettings> =
+    kind === "logo"
+      ? { logoAssetKey: key, logoUrl: publicUrl }
+      : kind === "lightLogo"
+        ? { lightLogoAssetKey: key, lightLogoUrl: publicUrl }
+        : { faviconAssetKey: key, faviconUrl: publicUrl };
+  const updated = await updateChangelogBrandSettings({
+    changelog,
+    patch,
+    store,
+  });
+  if (!updated) {
+    await assetStorage.deleteObject?.(key);
+    return json({ error: "Changelog not found" }, { status: 404 });
+  }
+
+  return json({ settings: serializeChangelogBrandSettings(updated.settings) });
+}
+
+async function deleteChangelogBrandAsset({
+  changelog,
+  kind,
+  store,
+  workspaceId: _workspaceId,
+}: {
+  changelog: StoredChangelog;
+  kind: ChangelogBrandAssetKind;
+  store: Store;
+  workspaceId: string;
+}): Promise<Response> {
+  const patch: Partial<ChangelogSettings> =
+    kind === "logo"
+      ? { logoAssetKey: null, logoUrl: null }
+      : kind === "lightLogo"
+        ? { lightLogoAssetKey: null, lightLogoUrl: null }
+        : { faviconAssetKey: null, faviconUrl: null };
+  const updated = await updateChangelogBrandSettings({
+    changelog,
+    patch,
+    store,
+  });
+  return updated
+    ? json({ settings: serializeChangelogBrandSettings(updated.settings) })
+    : json({ error: "Changelog not found" }, { status: 404 });
 }
 
 async function uploadWorkspaceLogo({
@@ -5369,11 +5645,57 @@ async function publicChangelogLogo({
     return json({ error: "Logo not found" }, { status: 404 });
   }
 
-  return publicWorkspaceLogo({
-    assetStorage,
-    store,
-    workspaceId: changelog.workspaceId,
+  const settings = await resolvePublicChangelogSettings(store, changelog);
+  if (!assetStorage || !settings.publicChangelog || !settings.logoAssetKey) {
+    return json({ error: "Logo not found" }, { status: 404 });
+  }
+  const logo = await assetStorage.getObject(settings.logoAssetKey);
+  if (!logo) return json({ error: "Logo not found" }, { status: 404 });
+  return new Response(toArrayBuffer(logo.body), {
+    headers: publicAssetHeaders(logo),
   });
+}
+
+async function publicChangelogBrandAsset({
+  assetStorage,
+  changelog,
+  kind,
+  store,
+}: {
+  assetStorage: AssetStorage | null;
+  changelog: StoredChangelog;
+  kind: CustomBrandAssetKind;
+  store: Store;
+}): Promise<Response> {
+  const settings = await resolvePublicChangelogSettings(store, changelog);
+  const key =
+    kind === "lightLogo"
+      ? settings.lightLogoAssetKey
+      : settings.faviconAssetKey;
+  if (!assetStorage || !settings.publicChangelog || !key) {
+    return json({ error: "Brand asset not found" }, { status: 404 });
+  }
+  const asset = await assetStorage.getObject(key);
+  if (!asset) return json({ error: "Brand asset not found" }, { status: 404 });
+  return new Response(toArrayBuffer(asset.body), {
+    headers: publicAssetHeaders(asset),
+  });
+}
+
+function publicAssetHeaders(asset: { contentType: string }): Headers {
+  const headers = new Headers({
+    "cache-control": "public, max-age=3600",
+    "content-type": asset.contentType,
+  });
+  if (
+    asset.contentType.toLowerCase().split(";")[0].trim() === "image/svg+xml"
+  ) {
+    headers.set(
+      "content-security-policy",
+      "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+    );
+  }
+  return headers;
 }
 
 async function uploadChangelogEntryImage({
@@ -5687,12 +6009,15 @@ async function publicChangelogEntryImage({
   }
 
   const selected = await findWorkspaceEntry({ entryId, store, workspaceId });
-  const settings = normalizeWorkspaceSettings(
-    await store.getWorkspaceSettings(workspaceId),
+  if (!selected) {
+    return json({ error: "Post image not found" }, { status: 404 });
+  }
+  const settings = await resolvePublicChangelogSettings(
+    store,
+    selected.changelog,
   );
   if (
     !settings.publicChangelog ||
-    !selected ||
     (changelogId !== undefined && selected.changelog.id !== changelogId) ||
     selected.entry.status !== "published" ||
     !selected.entry.publishedAt ||
@@ -6029,10 +6354,11 @@ async function publicFeedForChangelog(
     ? `https://${changelog.customDomain}`
     : changelog.publicUrl;
 
-  const workspaceSettings = normalizeWorkspaceSettings(
-    await store.getWorkspaceSettings(changelog.workspaceId),
+  const repositorySettings = await resolvePublicChangelogSettings(
+    store,
+    changelog,
   );
-  if (!workspaceSettings.publicChangelog) {
+  if (!repositorySettings.publicChangelog) {
     return json({ error: "Changelog not found" }, { status: 404 });
   }
   const feedWindow = await getPublicFeedWindow(
@@ -6050,33 +6376,33 @@ async function publicFeedForChangelog(
         description: changelog.description,
         publicUrl,
         logoUrl: resolvePublicAssetUrl(
-          workspaceSettings.logoAssetKey
+          repositorySettings.logoAssetKey
             ? publicChangelogLogoUrl(changelog.slug)
-            : workspaceSettings.logoUrl,
+            : repositorySettings.logoUrl,
           publicUrl,
         ),
         lightLogoUrl: resolvePublicAssetUrl(
-          workspaceSettings.lightLogoAssetKey
+          repositorySettings.lightLogoAssetKey
             ? publicChangelogLightLogoUrl(
                 changelog.slug,
-                workspaceSettings.lightLogoAssetKey,
+                repositorySettings.lightLogoAssetKey,
               )
-            : workspaceSettings.lightLogoUrl,
+            : repositorySettings.lightLogoUrl,
           publicUrl,
         ),
         faviconUrl: resolvePublicAssetUrl(
-          workspaceSettings.faviconAssetKey
+          repositorySettings.faviconAssetKey
             ? publicChangelogFaviconUrl(
                 changelog.slug,
-                workspaceSettings.faviconAssetKey,
+                repositorySettings.faviconAssetKey,
               )
-            : workspaceSettings.faviconUrl,
+            : repositorySettings.faviconUrl,
           publicUrl,
         ),
         publicTheme: changelog.settings.publicTheme,
-        publicLogoAlignment: workspaceSettings.publicLogoAlignment,
-        publicAppUrl: workspaceSettings.publicAppUrl,
-        publicAppLabel: workspaceSettings.publicAppLabel,
+        publicLogoAlignment: repositorySettings.publicLogoAlignment,
+        publicAppUrl: repositorySettings.publicAppUrl,
+        publicAppLabel: repositorySettings.publicAppLabel,
         categoryDefinitions: changelog.settings.categoryDefinitions,
         groupEntriesByCategory: changelog.settings.groupEntriesByCategory,
       },
@@ -6504,9 +6830,34 @@ async function isPublicChangelogEnabled(
   store: Store,
   changelog: StoredChangelog,
 ): Promise<boolean> {
-  return normalizeWorkspaceSettings(
+  return (await resolvePublicChangelogSettings(store, changelog))
+    .publicChangelog;
+}
+
+async function resolvePublicChangelogSettings(
+  store: Store,
+  changelog: StoredChangelog,
+) {
+  const settings = resolveRepositoryScopedSettings(changelog.settings);
+  // In-memory callers and databases created before migration 0010 can still
+  // have changelog rows without repository-scoped branding. The migration
+  // populates these fields before production uses this path.
+  if (
+    changelog.settings.publicChangelog !== undefined ||
+    changelog.settings.logoAssetKey !== undefined ||
+    changelog.settings.publicAppUrl !== undefined
+  ) {
+    return settings;
+  }
+  const repositories = await store.listRepositories(changelog.workspaceId);
+  const workspaceSettings = normalizeWorkspaceSettings(
     await store.getWorkspaceSettings(changelog.workspaceId),
-  ).publicChangelog;
+    getDefaultAppName(repositories),
+  );
+  return {
+    ...settings,
+    ...repositoryScopedSettingsFromWorkspace(workspaceSettings),
+  };
 }
 
 function getPublicChangelogShellSlug(pathname: string): string | null {
@@ -6559,8 +6910,9 @@ async function getPublicChangelogSeoMetadata(
   const publicUrl = changelog.customDomain
     ? `https://${changelog.customDomain}`
     : changelog.publicUrl;
-  const workspaceSettings = normalizeWorkspaceSettings(
-    await store.getWorkspaceSettings(changelog.workspaceId),
+  const repositorySettings = await resolvePublicChangelogSettings(
+    store,
+    changelog,
   );
 
   return {
@@ -6575,12 +6927,12 @@ async function getPublicChangelogSeoMetadata(
       changelog.settings.publicTheme,
     ),
     faviconUrl: resolvePublicAssetUrl(
-      workspaceSettings.faviconAssetKey
+      repositorySettings.faviconAssetKey
         ? publicChangelogFaviconUrl(
             changelog.slug,
-            workspaceSettings.faviconAssetKey,
+            repositorySettings.faviconAssetKey,
           )
-        : workspaceSettings.faviconUrl,
+        : repositorySettings.faviconUrl,
       publicUrl,
     ),
   };
@@ -7128,11 +7480,14 @@ function serializeCliSetupConfiguration({
   changelog: StoredChangelog;
   workspaceSettings: WorkspaceSettings;
 }) {
+  const repositorySettings = resolveRepositoryScopedSettings(
+    changelog.settings,
+  );
   return {
-    aiPersonality: workspaceSettings.aiPersonality,
+    aiPersonality: repositorySettings.aiPersonality,
     createImagesPerUpdate: changelog.settings.postImageSettings.enabled,
     generationSource: changelog.settings.generationSource,
-    historicalBackfillDays: workspaceSettings.historicalBackfillDays,
+    historicalBackfillDays: repositorySettings.historicalBackfillDays,
     privacyLabels: labelListToString([
       ...changelog.settings.skipLabels,
       ...changelog.settings.sensitiveLabels,

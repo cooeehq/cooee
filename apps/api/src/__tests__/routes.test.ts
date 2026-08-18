@@ -3486,6 +3486,121 @@ describe("api routes", () => {
     });
   });
 
+  test("isolates repository settings and branding within one workspace", async () => {
+    const store = InMemoryStore.seeded();
+    const first = store.changelogs[0];
+    store.repositories.push({
+      ...store.repositories[0],
+      id: "repo_beta",
+      owner: "acme",
+      name: "dashboard",
+      fullName: "acme/dashboard",
+    });
+    store.changelogs.push({
+      ...first,
+      id: "cl_beta",
+      repositoryId: "repo_beta",
+      repository: "acme/dashboard",
+      slug: "acme-dashboard",
+      name: "Acme Dashboard",
+      publicUrl: "https://cooee.test/changelog/acme-dashboard",
+      settings: { ...first.settings },
+    });
+    const assetStorage = new TestAssetStorage();
+    const app = createApp({ assetStorage, store });
+
+    const save = async (id: string, settings: Record<string, unknown>) =>
+      app.fetch(
+        new Request(`http://cooee.test/api/admin/changelogs/${id}/settings`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ settings }),
+        }),
+      );
+
+    expect(
+      (
+        await save("cl_acme", {
+          aiProductContext: "Acme app context",
+          autoPublish: true,
+          publicAppLabel: "Open Acme App",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await save("cl_beta", {
+          aiProductContext: "Dashboard context",
+          autoPublish: false,
+          publicAppLabel: "Open Dashboard",
+        })
+      ).status,
+    ).toBe(200);
+
+    const firstLogo = new FormData();
+    firstLogo.set(
+      "logo",
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      "first.png",
+    );
+    const secondLogo = new FormData();
+    secondLogo.set(
+      "logo",
+      new Blob([new Uint8Array([4, 5, 6])], { type: "image/png" }),
+      "second.png",
+    );
+    expect(
+      (
+        await app.fetch(
+          new Request(
+            "http://cooee.test/api/admin/changelogs/cl_acme/settings/logo",
+            { method: "POST", body: firstLogo },
+          ),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.fetch(
+          new Request(
+            "http://cooee.test/api/admin/changelogs/cl_beta/settings/logo",
+            { method: "POST", body: secondLogo },
+          ),
+        )
+      ).status,
+    ).toBe(200);
+
+    expect(await store.getChangelogById("cl_acme")).toMatchObject({
+      settings: {
+        aiProductContext: "Acme app context",
+        autoPublish: true,
+        publicAppLabel: "Open Acme App",
+      },
+    });
+    expect(await store.getChangelogById("cl_beta")).toMatchObject({
+      settings: {
+        aiProductContext: "Dashboard context",
+        autoPublish: false,
+        publicAppLabel: "Open Dashboard",
+      },
+    });
+
+    const firstPublicLogo = await app.fetch(
+      new Request("http://cooee.test/api/public/changelogs/acme-app/logo"),
+    );
+    const secondPublicLogo = await app.fetch(
+      new Request(
+        "http://cooee.test/api/public/changelogs/acme-dashboard/logo",
+      ),
+    );
+    expect(new Uint8Array(await firstPublicLogo.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+    expect(new Uint8Array(await secondPublicLogo.arrayBuffer())).toEqual(
+      new Uint8Array([4, 5, 6]),
+    );
+  });
+
   test("persists custom changelog categories and display mappings", async () => {
     const store = InMemoryStore.seeded();
     const app = createApp({ store });

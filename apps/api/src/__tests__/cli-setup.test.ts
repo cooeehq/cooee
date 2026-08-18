@@ -253,11 +253,11 @@ test("reuses existing GitHub access and lets the paired CLI save its choices", a
     status: "completed",
   });
   expect(store.workspaceSettings.get("ws_acme")).toMatchObject({
-    aiPersonality: "technical",
-    historicalBackfillDays: 30,
     onboardingCompleted: true,
   });
   expect(store.changelogs[0]?.settings).toMatchObject({
+    aiPersonality: "technical",
+    historicalBackfillDays: 30,
     generationSource: "releases",
     publishTime: "16:30",
     scheduleFrequency: "weekly",
