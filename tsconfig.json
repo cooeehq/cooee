@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [],
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

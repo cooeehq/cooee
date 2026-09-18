@@ -1,0 +1,1344 @@
+import {
+  defaultChangelogCategoryDefinitions,
+  defaultPostImageSettings,
+  getLastCompletedScheduleWindow,
+  isChangelogDue,
+} from "@cooee/shared";
+import type { PullRequestMetadata } from "@cooee/shared";
+import type {
+  AiFeedback,
+  CliSetupSession,
+  CreateCliSetupSessionInput,
+  CreateChangelogInput,
+  EnsureGitHubInstallationMembershipsInput,
+  GitHubInstallation,
+  GitHubRepository,
+  MarkEntryNotRelevantInput,
+  ResolveHeldEntryInput,
+  ResolveHeldEntryResult,
+  MergeGenerationJob,
+  ListPublicEntriesInput,
+  NewEntryInput,
+  Store,
+  StoredChangelog,
+  StoredEntry,
+  UpdateChangelogSettingsInput,
+  UpdateEntryImageInput,
+  UpdateEntryInput,
+  EnsureUserWorkspaceInput,
+  UpsertGitHubInstallationInput,
+  UpsertPullRequestInput,
+  UpsertGitHubRepositoryInput,
+  Workspace,
+  WorkspaceMembership,
+  WorkspaceSettings,
+  PostImageGenerationJob,
+} from "./types";
+
+export class InMemoryStore implements Store {
+  workspaces: Workspace[];
+  memberships: WorkspaceMembership[];
+  githubInstallations: GitHubInstallation[];
+  repositories: GitHubRepository[];
+  changelogs: StoredChangelog[];
+  entries: StoredEntry[];
+  aiFeedback: AiFeedback[];
+  pullRequests: PullRequestMetadata[];
+  workspaceSettings: Map<string, Partial<WorkspaceSettings>>;
+  generationRuns = new Map<
+    string,
+    "running" | "published" | "held" | "empty" | "failed"
+  >();
+  mergeGenerationJobs: Array<
+    Omit<MergeGenerationJob, "claimToken"> & {
+      status: "pending" | "processing" | "completed";
+      nextAttemptAt: string;
+      processingStartedAt: string | null;
+      claimToken: string | null;
+      lastError: string | null;
+    }
+  > = [];
+  entryGenerationKeys = new Map<string, string>();
+  cliSetupSessions: CliSetupSession[] = [];
+
+  constructor(input?: {
+    workspaces?: Workspace[];
+    memberships?: WorkspaceMembership[];
+    githubInstallations?: GitHubInstallation[];
+    repositories?: GitHubRepository[];
+    changelogs?: StoredChangelog[];
+    entries?: StoredEntry[];
+    aiFeedback?: AiFeedback[];
+    pullRequests?: PullRequestMetadata[];
+    workspaceSettings?: Array<[string, Partial<WorkspaceSettings>]>;
+  }) {
+    this.workspaces = input?.workspaces ?? [];
+    this.memberships = input?.memberships ?? [];
+    this.githubInstallations = input?.githubInstallations ?? [];
+    this.repositories = input?.repositories ?? [];
+    this.changelogs = input?.changelogs ?? [];
+    this.entries = input?.entries ?? [];
+    this.aiFeedback = input?.aiFeedback ?? [];
+    this.pullRequests = input?.pullRequests ?? [];
+    this.workspaceSettings = new Map(input?.workspaceSettings ?? []);
+  }
+
+  async healthCheck(): Promise<boolean> {
+    return true;
+  }
+
+  static seeded(): InMemoryStore {
+    return new InMemoryStore({
+      workspaces: [
+        {
+          id: "ws_acme",
+          name: "Acme",
+        },
+      ],
+      githubInstallations: [
+        {
+          id: "ghi_acme",
+          workspaceId: "ws_acme",
+          installationId: 12345,
+          accountLogin: "acme",
+          accountType: "Organization",
+          suspendedAt: null,
+        },
+      ],
+      repositories: [
+        {
+          id: "repo_acme",
+          workspaceId: "ws_acme",
+          githubInstallationId: "ghi_acme",
+          owner: "acme",
+          name: "app",
+          fullName: "acme/app",
+          private: false,
+        },
+      ],
+      workspaceSettings: [["ws_acme", { autoPublish: true }]],
+      changelogs: [
+        {
+          id: "cl_acme",
+          workspaceId: "ws_acme",
+          repositoryId: "repo_acme",
+          slug: "acme-app",
+          name: "Acme App",
+          description: "Latest product updates",
+          publicUrl: "https://cooee.test/changelog/acme-app",
+          customDomain: null,
+          customHostnameId: null,
+          customHostnameStatus: null,
+          customHostnameSslStatus: null,
+          repository: "acme/app",
+          lastGeneratedWindowEnd: null,
+          settings: {
+            skipLabels: ["cooee:skip", "cooee:internal"],
+            sensitiveLabels: ["security", "vulnerability"],
+            categoryDefinitions: defaultChangelogCategoryDefinitions,
+            groupEntriesByCategory: true,
+            generationSource: "pull-requests",
+            scheduleFrequency: "daily",
+            scheduleWeekday: 1,
+            scheduleMonthDay: 1,
+            publishTime: "09:00",
+            timeZone: "Australia/Brisbane",
+            includePullRequestLinks: false,
+            publicTheme: "light",
+            postImageSettings: defaultPostImageSettings,
+          },
+        },
+      ],
+      entries: [
+        {
+          id: "entry_saved_filters",
+          changelogId: "cl_acme",
+          title: "Saved filters",
+          summary: "You can now save filters and reuse them later.",
+          category: "feature",
+          status: "published",
+          publishedAt: "2026-06-05T23:00:00.000Z",
+          imageUrl: null,
+          windowEndedAt: "2026-06-05T23:00:00.000Z",
+          sourcePullRequests: [
+            {
+              number: 42,
+              url: "https://github.com/acme/app/pull/42",
+              author: "octocat",
+            },
+          ],
+        },
+        {
+          id: "entry_login_fix",
+          changelogId: "cl_acme",
+          title: "More reliable login",
+          summary: "Login now recovers cleanly after an expired session.",
+          category: "fix",
+          status: "published",
+          publishedAt: "2026-06-04T23:00:00.000Z",
+          imageUrl: null,
+          windowEndedAt: "2026-06-04T23:00:00.000Z",
+          sourcePullRequests: [
+            {
+              number: 41,
+              url: "https://github.com/acme/app/pull/41",
+              author: "mona",
+            },
+          ],
+        },
+      ],
+      pullRequests: [
+        {
+          id: "pr_42",
+          number: 42,
+          title: "Add saved filters",
+          body: "Users can save a filter view and reuse it later.",
+          labels: ["feature"],
+          mergedAt: "2026-06-05T03:15:00.000Z",
+          url: "https://github.com/acme/app/pull/42",
+          repository: "acme/app",
+          author: "octocat",
+        },
+      ],
+    });
+  }
+
+  async beginGenerationRun(input: {
+    changelogId: string;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<boolean> {
+    const key = `${input.changelogId}:${input.windowStartedAt}:${input.windowEndedAt}`;
+    const existing = this.generationRuns.get(key);
+    if (existing && existing !== "failed") return false;
+    this.generationRuns.set(key, "running");
+    return true;
+  }
+
+  async completeGenerationRun(input: {
+    changelogId: string;
+    windowStartedAt: string;
+    windowEndedAt: string;
+    status: "published" | "held" | "empty" | "failed";
+  }): Promise<void> {
+    const key = `${input.changelogId}:${input.windowStartedAt}:${input.windowEndedAt}`;
+    this.generationRuns.set(key, input.status);
+  }
+
+  async enqueueMergeGenerationJob(input: {
+    changelogId: string;
+    pullRequestNumber: number;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<void> {
+    const duplicate = this.mergeGenerationJobs.some(
+      (job) =>
+        job.changelogId === input.changelogId &&
+        job.generationKey === `merge:${input.pullRequestNumber}`,
+    );
+    if (duplicate) return;
+
+    this.mergeGenerationJobs.push({
+      id: `merge_job_${crypto.randomUUID()}`,
+      ...input,
+      generationKey: `merge:${input.pullRequestNumber}`,
+      attemptCount: 0,
+      status: "pending",
+      nextAttemptAt: new Date(0).toISOString(),
+      processingStartedAt: null,
+      claimToken: null,
+      lastError: null,
+    });
+  }
+
+  async enqueueReleaseGenerationJob(input: {
+    changelogId: string;
+    tagName: string;
+    windowStartedAt: string;
+    windowEndedAt: string;
+  }): Promise<void> {
+    const generationKey = `release:${input.tagName}`;
+    if (
+      this.mergeGenerationJobs.some(
+        (job) =>
+          job.changelogId === input.changelogId &&
+          job.generationKey === generationKey,
+      )
+    ) {
+      return;
+    }
+
+    this.mergeGenerationJobs.push({
+      id: `release_job_${crypto.randomUUID()}`,
+      changelogId: input.changelogId,
+      pullRequestNumber: null,
+      generationKey,
+      windowStartedAt: input.windowStartedAt,
+      windowEndedAt: input.windowEndedAt,
+      attemptCount: 0,
+      status: "pending",
+      nextAttemptAt: new Date(0).toISOString(),
+      processingStartedAt: null,
+      claimToken: null,
+      lastError: null,
+    });
+  }
+
+  async claimMergeGenerationJobs(input: {
+    now: string;
+    limit: number;
+  }): Promise<MergeGenerationJob[]> {
+    const now = new Date(input.now);
+    const staleBefore = new Date(now.getTime() - 60 * 60 * 1000);
+    const claimed = this.mergeGenerationJobs
+      .filter(
+        (job) =>
+          (job.status === "pending" &&
+            new Date(job.nextAttemptAt).getTime() <= now.getTime()) ||
+          (job.status === "processing" &&
+            job.processingStartedAt !== null &&
+            new Date(job.processingStartedAt).getTime() <
+              staleBefore.getTime()),
+      )
+      .slice(0, input.limit);
+
+    for (const job of claimed) {
+      job.status = "processing";
+      job.processingStartedAt = now.toISOString();
+      job.attemptCount += 1;
+      job.claimToken = `${job.id}:${job.attemptCount}`;
+    }
+
+    return claimed.map(({ status: _status, claimToken, ...job }) => ({
+      ...job,
+      claimToken: claimToken!,
+    }));
+  }
+
+  async completeMergeGenerationJob(input: {
+    jobId: string;
+    claimToken: string;
+  }): Promise<void> {
+    const job = this.mergeGenerationJobs.find(
+      (item) =>
+        item.id === input.jobId &&
+        item.status === "processing" &&
+        item.claimToken === input.claimToken,
+    );
+    if (!job) return;
+    job.status = "completed";
+    job.processingStartedAt = null;
+    job.claimToken = null;
+    job.lastError = null;
+  }
+
+  async retryMergeGenerationJob(input: {
+    jobId: string;
+    claimToken: string;
+    error: string;
+    nextAttemptAt: string;
+  }): Promise<void> {
+    const job = this.mergeGenerationJobs.find(
+      (item) =>
+        item.id === input.jobId &&
+        item.status === "processing" &&
+        item.claimToken === input.claimToken,
+    );
+    if (!job) return;
+    job.status = "pending";
+    job.processingStartedAt = null;
+    job.claimToken = null;
+    job.nextAttemptAt = input.nextAttemptAt;
+    job.lastError = input.error;
+  }
+
+  async enqueuePostImageGeneration(input: {
+    workspaceId: string;
+    entryId: string;
+  }): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry?.changelogId,
+    );
+    if (
+      !entry ||
+      changelog?.workspaceId !== input.workspaceId ||
+      entry.imageUrl
+    ) {
+      return null;
+    }
+    entry.imageGenerationStatus = "pending";
+    entry.imageGenerationError = null;
+    entry.imageGenerationAttemptCount = 0;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: new Date().toISOString(),
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+    return entry;
+  }
+
+  async claimPostImageGenerationJobs(input: {
+    now: string;
+    limit: number;
+  }): Promise<PostImageGenerationJob[]> {
+    const now = new Date(input.now).getTime();
+    const staleAt = now - 60 * 60 * 1000;
+    const due = this.entries
+      .filter((entry) => {
+        const internal = entry as StoredEntry & {
+          imageGenerationNextAttemptAt?: string | null;
+          imageGenerationClaimedAt?: string | null;
+        };
+        return (
+          !entry.imageUrl &&
+          ((entry.imageGenerationStatus === "pending" &&
+            new Date(internal.imageGenerationNextAttemptAt ?? 0).getTime() <=
+              now) ||
+            (entry.imageGenerationStatus === "generating" &&
+              new Date(internal.imageGenerationClaimedAt ?? 0).getTime() <
+                staleAt))
+        );
+      })
+      .slice(0, input.limit);
+
+    return due.map((entry) => {
+      const attemptCount = (entry.imageGenerationAttemptCount ?? 0) + 1;
+      const claimToken = `${entry.id}:${attemptCount}`;
+      entry.imageGenerationStatus = "generating";
+      entry.imageGenerationAttemptCount = attemptCount;
+      Object.assign(entry, {
+        imageGenerationClaimToken: claimToken,
+        imageGenerationClaimedAt: input.now,
+      });
+      return {
+        entryId: entry.id,
+        changelogId: entry.changelogId,
+        attemptCount,
+        claimToken,
+      };
+    });
+  }
+
+  async completePostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    imageUrl: string;
+  }): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId) as
+      | (StoredEntry & { imageGenerationClaimToken?: string | null })
+      | undefined;
+    if (
+      !entry ||
+      entry.imageUrl ||
+      entry.imageGenerationStatus !== "generating" ||
+      entry.imageGenerationClaimToken !== input.claimToken
+    ) {
+      return null;
+    }
+    entry.imageUrl = input.imageUrl;
+    entry.imageGenerationStatus = null;
+    entry.imageGenerationError = null;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+    return entry;
+  }
+
+  async retryPostImageGeneration(input: {
+    entryId: string;
+    claimToken: string;
+    error: string;
+    nextAttemptAt?: string;
+  }): Promise<void> {
+    const entry = this.entries.find((item) => item.id === input.entryId) as
+      | (StoredEntry & { imageGenerationClaimToken?: string | null })
+      | undefined;
+    if (
+      !entry ||
+      entry.imageGenerationStatus !== "generating" ||
+      entry.imageGenerationClaimToken !== input.claimToken
+    ) {
+      return;
+    }
+    entry.imageGenerationStatus = input.nextAttemptAt ? "pending" : "failed";
+    entry.imageGenerationError = input.error;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: input.nextAttemptAt ?? null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+  }
+
+  async listWorkspaceMemberships(
+    userId: string,
+  ): Promise<WorkspaceMembership[]> {
+    return this.memberships.filter(
+      (membership) => membership.userId === userId,
+    );
+  }
+
+  async ensureUserWorkspace(
+    input: EnsureUserWorkspaceInput,
+  ): Promise<WorkspaceMembership> {
+    const existing = (await this.listWorkspaceMemberships(input.userId))[0];
+    if (existing) return existing;
+
+    const workspaceId = `ws_${crypto.randomUUID()}`;
+    this.workspaces.push({
+      id: workspaceId,
+      name: input.userName.trim() || "My workspace",
+    });
+    const membership: WorkspaceMembership = {
+      id: `membership_${crypto.randomUUID()}`,
+      workspaceId,
+      userId: input.userId,
+      role: "owner",
+      source: "local",
+    };
+    this.memberships.push(membership);
+    return membership;
+  }
+
+  async ensureGitHubInstallationMemberships(
+    input: EnsureGitHubInstallationMembershipsInput,
+  ): Promise<WorkspaceMembership[]> {
+    const accessibleInstallationIds = new Set(input.installationIds);
+    const accessibleRepositoryFullNames = new Set(
+      input.repositoryFullNames.map((fullName) => fullName.toLowerCase()),
+    );
+    const workspaceIds = new Set(
+      this.githubInstallations
+        .filter((installation) =>
+          accessibleInstallationIds.has(installation.installationId),
+        )
+        .map((installation) => installation.workspaceId),
+    );
+
+    const authorizedWorkspaceIds = new Set(
+      [...workspaceIds].filter((workspaceId) => {
+        const installationIds = this.githubInstallations
+          .filter((installation) => installation.workspaceId === workspaceId)
+          .map((installation) => installation.installationId);
+        const repositoryFullNames = this.repositories
+          .filter((repository) => repository.workspaceId === workspaceId)
+          .map((repository) => repository.fullName.toLowerCase());
+        return (
+          installationIds.length > 0 &&
+          installationIds.every((installationId) =>
+            accessibleInstallationIds.has(installationId),
+          ) &&
+          repositoryFullNames.every((fullName) =>
+            accessibleRepositoryFullNames.has(fullName),
+          )
+        );
+      }),
+    );
+
+    this.memberships = this.memberships.filter(
+      (membership) =>
+        membership.userId !== input.userId ||
+        membership.role === "owner" ||
+        (membership.source !== "github" && membership.source !== undefined) ||
+        authorizedWorkspaceIds.has(membership.workspaceId),
+    );
+
+    for (const workspaceId of authorizedWorkspaceIds) {
+      const existing = this.memberships.find(
+        (membership) =>
+          membership.userId === input.userId &&
+          membership.workspaceId === workspaceId,
+      );
+      if (!existing) {
+        this.memberships.push({
+          id: `membership_${crypto.randomUUID()}`,
+          workspaceId,
+          userId: input.userId,
+          role: "member",
+          source: "github",
+        });
+      }
+    }
+
+    return this.listWorkspaceMemberships(input.userId);
+  }
+
+  async getWorkspace(workspaceId: string): Promise<Workspace | null> {
+    return (
+      this.workspaces.find((workspace) => workspace.id === workspaceId) ?? null
+    );
+  }
+
+  async getWorkspaceSettings(
+    workspaceId: string,
+  ): Promise<Partial<WorkspaceSettings> | null> {
+    return this.workspaceSettings.get(workspaceId) ?? null;
+  }
+
+  async updateWorkspaceSettings(
+    workspaceId: string,
+    settings: WorkspaceSettings,
+  ): Promise<WorkspaceSettings> {
+    this.workspaceSettings.set(workspaceId, settings);
+    return settings;
+  }
+
+  async pruneCliSetupSessions(before: string): Promise<void> {
+    const cutoff = new Date(before).getTime();
+    this.cliSetupSessions = this.cliSetupSessions.filter(
+      (session) => new Date(session.expiresAt).getTime() >= cutoff,
+    );
+  }
+
+  async createCliSetupSession(
+    input: CreateCliSetupSessionInput,
+  ): Promise<CliSetupSession> {
+    const session: CliSetupSession = {
+      id: crypto.randomUUID(),
+      browserCodeHash: input.browserCodeHash,
+      pollTokenHash: input.pollTokenHash,
+      targetRepository: input.targetRepository,
+      userId: null,
+      workspaceId: null,
+      changelogId: null,
+      changelogUrl: null,
+      status: "pending",
+      error: null,
+      expiresAt: input.expiresAt,
+      completedAt: null,
+    };
+    this.cliSetupSessions.push(session);
+    return session;
+  }
+
+  async getCliSetupSession(id: string): Promise<CliSetupSession | null> {
+    return this.cliSetupSessions.find((session) => session.id === id) ?? null;
+  }
+
+  async getCliSetupSessionByBrowserCodeHash(
+    browserCodeHash: string,
+  ): Promise<CliSetupSession | null> {
+    return (
+      this.cliSetupSessions.find(
+        (session) => session.browserCodeHash === browserCodeHash,
+      ) ?? null
+    );
+  }
+
+  async claimCliSetupSession(input: {
+    id: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<CliSetupSession | null> {
+    const session = await this.getCliSetupSession(input.id);
+    if (
+      !session ||
+      new Date(session.expiresAt).getTime() <= Date.now() ||
+      (session.userId && session.userId !== input.userId)
+    ) {
+      return null;
+    }
+    session.userId = input.userId;
+    session.workspaceId = input.workspaceId;
+    if (session.status === "pending") session.status = "awaiting-installation";
+    return session;
+  }
+
+  async updateCliSetupSession(input: {
+    id: string;
+    status: CliSetupSession["status"];
+    error?: string | null;
+    changelogId?: string | null;
+    changelogUrl?: string | null;
+    completedAt?: string | null;
+  }): Promise<CliSetupSession | null> {
+    const session = await this.getCliSetupSession(input.id);
+    if (!session) return null;
+    session.status = input.status;
+    session.error = input.error ?? null;
+    if (input.changelogId !== undefined)
+      session.changelogId = input.changelogId;
+    if (input.changelogUrl !== undefined)
+      session.changelogUrl = input.changelogUrl;
+    if (input.completedAt !== undefined)
+      session.completedAt = input.completedAt;
+    return session;
+  }
+
+  async listGitHubInstallations(
+    workspaceId: string,
+  ): Promise<GitHubInstallation[]> {
+    return this.githubInstallations.filter(
+      (installation) => installation.workspaceId === workspaceId,
+    );
+  }
+
+  async listRepositories(workspaceId: string): Promise<GitHubRepository[]> {
+    return this.repositories.filter(
+      (repository) => repository.workspaceId === workspaceId,
+    );
+  }
+
+  async upsertGitHubInstallation(
+    input: UpsertGitHubInstallationInput,
+  ): Promise<GitHubInstallation> {
+    const existing = this.githubInstallations.find(
+      (installation) => installation.installationId === input.installationId,
+    );
+
+    if (existing) {
+      if (existing.workspaceId !== input.workspaceId) {
+        throw new Error("GitHub installation is already assigned.");
+      }
+      existing.accountLogin = input.accountLogin;
+      existing.accountType = input.accountType;
+      existing.suspendedAt = input.suspendedAt ?? null;
+      return existing;
+    }
+
+    const installation: GitHubInstallation = {
+      id: `ghi_${input.installationId}`,
+      workspaceId: input.workspaceId,
+      installationId: input.installationId,
+      accountLogin: input.accountLogin,
+      accountType: input.accountType,
+      suspendedAt: input.suspendedAt ?? null,
+    };
+    this.githubInstallations.push(installation);
+    return installation;
+  }
+
+  async upsertGitHubRepositories(input: {
+    workspaceId: string;
+    githubInstallationId: string;
+    repositories: UpsertGitHubRepositoryInput[];
+  }): Promise<GitHubRepository[]> {
+    const upserted = input.repositories.map((repositoryInput) => {
+      const existing = this.repositories.find(
+        (repository) => repository.fullName === repositoryInput.fullName,
+      );
+
+      if (existing) {
+        existing.workspaceId = input.workspaceId;
+        existing.githubInstallationId = input.githubInstallationId;
+        existing.owner = repositoryInput.owner;
+        existing.name = repositoryInput.name;
+        existing.private = repositoryInput.private;
+        return existing;
+      }
+
+      const repository: GitHubRepository = {
+        id: `repo_${repositoryInput.fullName.replaceAll("/", "_")}`,
+        workspaceId: input.workspaceId,
+        githubInstallationId: input.githubInstallationId,
+        owner: repositoryInput.owner,
+        name: repositoryInput.name,
+        fullName: repositoryInput.fullName,
+        private: repositoryInput.private,
+      };
+      this.repositories.push(repository);
+      return repository;
+    });
+
+    return upserted;
+  }
+
+  async listChangelogs(workspaceId: string): Promise<StoredChangelog[]> {
+    return this.changelogs.filter(
+      (changelog) => changelog.workspaceId === workspaceId,
+    );
+  }
+
+  async createChangelog(
+    input: CreateChangelogInput,
+  ): Promise<StoredChangelog | null> {
+    const existing = this.changelogs.find(
+      (changelog) =>
+        changelog.workspaceId === input.workspaceId &&
+        changelog.repositoryId === input.repositoryId,
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const repository = this.repositories.find(
+      (item) => item.id === input.repositoryId,
+    );
+
+    if (!repository) {
+      throw new Error(`Repository ${input.repositoryId} does not exist.`);
+    }
+
+    const changelog: StoredChangelog = {
+      id: `cl_${input.slug.replaceAll("-", "_")}`,
+      workspaceId: input.workspaceId,
+      repositoryId: input.repositoryId,
+      repository: repository.fullName,
+      slug: input.slug,
+      name: input.name,
+      description: input.description,
+      publicUrl: input.publicUrl,
+      customDomain: input.customDomain,
+      customHostnameId: input.customHostnameId ?? null,
+      customHostnameStatus: input.customHostnameStatus ?? null,
+      customHostnameSslStatus: input.customHostnameSslStatus ?? null,
+      lastGeneratedWindowEnd: null,
+      settings: input.settings,
+    };
+    this.changelogs.push(changelog);
+    return changelog;
+  }
+
+  async updateChangelogSettings(
+    input: UpdateChangelogSettingsInput,
+  ): Promise<StoredChangelog | null> {
+    const changelog = this.changelogs.find(
+      (item) =>
+        item.id === input.changelogId && item.workspaceId === input.workspaceId,
+    );
+
+    if (!changelog) {
+      return null;
+    }
+
+    changelog.slug = input.slug;
+    changelog.name = input.name;
+    changelog.description = input.description;
+    changelog.publicUrl = input.publicUrl;
+    changelog.customDomain = input.customDomain;
+    changelog.customHostnameId = input.customHostnameId ?? null;
+    changelog.customHostnameStatus = input.customHostnameStatus ?? null;
+    changelog.customHostnameSslStatus = input.customHostnameSslStatus ?? null;
+    changelog.settings = input.settings;
+    return changelog;
+  }
+
+  async getChangelogBySlug(slug: string): Promise<StoredChangelog | null> {
+    return this.changelogs.find((changelog) => changelog.slug === slug) ?? null;
+  }
+
+  async getChangelogByCustomDomain(
+    domain: string,
+  ): Promise<StoredChangelog | null> {
+    return (
+      this.changelogs.find(
+        (changelog) => changelog.customDomain?.toLowerCase() === domain,
+      ) ?? null
+    );
+  }
+
+  async getChangelogById(id: string): Promise<StoredChangelog | null> {
+    return this.changelogs.find((changelog) => changelog.id === id) ?? null;
+  }
+
+  async getChangelogByRepositoryFullName(
+    repositoryFullName: string,
+  ): Promise<StoredChangelog | null> {
+    return (
+      this.changelogs.find(
+        (changelog) => changelog.repository === repositoryFullName,
+      ) ?? null
+    );
+  }
+
+  async listEntries(changelogId: string): Promise<StoredEntry[]> {
+    const changelog = this.changelogs.find((item) => item.id === changelogId);
+    return this.entries
+      .filter((entry) => entry.changelogId === changelogId)
+      .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
+  }
+
+  async listPublicEntries(
+    input: ListPublicEntriesInput,
+  ): Promise<StoredEntry[]> {
+    const changelog = this.changelogs.find(
+      (item) => item.id === input.changelogId,
+    );
+    const publishedAtOrAfter = input.publishedAtOrAfter
+      ? Date.parse(input.publishedAtOrAfter)
+      : null;
+    const publishedBefore = input.publishedBefore
+      ? Date.parse(input.publishedBefore)
+      : null;
+    const publishedAtOrBefore = input.publishedAtOrBefore
+      ? Date.parse(input.publishedAtOrBefore)
+      : null;
+
+    return this.entries
+      .filter((entry) => {
+        if (
+          entry.changelogId !== input.changelogId ||
+          entry.status !== "published" ||
+          !entry.publishedAt
+        ) {
+          return false;
+        }
+        const publishedAt = Date.parse(entry.publishedAt);
+        return (
+          (publishedAtOrAfter === null || publishedAt >= publishedAtOrAfter) &&
+          (publishedBefore === null || publishedAt < publishedBefore) &&
+          (publishedAtOrBefore === null || publishedAt <= publishedAtOrBefore)
+        );
+      })
+      .sort((left, right) =>
+        (right.publishedAt ?? "").localeCompare(left.publishedAt ?? ""),
+      )
+      .slice(0, Math.min(Math.max(Math.trunc(input.limit), 1), 501))
+      .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
+  }
+
+  async hasPublicEntryBefore(
+    changelogId: string,
+    publishedBefore: string,
+  ): Promise<boolean> {
+    const boundary = Date.parse(publishedBefore);
+    return this.entries.some(
+      (entry) =>
+        entry.changelogId === changelogId &&
+        entry.status === "published" &&
+        Boolean(entry.publishedAt) &&
+        Date.parse(entry.publishedAt ?? "") < boundary,
+    );
+  }
+
+  async getPublishedArticleBySlug(
+    changelogId: string,
+    articleSlug: string,
+  ): Promise<StoredEntry | null> {
+    const entry = this.entries.find(
+      (candidate) =>
+        candidate.changelogId === changelogId &&
+        candidate.status === "published" &&
+        candidate.articleSlug === articleSlug &&
+        Boolean(candidate.articleMarkdown?.trim()) &&
+        Boolean(candidate.publishedAt) &&
+        Date.parse(candidate.publishedAt ?? "") <= Date.now(),
+    );
+    const changelog = this.changelogs.find((item) => item.id === changelogId);
+    return entry ? this.withSourcePullRequestMergedAt(entry, changelog) : null;
+  }
+
+  async listPullRequestsForWindow(
+    changelog: StoredChangelog,
+    windowEnd: string,
+  ): Promise<PullRequestMetadata[]> {
+    const window = getLastCompletedScheduleWindow({
+      now: new Date(windowEnd),
+      timeZone: changelog.settings.timeZone,
+      publishTime: changelog.settings.publishTime,
+      frequency: changelog.settings.scheduleFrequency,
+      scheduleWeekday: changelog.settings.scheduleWeekday,
+      scheduleMonthDay: changelog.settings.scheduleMonthDay,
+    });
+
+    return this.listPullRequestsForRange(changelog, {
+      startedAt: window.startedAt.toISOString(),
+      endedAt: window.endedAt.toISOString(),
+    });
+  }
+
+  async listPullRequestsForRange(
+    changelog: StoredChangelog,
+    window: { startedAt: string; endedAt: string },
+  ): Promise<PullRequestMetadata[]> {
+    return this.pullRequests.filter((pr) => {
+      const mergedAt = new Date(pr.mergedAt).getTime();
+      return (
+        pr.repository === changelog.repository &&
+        mergedAt >= new Date(window.startedAt).getTime() &&
+        mergedAt < new Date(window.endedAt).getTime()
+      );
+    });
+  }
+
+  async countPullRequestsForWorkspaceRange(
+    workspaceId: string,
+    window: { startedAt: string; endedAt: string },
+  ): Promise<number> {
+    const repositoryNames = new Set(
+      this.changelogs
+        .filter((changelog) => changelog.workspaceId === workspaceId)
+        .map((changelog) => changelog.repository),
+    );
+    const startedAt = new Date(window.startedAt).getTime();
+    const endedAt = new Date(window.endedAt).getTime();
+    const pullRequestKeys = new Set<string>();
+
+    for (const pullRequest of this.pullRequests) {
+      const mergedAt = new Date(pullRequest.mergedAt).getTime();
+      if (
+        repositoryNames.has(pullRequest.repository) &&
+        mergedAt >= startedAt &&
+        mergedAt < endedAt
+      ) {
+        pullRequestKeys.add(
+          pullRequest.id || `${pullRequest.repository}:${pullRequest.number}`,
+        );
+      }
+    }
+
+    return pullRequestKeys.size;
+  }
+
+  async upsertPullRequest(
+    input: UpsertPullRequestInput,
+  ): Promise<PullRequestMetadata | null> {
+    const repository = this.repositories.find(
+      (item) => item.fullName === input.repositoryFullName,
+    );
+
+    if (!repository) {
+      return null;
+    }
+
+    const pullRequest = {
+      ...input.pullRequest,
+      repository: repository.fullName,
+    };
+    const existing = this.pullRequests.find(
+      (item) => item.id === pullRequest.id,
+    );
+
+    if (existing) {
+      Object.assign(existing, pullRequest);
+      return existing;
+    }
+
+    this.pullRequests.push(pullRequest);
+    return pullRequest;
+  }
+
+  async createEntry(input: NewEntryInput): Promise<StoredEntry> {
+    if (input.generationKey) {
+      const existingId = this.entryGenerationKeys.get(input.generationKey);
+      const existing = this.entries.find((entry) => entry.id === existingId);
+      if (existing) return existing;
+    }
+
+    const { generationKey, ...entryInput } = input;
+    const entry: StoredEntry = {
+      id: `entry_${this.entries.length + 1}_${Date.now()}`,
+      ...entryInput,
+      imageUrl: input.imageUrl ?? null,
+      processedAt: new Date().toISOString(),
+    };
+    this.entries.unshift(entry);
+    if (generationKey) this.entryGenerationKeys.set(generationKey, entry.id);
+    return entry;
+  }
+
+  async publishEntry(
+    workspaceId: string,
+    entryId: string,
+  ): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === entryId);
+    if (!entry) {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== workspaceId) {
+      return null;
+    }
+
+    entry.status = "published";
+    entry.publishedAt =
+      entry.publishedAt ?? this.getEntrySourcePullRequestMergedAt(entry);
+    entry.holdReason = undefined;
+    return entry;
+  }
+
+  async updateEntry(input: UpdateEntryInput): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    if (!entry) {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+
+    entry.title = input.title;
+    entry.summary = input.summary;
+    entry.category = input.category;
+    entry.articleSlug = input.articleSlug ?? null;
+    entry.articleMarkdown = input.articleMarkdown ?? null;
+    if (input.publishedAt) {
+      entry.publishedAt = input.publishedAt;
+    }
+    return entry;
+  }
+
+  async updateEntryImage(
+    input: UpdateEntryImageInput,
+  ): Promise<StoredEntry | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    if (!entry) {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+
+    entry.imageUrl = input.imageUrl;
+    entry.imageGenerationStatus = null;
+    entry.imageGenerationError = null;
+    Object.assign(entry, {
+      imageGenerationNextAttemptAt: null,
+      imageGenerationClaimToken: null,
+      imageGenerationClaimedAt: null,
+    });
+    return entry;
+  }
+
+  async deleteEntry(workspaceId: string, entryId: string): Promise<boolean> {
+    const entry = this.entries.find((item) => item.id === entryId);
+    if (!entry) {
+      return false;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== workspaceId) {
+      return false;
+    }
+
+    this.entries = this.entries.filter((item) => item.id !== entryId);
+    return true;
+  }
+
+  async deleteHeldEntriesOlderThan(cutoff: string): Promise<number> {
+    const cutoffTimestamp = Date.parse(cutoff);
+    if (!Number.isFinite(cutoffTimestamp)) {
+      return 0;
+    }
+
+    const previousCount = this.entries.length;
+    this.entries = this.entries.filter((entry) => {
+      if (entry.status !== "held" || !entry.processedAt) {
+        return true;
+      }
+
+      const processedAtTimestamp = Date.parse(entry.processedAt);
+      return (
+        !Number.isFinite(processedAtTimestamp) ||
+        processedAtTimestamp > cutoffTimestamp
+      );
+    });
+
+    return previousCount - this.entries.length;
+  }
+
+  async markEntryNotRelevant(
+    input: MarkEntryNotRelevantInput,
+  ): Promise<AiFeedback | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    if (!entry) {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+
+    const feedback: AiFeedback = {
+      id: `ai_feedback_${this.aiFeedback.length + 1}_${Date.now()}`,
+      workspaceId: input.workspaceId,
+      changelogId: entry.changelogId,
+      entryId: entry.id,
+      title: entry.title,
+      summary: entry.summary,
+      category: entry.category,
+      note: input.note?.trim() || null,
+      feedbackKind: input.feedbackKind ?? "dismissed",
+      sourcePullRequests: entry.sourcePullRequests,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.aiFeedback.unshift(feedback);
+    this.entries = this.entries.filter((item) => item.id !== entry.id);
+    return feedback;
+  }
+
+  async resolveHeldEntry(
+    input: ResolveHeldEntryInput,
+  ): Promise<ResolveHeldEntryResult | null> {
+    const entry = this.entries.find((item) => item.id === input.entryId);
+    if (!entry || entry.status !== "held") {
+      return null;
+    }
+
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+
+    const shouldPublish = input.resolution === "should-publish";
+    if (shouldPublish) {
+      entry.title = input.title ?? entry.title;
+      entry.summary = input.summary ?? entry.summary;
+      entry.category = input.category ?? entry.category;
+    }
+    const feedback: AiFeedback = {
+      id: `ai_feedback_${this.aiFeedback.length + 1}_${Date.now()}`,
+      workspaceId: input.workspaceId,
+      changelogId: entry.changelogId,
+      entryId: entry.id,
+      title: entry.title,
+      summary: entry.summary,
+      category: entry.category,
+      note: input.note?.trim() || null,
+      feedbackKind: shouldPublish ? "relevant" : "dismissed",
+      sourcePullRequests: entry.sourcePullRequests,
+      createdAt: new Date().toISOString(),
+    };
+    this.aiFeedback.unshift(feedback);
+
+    if (!shouldPublish) {
+      this.entries = this.entries.filter((item) => item.id !== entry.id);
+      return { feedback, entry: null };
+    }
+
+    entry.status = "published";
+    entry.publishedAt =
+      entry.publishedAt ?? this.getEntrySourcePullRequestMergedAt(entry);
+    entry.holdReason = undefined;
+    return { feedback, entry };
+  }
+
+  async listAiFeedback(
+    workspaceId: string,
+    changelogId: string,
+  ): Promise<AiFeedback[]> {
+    return this.aiFeedback.filter(
+      (item) =>
+        item.workspaceId === workspaceId && item.changelogId === changelogId,
+    );
+  }
+
+  async markGenerated(changelogId: string, windowEnd: string): Promise<void> {
+    const changelog = this.changelogs.find((item) => item.id === changelogId);
+
+    if (
+      changelog &&
+      (!changelog.lastGeneratedWindowEnd ||
+        Date.parse(windowEnd) > Date.parse(changelog.lastGeneratedWindowEnd))
+    ) {
+      changelog.lastGeneratedWindowEnd = windowEnd;
+    }
+  }
+
+  async listDueChangelogs(now: Date): Promise<StoredChangelog[]> {
+    return this.changelogs.filter(
+      (changelog) =>
+        changelog.settings.generationSource === "pull-requests" &&
+        isChangelogDue({
+          now,
+          timeZone: changelog.settings.timeZone,
+          publishTime: changelog.settings.publishTime,
+          frequency: changelog.settings.scheduleFrequency,
+          scheduleWeekday: changelog.settings.scheduleWeekday,
+          scheduleMonthDay: changelog.settings.scheduleMonthDay,
+          lastGeneratedWindowEnd: changelog.lastGeneratedWindowEnd,
+        }),
+    );
+  }
+
+  async close(): Promise<void> {}
+
+  private getEntrySourcePullRequestMergedAt(entry: StoredEntry): string {
+    const changelog = this.changelogs.find(
+      (item) => item.id === entry.changelogId,
+    );
+    const sourceKeys = new Set(
+      entry.sourcePullRequests.flatMap((pullRequest) =>
+        sourcePullRequestKeys(pullRequest),
+      ),
+    );
+    const latest = this.pullRequests
+      .filter(
+        (pullRequest) =>
+          pullRequest.repository === changelog?.repository &&
+          pullRequestKeys(pullRequest).some((key) => sourceKeys.has(key)),
+      )
+      .map((pullRequest) => new Date(pullRequest.mergedAt))
+      .filter((mergedAt) => !Number.isNaN(mergedAt.getTime()))
+      .sort((left, right) => right.getTime() - left.getTime())[0];
+
+    return latest ? latest.toISOString() : new Date().toISOString();
+  }
+
+  private withSourcePullRequestMergedAt(
+    entry: StoredEntry,
+    changelog: StoredChangelog | undefined,
+  ): StoredEntry {
+    return {
+      ...entry,
+      sourcePullRequests: entry.sourcePullRequests.map((sourcePullRequest) => {
+        if (sourcePullRequest.mergedAt) {
+          return sourcePullRequest;
+        }
+
+        const sourceKeys = new Set(sourcePullRequestKeys(sourcePullRequest));
+        const pullRequest = this.pullRequests.find(
+          (item) =>
+            item.repository === changelog?.repository &&
+            pullRequestKeys(item).some((key) => sourceKeys.has(key)),
+        );
+
+        return pullRequest?.mergedAt
+          ? { ...sourcePullRequest, mergedAt: pullRequest.mergedAt }
+          : sourcePullRequest;
+      }),
+    };
+  }
+}
+
+function pullRequestKeys(pullRequest: PullRequestMetadata): string[] {
+  return [
+    `number:${pullRequest.number}`,
+    pullRequest.url ? `url:${normalizePullRequestUrl(pullRequest.url)}` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
+function sourcePullRequestKeys(
+  pullRequest: StoredEntry["sourcePullRequests"][number],
+): string[] {
+  return [
+    `number:${pullRequest.number}`,
+    pullRequest.url ? `url:${normalizePullRequestUrl(pullRequest.url)}` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
+function normalizePullRequestUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return url
+      .trim()
+      .replace(/[?#].*$/, "")
+      .replace(/\/+$/, "")
+      .toLowerCase();
+  }
+}

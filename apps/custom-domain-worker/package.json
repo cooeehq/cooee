@@ -1,0 +1,13 @@
+{
+  "name": "@cooee/custom-domain-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.113.0"
+  }
+}

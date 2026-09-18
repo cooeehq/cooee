@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@cooee/shared": ["../shared/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

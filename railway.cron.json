@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "bun install --frozen-lockfile && bun run build"
+  },
+  "deploy": {
+    "preDeployCommand": "bun run migrate",
+    "startCommand": "bun run railway:cron",
+    "cronSchedule": "*/15 * * * *",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}

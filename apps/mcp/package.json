@@ -1,0 +1,38 @@
+{
+  "name": "@cooee/mcp",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only MCP server for public Cooee changelogs.",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "server",
+    "changelog",
+    "mcp-use"
+  ],
+  "main": "dist/index.js",
+  "scripts": {
+    "postinstall": "mcp-use generate-types || exit 0",
+    "build": "mcp-use build",
+    "dev": "mcp-use dev",
+    "start": "mcp-use start",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "mcp-use": "1.34.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "8.3.0",
+    "tailwindcss": "^4.1.17",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
