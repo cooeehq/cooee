@@ -11,9 +11,9 @@ public API.
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/cooee)
 
 - PostgreSQL;
-- a public Cooee service using `railway.json`;
-- a cron service using `railway.cron.json`; and
-- a public, read-only MCP service using `railway.mcp.json`.
+- a public Cooee service for the dashboard, changelogs, and API;
+- a cron service for scheduled generation; and
+- a public, read-only MCP service.
 
 The template contains the complete self-hosted product. It does not create
 third-party accounts or credentials for GitHub, OpenAI, Cloudflare, or object
@@ -92,26 +92,43 @@ customer-facing category (`cooee:feature`, `cooee:improvement`, `cooee:fix`, or
 Cooee's Privacy labels settings. See [Coding-agent PR labels](agent-skills.md)
 for the full workflow and custom-category behavior.
 
+## Railway infrastructure
+
+The project-level [Railway IaC definition](../.railway/railway.ts) is the source
+of truth for all four services. From a checkout linked to the intended Railway
+project, preview and apply it with:
+
+```bash
+railway config plan
+railway config apply
+```
+
+Review the plan before applying it. The definition keeps secrets out of source,
+generates the Better Auth and webhook secrets, and references PostgreSQL and
+service URLs through Railway variables.
+
 ## Service configuration
 
 ### Cooee
 
-Use `railway.json`. It builds every workspace, applies database migrations
-before startup, starts `@cooee/api`, and checks `/api/ready`.
+The Cooee service builds the shared, admin, and API workspaces, applies database
+migrations before startup, starts `@cooee/api` with the admin bundle configured
+as its static root, and checks `/api/ready`.
 
 Generate a public Railway domain, then set `APP_URL` and `BETTER_AUTH_URL` to
-that HTTPS origin. The same origin serves `/`, `/changelog`, `/docs`, `/changelog/*`,
-and `/api/*`.
+that HTTPS origin. The same origin serves `/`, `/changelog`, `/changelog/*`,
+and `/api/*`. The managed marketing website and developer docs remain at
+`cooee.sh` and are not included in a self-hosted deployment.
 
 ### Cron
 
-Use `railway.cron.json`. Give it the same database, GitHub, OpenAI, auth, and
+The Cron service references the same database, GitHub, OpenAI, auth, and
 generation variables as the Cooee service. It runs every 15 minutes in UTC and
 does not need a public domain.
 
 ### MCP
 
-Use `railway.mcp.json` and set:
+The MCP service builds the generated server before startup. Set:
 
 ```dotenv
 COOEE_API_BASE_URL=https://changelog.example.com

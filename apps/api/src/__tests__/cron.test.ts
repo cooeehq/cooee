@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import railwayConfig from "../../../../.railway/railway";
+import { createRailwayContext, project } from "railway/iac";
+import type { ResourceNode, ServiceNode } from "railway/iac";
 import type { AiSummarizer } from "../services/openai";
 import { runDailyChangelogCron } from "../cron/daily-runner";
 import { InMemoryStore } from "../store/memory";
@@ -303,17 +304,62 @@ describe("daily changelog cron", () => {
   });
 });
 
-describe("railway cron config", () => {
-  test("runs the scheduler command on a native Railway cron schedule", () => {
-    const config = JSON.parse(
-      readFileSync(
-        join(import.meta.dir, "../../../../railway.cron.json"),
-        "utf8",
-      ),
-    );
+describe("railway infrastructure", () => {
+  test("keeps each service deployable with the intended production configuration", async () => {
+    const config = await railwayConfig(createRailwayContext(), project);
+    const resources = (config.resources ?? []).flatMap((resource) =>
+      Array.isArray(resource) ? resource : [resource],
+    ) as ResourceNode[];
+    const findService = (name: string): ServiceNode | undefined =>
+      resources.find(
+        (resource): resource is ServiceNode =>
+          resource.type === "service" && resource.name === name,
+      );
+    const app = findService("Cooee");
+    const cron = findService("Cron");
+    const mcp = findService("MCP");
 
-    expect(config.deploy.startCommand).toBe("bun run railway:cron");
-    expect(config.deploy.cronSchedule).toBe("*/15 * * * *");
-    expect(config.deploy.healthcheckPath).toBeUndefined();
+    expect(app).toMatchObject({
+      build: {
+        buildCommand: expect.stringContaining(
+          "bun run --filter @cooee/admin build",
+        ),
+      },
+      deploy: {
+        startCommand:
+          "COOEE_STATIC_ROOT=apps/admin/dist bun --filter @cooee/api start",
+        preDeployCommand: ["bun run migrate"],
+        healthcheckPath: "/api/ready",
+        restartPolicyMaxRetries: 3,
+      },
+      variables: {
+        OPENAI_MODEL: { type: "literal", value: "gpt-5.6-luna" },
+      },
+    });
+
+    expect(cron).toMatchObject({
+      deploy: {
+        startCommand: "bun run railway:cron",
+        cronSchedule: "*/15 * * * *",
+        restartPolicyMaxRetries: 3,
+      },
+    });
+
+    expect(mcp).toMatchObject({
+      build: {
+        buildCommand: expect.stringContaining("apps/mcp build"),
+      },
+      deploy: {
+        startCommand: "bun run --cwd apps/mcp start",
+        healthcheckPath: "/health",
+        restartPolicyMaxRetries: 3,
+      },
+    });
+
+    for (const resource of [app, cron, mcp]) {
+      expect(Object.keys(resource?.variables ?? {})).not.toContain(
+        "BILLING_ENABLED",
+      );
+    }
   });
 });

@@ -26,8 +26,8 @@ npx mcp-use client cooee-local tools call get-changelog-updates slug=acme-app li
 
 ## Production
 
-Deploy this workspace as a separate GitHub-integrated Railway service using
-`railway.mcp.json`. Set:
+Deploy this workspace as the separate GitHub-integrated MCP service defined in
+the root [Railway infrastructure](../../.railway/railway.ts). Set:
 
 ```bash
 COOEE_API_BASE_URL=https://api.cooee.sh
@@ -40,5 +40,5 @@ to your Cooee and MCP services. `COOEE_API_BASE_URL` is fixed by the operator;
 tool callers cannot provide an alternate upstream origin.
 
 The service intentionally has no `railway up` release path. Production uses
-the GitHub integration and `railway.mcp.json`, which builds the MCP workspace,
-starts the generated server, and checks `/health`.
+the GitHub integration and the project-level Railway definition, which builds
+the MCP workspace, starts the generated server, and checks `/health`.
