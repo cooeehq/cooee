@@ -12,9 +12,10 @@ supplies pull-request metadata, Cooee drafts and reviews customer-facing
 updates, and your public feed, React embed, and MCP clients read only entries
 you have published.
 
-The default deployment uses one public Cooee origin for the website, dashboard,
-public changelogs, docs, and API. A private worker handles scheduled jobs, while
-MCP runs as a separate read-only public service.
+The default deployment uses one public Cooee origin for the operator dashboard,
+public changelogs, and API. The managed marketing website and developer docs
+remain on `cooee.sh`. A private worker handles scheduled jobs, while MCP runs as
+a separate read-only public service.
 
 ## Why Deploy Cooee on Railway
 
@@ -72,8 +73,9 @@ Create a GitHub OAuth app and GitHub App before deploying, then provide:
 - `GITHUB_APP_PRIVATE_KEY`
 - `OPENAI_API_KEY`
 
-The GitHub App needs read-only access to pull requests and metadata, and should
-subscribe to pull request, installation, and installation-repository events.
+The GitHub App needs read-only access to pull requests, contents, and metadata,
+and should subscribe to pull request, release, installation, and
+installation-repository events.
 
 To label PRs from Codex, Claude, or another compatible coding agent, install
 the Cooee PR Labels skill in each developer environment. It uses the

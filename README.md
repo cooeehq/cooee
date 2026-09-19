@@ -134,16 +134,16 @@ hosting integrations are intentionally maintained outside this repository. The
 full deployment and upgrade guide is in
 [docs/self-hosting.md](docs/self-hosting.md).
 
-### Manual Railway services
+### Manual Railway deployment
 
-If you prefer to build the project yourself, connect each service to this
-repository and choose the matching config file:
+The project-level Railway infrastructure definition is
+[`.railway/railway.ts`](.railway/railway.ts). It creates PostgreSQL, the
+combined app/API, the 15-minute scheduler, and the independent read-only MCP
+service with their build commands, health checks, and variable references.
 
-| Service          | Railway config      | Notes                                               |
-| ---------------- | ------------------- | --------------------------------------------------- |
-| Combined app/API | `railway.json`      | Serves the dashboard, public changelogs, and API    |
-| Scheduler        | `railway.cron.json` | Runs `bun run railway:cron` every 15 minutes in UTC |
-| MCP              | `railway.mcp.json`  | Runs independently with `/health` and `/mcp`        |
+From a Railway-linked checkout, run `railway config plan`, review the proposed
+changes, then run `railway config apply`. Generate public domains for the Cooee
+and MCP services if they do not already have them.
 
 Production deployments are intended to use Railway's GitHub integration. Do
 not use `railway up` unless you have deliberately chosen a direct CLI release
