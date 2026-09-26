@@ -28,8 +28,8 @@ to automatic publishing. Sensitive or uncertain output is always held.
   OpenAPI 3.1 contract.
 - Embed updates in React 18 or 19 with accessible focus handling, localization,
   CSP nonce support, unread tracking, and light/dark/system themes.
-- Retrieve published updates through a read-only MCP service with no drafting,
-  publishing, or caller-controlled upstream origin.
+- Retrieve published updates through MCP, or connect a Cooee account to review,
+  edit, and explicitly confirm pending posts from an agent.
 - Self-host under the MIT license or use the managed service at
   [cooee.sh](https://cooee.sh).
 
@@ -41,7 +41,7 @@ This is a Bun and TypeScript monorepo:
 | ---------------------- | ---------------------------------------------------------------------------------------- |
 | `apps/admin`           | Self-hosted operator dashboard and public changelog frontend                             |
 | `apps/api`             | Bun API, authentication, GitHub integration, generation, feeds, and migrations           |
-| `apps/mcp`             | Separate read-only MCP server backed by the public API                                   |
+| `apps/mcp`             | Separate OAuth-protected MCP server for published updates and pending-post review        |
 | `packages/shared`      | Feed schemas, privacy filters, scheduling, and shared product contracts                  |
 | `packages/embed-react` | Published ESM-only React package, [`@cooeehq/react`](packages/embed-react/README.md)     |
 | `skills`               | Installable coding-agent integrations, including [Cooee PR Labels](docs/agent-skills.md) |
@@ -105,7 +105,7 @@ complete environment-variable reference.
 ## Deploy on Railway
 
 The Railway template provisions PostgreSQL, the combined Cooee application, a
-15-minute cron worker, and the read-only MCP service. It generates the auth
+15-minute cron worker, and the OAuth-protected MCP service. It generates the auth
 secret and connects services with Railway reference variables. You supply the
 GitHub and OpenAI credentials during deployment.
 
@@ -138,7 +138,7 @@ full deployment and upgrade guide is in
 
 The project-level Railway infrastructure definition is
 [`.railway/railway.ts`](.railway/railway.ts). It creates PostgreSQL, the
-combined app/API, the 15-minute scheduler, and the independent read-only MCP
+combined app/API, the 15-minute scheduler, and the independent authenticated MCP
 service with their build commands, health checks, and variable references.
 
 From a Railway-linked checkout, run `railway config plan`, review the proposed
@@ -229,9 +229,10 @@ For selected public or private repositories, Cooee sends sanitized PR metadata
 to the configured AI model: title, body, labels, merge time, repository, and the
 PR URL without query strings. It does not send diffs or repository contents.
 Private repositories use stricter writing instructions that suppress internal
-implementation details. Generated posts stay in review by default; operators
-can opt in to automatic publishing for drafts that pass privacy and confidence
-checks. Sensitive or uncertain drafts remain held for review.
+implementation details. Generated posts that pass every publishing check become
+pending when automatic publishing is off; operators can review and publish them
+manually. Sensitive or uncertain drafts remain held for separate guardrail
+review.
 
 GitHub-derived workspace membership is revalidated against current installation
 access on each authenticated request. A member must be able to access every
@@ -248,8 +249,8 @@ To assign a merged pull request to a category, add a label using
 and also work with custom category ids configured in the dashboard.
 
 For Codex, Claude, and other compatible coding agents, install the
-[Cooee PR Labels skill](docs/agent-skills.md) to inspect and label active PRs
-automatically, with confirmation for private or ambiguous work.
+[Cooee PR Labels skill](docs/agent-skills.md) to inspect connected PRs,
+recommend one label, and ask for confirmation before changing GitHub.
 
 Please report vulnerabilities privately through GitHub Security Advisories as
 described in [SECURITY.md](SECURITY.md). Do not include credentials, private PR

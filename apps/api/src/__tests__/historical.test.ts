@@ -101,7 +101,7 @@ describe("historical changelog generation", () => {
     ]);
   });
 
-  test("holds generated copy for review until automatic publishing is enabled", async () => {
+  test("queues publishable generated copy when automatic publishing is off", async () => {
     const store = InMemoryStore.seeded();
     store.workspaceSettings.delete("ws_acme");
     store.entries = [];
@@ -122,10 +122,10 @@ describe("historical changelog generation", () => {
       windowEnd: "2026-06-03T23:00:00.000Z",
     });
 
-    expect(result.status).toBe("held");
-    expect(result.holdReason).toBe("editorial-review-required");
+    expect(result.status).toBe("pending");
+    expect(result.holdReason).toBeUndefined();
     expect(result.entry).toMatchObject({
-      status: "held",
+      status: "pending",
       publishedAt: null,
       title: "PR 401",
     });

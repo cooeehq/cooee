@@ -20,6 +20,17 @@ const requiredSecret = (description: string): VariableConfig => ({
   isSealed: true,
 });
 
+const optionalSecret = (description: string): VariableConfig => ({
+  description,
+  isOptional: true,
+  isSealed: true,
+});
+
+const optionalInput = (description: string): VariableConfig => ({
+  description,
+  isOptional: true,
+});
+
 const applicationBuild =
   "bun install --frozen-lockfile && bun run --filter @cooee/shared build && bun run --filter @cooee/admin build && bun run --filter @cooee/api build";
 const workspaceBuild = "bun install --frozen-lockfile && bun run build";
@@ -57,6 +68,12 @@ export default defineRailway((context) => {
         "OpenAI API key used to draft changelog entries.",
       ),
       OPENAI_MODEL: "gpt-5.6-luna",
+      RESEND_API_KEY: optionalSecret(
+        "Resend sending-only API key for pending-review email notifications.",
+      ),
+      REVIEW_EMAIL_FROM: optionalInput(
+        "Verified sender, for example Cooee <notifications@example.com>.",
+      ),
     },
   });
 
@@ -84,6 +101,8 @@ export default defineRailway((context) => {
       NODE_ENV: "production",
       OPENAI_API_KEY: app.env.OPENAI_API_KEY,
       OPENAI_MODEL: app.env.OPENAI_MODEL,
+      RESEND_API_KEY: app.env.RESEND_API_KEY,
+      REVIEW_EMAIL_FROM: app.env.REVIEW_EMAIL_FROM,
     },
   });
 

@@ -2,7 +2,7 @@
 
 `railway.ts` is the source of truth for a self-hosted Cooee project. It defines
 PostgreSQL, the combined application/API, the scheduled worker, and the
-read-only MCP service.
+OAuth-protected MCP service.
 
 From a Railway-linked checkout, review changes before applying them:
 

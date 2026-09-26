@@ -1,7 +1,16 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { mcp } from "better-auth/plugins";
 import { createDb } from "./db/client";
-import { accounts, sessions, users, verifications } from "./db/schema";
+import {
+  accounts,
+  oauthAccessTokens,
+  oauthApplications,
+  oauthConsents,
+  sessions,
+  users,
+  verifications,
+} from "./db/schema";
 
 export type AuthRuntime = {
   handler(request: Request): Promise<Response>;
@@ -9,10 +18,16 @@ export type AuthRuntime = {
   listAccessibleGitHubResources?(
     headers: Headers,
   ): Promise<GitHubAccess | null>;
+  listAccessibleGitHubResourcesForUser?(
+    userId: string,
+  ): Promise<GitHubAccess | null>;
   canAccessGitHubInstallation(
     headers: Headers,
     installationId: number,
   ): Promise<boolean>;
+  getMcpSession?(
+    headers: Headers,
+  ): Promise<{ userId: string; scopes: string } | null>;
 };
 
 export type GitHubAccess = {
@@ -82,6 +97,9 @@ export function createAuth(
         session: sessions,
         account: accounts,
         verification: verifications,
+        oauthApplication: oauthApplications,
+        oauthAccessToken: oauthAccessTokens,
+        oauthConsent: oauthConsents,
       },
       camelCase: true,
     }),
@@ -116,6 +134,31 @@ export function createAuth(
       window: 60,
       max: 100,
     },
+    plugins: [
+      mcp({
+        loginPage: "/changelog",
+        ...(env.COOEE_MCP_URL?.trim()
+          ? { resource: env.COOEE_MCP_URL.trim() }
+          : {}),
+        oidcConfig: {
+          loginPage: "/changelog",
+          accessTokenExpiresIn: 60 * 60,
+          refreshTokenExpiresIn: 30 * 24 * 60 * 60,
+          defaultScope: "openid profile email offline_access cooee:review",
+          scopes: ["cooee:review"],
+          metadata: {
+            scopes_supported: [
+              "openid",
+              "profile",
+              "email",
+              "offline_access",
+              "cooee:review",
+            ],
+          },
+          requirePKCE: true,
+        },
+      }),
+    ],
   });
 
   async function listAccessibleGitHubResources(
@@ -150,9 +193,25 @@ export function createAuth(
     async listAccessibleGitHubResources(headers) {
       return listAccessibleGitHubResources(headers);
     },
+    async listAccessibleGitHubResourcesForUser(userId) {
+      try {
+        const token = await auth.api.getAccessToken({
+          body: { providerId: "github", userId },
+        });
+        return listGitHubAccess(token.accessToken);
+      } catch {
+        return null;
+      }
+    },
     async canAccessGitHubInstallation(headers, installationId) {
       const access = await listAccessibleGitHubResources(headers);
       return access?.installationIds.includes(installationId) ?? false;
+    },
+    async getMcpSession(headers) {
+      const session = await auth.api.getMcpSession({ headers });
+      return session?.userId
+        ? { userId: session.userId, scopes: session.scopes }
+        : null;
     },
   };
 }

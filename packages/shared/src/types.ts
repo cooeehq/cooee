@@ -11,7 +11,12 @@ export type ChangelogCategoryDefinition = {
   marketingCopy?: boolean;
 };
 
-export type ChangelogEntryStatus = "draft" | "held" | "published" | "discarded";
+export type ChangelogEntryStatus =
+  | "draft"
+  | "pending"
+  | "held"
+  | "published"
+  | "discarded";
 
 export type ChangelogChangeItem = {
   title: string;

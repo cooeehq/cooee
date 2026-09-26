@@ -26,12 +26,14 @@ export const changelogCategory = pgEnum("changelog_category", [
 ]);
 export const changelogEntryStatus = pgEnum("changelog_entry_status", [
   "draft",
+  "pending",
   "held",
   "published",
   "discarded",
 ]);
 export const generationRunStatus = pgEnum("generation_run_status", [
   "running",
+  "pending",
   "published",
   "held",
   "empty",
@@ -100,6 +102,69 @@ export const verifications = pgTable("verifications", {
   identifier: text("identifier").notNull(),
   value: text("value").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const oauthApplications = pgTable("oauth_applications", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  icon: text("icon"),
+  metadata: text("metadata"),
+  clientId: text("client_id").notNull().unique(),
+  clientSecret: text("client_secret"),
+  redirectUrls: text("redirect_urls").notNull(),
+  type: text("type").notNull(),
+  authenticationScheme: text("authentication_scheme")
+    .notNull()
+    .default("client_secret_basic"),
+  disabled: boolean("disabled").notNull().default(false),
+  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const oauthAccessTokens = pgTable("oauth_access_tokens", {
+  id: text("id").primaryKey(),
+  accessToken: text("access_token").notNull().unique(),
+  refreshToken: text("refresh_token").notNull().unique(),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", {
+    withTimezone: true,
+  }).notNull(),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
+    withTimezone: true,
+  }).notNull(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => oauthApplications.clientId, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const oauthConsents = pgTable("oauth_consents", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => oauthApplications.clientId, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  consentGiven: boolean("consent_given").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -362,6 +427,7 @@ export const changelogEntries = pgTable(
       withTimezone: true,
     }).notNull(),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    reviewNotifiedAt: timestamp("review_notified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -381,6 +447,25 @@ export const changelogEntries = pgTable(
     index("changelog_entries_image_generation_due_idx").on(
       table.imageGenerationStatus,
       table.imageGenerationNextAttemptAt,
+    ),
+  ],
+);
+
+export const pendingReviewNotificationDeliveries = pgTable(
+  "pending_review_notification_deliveries",
+  {
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => changelogEntries.id, { onDelete: "cascade" }),
+    recipientEmail: text("recipient_email").notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("pending_review_delivery_idx").on(
+      table.entryId,
+      table.recipientEmail,
     ),
   ],
 );

@@ -6,7 +6,11 @@ import {
   normalizeChangelogCategoryDefinitions,
   normalizePostImageSettings,
 } from "@cooee/shared";
-import type { PullRequestMetadata } from "@cooee/shared";
+import type {
+  ChangelogCategory,
+  ChangelogEntryStatus,
+  PullRequestMetadata,
+} from "@cooee/shared";
 import type {
   AiFeedback,
   CliSetupSession,
@@ -19,6 +23,7 @@ import type {
   MarkEntryNotRelevantInput,
   ResolveHeldEntryInput,
   ResolveHeldEntryResult,
+  ReviewNotificationDelivery,
   MergeGenerationJob,
   ListPublicEntriesInput,
   NewEntryInput,
@@ -34,6 +39,7 @@ import type {
   UpsertGitHubRepositoryInput,
   Workspace,
   WorkspaceMembership,
+  WorkspaceNotificationRecipient,
   WorkspaceSettings,
   PostImageGenerationJob,
 } from "./types";
@@ -103,7 +109,7 @@ export class PostgresStore implements Store {
     changelogId: string;
     windowStartedAt: string;
     windowEndedAt: string;
-    status: "published" | "held" | "empty" | "failed";
+    status: "published" | "pending" | "held" | "empty" | "failed";
     holdReason?: string | null;
   }): Promise<void> {
     await this.sql`
@@ -337,6 +343,31 @@ export class PostgresStore implements Store {
       order by created_at asc
     `;
     return rows.map(mapWorkspaceMembership);
+  }
+
+  async listWorkspaceNotificationRecipients(
+    workspaceId: string,
+  ): Promise<WorkspaceNotificationRecipient[]> {
+    const rows = await this.sql`
+      select distinct u.id, u.name, u.email
+      from memberships m
+      join users u on u.id = m.user_id
+      where m.workspace_id = ${workspaceId}
+        and m.role = 'owner'
+        and btrim(u.email) <> ''
+        and u.email not like '%@auth.cooee.invalid'
+      order by u.id
+    `;
+    return rows.map((row) => ({
+      userId: row.id,
+      name: row.name,
+      email: row.email,
+    }));
+  }
+
+  async listWorkspaceIdsForNotifications(): Promise<string[]> {
+    const rows = await this.sql`select id from workspaces order by id`;
+    return rows.map((row) => row.id);
   }
 
   async ensureUserWorkspace(
@@ -901,6 +932,73 @@ export class PostgresStore implements Store {
     return rows.map(mapEntry);
   }
 
+  async listPendingEntries(changelogId: string): Promise<StoredEntry[]> {
+    const rows = await this.sql`
+      select *
+      from changelog_entries
+      where changelog_id = ${changelogId}
+        and status = 'pending'
+      order by created_at desc
+    `;
+
+    return rows.map(mapEntry);
+  }
+
+  async listReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    entryIds: string[];
+  }): Promise<ReviewNotificationDelivery[]> {
+    if (input.entryIds.length === 0) return [];
+    const rows = await this.sql`
+      select d.entry_id, d.recipient_email
+      from pending_review_notification_deliveries d
+      join changelog_entries e on e.id = d.entry_id
+      join changelogs c on c.id = e.changelog_id
+      where c.workspace_id = ${input.workspaceId}
+        and d.entry_id in ${this.sql(input.entryIds)}
+    `;
+    return rows.map((row) => ({
+      entryId: row.entry_id,
+      recipientEmail: row.recipient_email,
+    }));
+  }
+
+  async recordReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    deliveries: ReviewNotificationDelivery[];
+    deliveredAt: string;
+  }): Promise<void> {
+    if (input.deliveries.length === 0) return;
+    await this.sql`
+      insert into pending_review_notification_deliveries ${this.sql(
+        input.deliveries.map((delivery) => ({
+          entry_id: delivery.entryId,
+          recipient_email: delivery.recipientEmail.toLowerCase(),
+          delivered_at: new Date(input.deliveredAt),
+        })),
+      )}
+      on conflict (entry_id, recipient_email) do nothing
+    `;
+  }
+
+  async markEntriesReviewNotified(input: {
+    workspaceId: string;
+    entryIds: string[];
+    notifiedAt: string;
+  }): Promise<void> {
+    if (input.entryIds.length === 0) return;
+    await this.sql`
+      update changelog_entries e
+      set review_notified_at = ${new Date(input.notifiedAt)},
+        updated_at = now()
+      from changelogs c
+      where e.changelog_id = c.id
+        and c.workspace_id = ${input.workspaceId}
+        and e.id in ${this.sql(input.entryIds)}
+        and e.status = 'pending'
+    `;
+  }
+
   async listPublicEntries(
     input: ListPublicEntriesInput,
   ): Promise<StoredEntry[]> {
@@ -1142,10 +1240,24 @@ export class PostgresStore implements Store {
   async publishEntry(
     workspaceId: string,
     entryId: string,
+    expected?: {
+      status: ChangelogEntryStatus;
+      title?: string;
+      summary?: string;
+      category?: ChangelogCategory;
+    },
+    update?: {
+      title: string;
+      summary: string;
+      category: ChangelogCategory;
+    },
   ): Promise<StoredEntry | null> {
     const rows = await this.sql`
       update changelog_entries e
       set status = 'published',
+        title = coalesce(${update?.title ?? null}, e.title),
+        summary = coalesce(${update?.summary ?? null}, e.summary),
+        category = coalesce(${update?.category ?? null}, e.category),
         hold_reason = null,
         published_at = coalesce(
           e.published_at,
@@ -1171,6 +1283,10 @@ export class PostgresStore implements Store {
       where e.changelog_id = c.id
         and c.workspace_id = ${workspaceId}
         and e.id = ${entryId}
+        and (${expected === undefined} or e.status = ${expected?.status ?? "draft"})
+        and (${expected?.title === undefined} or e.title = ${expected?.title ?? ""})
+        and (${expected?.summary === undefined} or e.summary = ${expected?.summary ?? ""})
+        and (${expected?.category === undefined} or e.category = ${expected?.category ?? "feature"})
       returning e.*
     `;
 
@@ -1194,6 +1310,7 @@ export class PostgresStore implements Store {
       where e.changelog_id = c.id
         and c.workspace_id = ${input.workspaceId}
         and e.id = ${input.entryId}
+        and (${input.expectedStatus === undefined} or e.status = ${input.expectedStatus ?? "draft"})
       returning e.*
     `;
 
@@ -1586,6 +1703,9 @@ function mapEntry(row: postgres.Row): StoredEntry {
     imageGenerationStatus: row.image_generation_status ?? null,
     imageGenerationError: row.image_generation_error ?? null,
     imageGenerationAttemptCount: row.image_generation_attempt_count ?? 0,
+    reviewNotifiedAt: row.review_notified_at
+      ? toIso(row.review_notified_at)
+      : null,
     processedAt: row.created_at ? toIso(row.created_at) : undefined,
     windowEndedAt: toIso(row.window_ended_at),
     publishedAt: row.published_at ? toIso(row.published_at) : null,

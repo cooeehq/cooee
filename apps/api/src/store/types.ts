@@ -1,5 +1,6 @@
 import type {
   ChangelogGenerationSource,
+  ChangelogCategory,
   ChangelogCategoryDefinition,
   ChangelogEntry,
   ChangelogEntryStatus,
@@ -22,6 +23,17 @@ export type WorkspaceMembership = {
   userId: string;
   role: "owner" | "member";
   source?: "local" | "github";
+};
+
+export type WorkspaceNotificationRecipient = {
+  userId: string;
+  name: string;
+  email: string;
+};
+
+export type ReviewNotificationDelivery = {
+  entryId: string;
+  recipientEmail: string;
 };
 
 export type EnsureUserWorkspaceInput = {
@@ -189,6 +201,7 @@ export type StoredEntry = ChangelogEntry & {
   imageGenerationStatus?: "pending" | "generating" | "failed" | null;
   imageGenerationError?: string | null;
   imageGenerationAttemptCount?: number;
+  reviewNotifiedAt?: string | null;
 };
 
 export type ListPublicEntriesInput = {
@@ -243,6 +256,7 @@ export type UpdateEntryInput = {
   publishedAt?: string;
   articleSlug?: string | null;
   articleMarkdown?: string | null;
+  expectedStatus?: ChangelogEntryStatus;
 };
 
 export type UpdateEntryImageInput = {
@@ -336,7 +350,7 @@ export type Store = {
     changelogId: string;
     windowStartedAt: string;
     windowEndedAt: string;
-    status: "published" | "held" | "empty" | "failed";
+    status: "published" | "pending" | "held" | "empty" | "failed";
     holdReason?: string | null;
   }): Promise<void>;
   enqueueMergeGenerationJob(input: {
@@ -384,6 +398,10 @@ export type Store = {
     nextAttemptAt?: string;
   }): Promise<void>;
   listWorkspaceMemberships(userId: string): Promise<WorkspaceMembership[]>;
+  listWorkspaceNotificationRecipients(
+    workspaceId: string,
+  ): Promise<WorkspaceNotificationRecipient[]>;
+  listWorkspaceIdsForNotifications(): Promise<string[]>;
   ensureUserWorkspace(
     input: EnsureUserWorkspaceInput,
   ): Promise<WorkspaceMembership>;
@@ -441,6 +459,21 @@ export type Store = {
     repositoryFullName: string,
   ): Promise<StoredChangelog | null>;
   listEntries(changelogId: string): Promise<StoredEntry[]>;
+  listPendingEntries(changelogId: string): Promise<StoredEntry[]>;
+  listReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    entryIds: string[];
+  }): Promise<ReviewNotificationDelivery[]>;
+  recordReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    deliveries: ReviewNotificationDelivery[];
+    deliveredAt: string;
+  }): Promise<void>;
+  markEntriesReviewNotified(input: {
+    workspaceId: string;
+    entryIds: string[];
+    notifiedAt: string;
+  }): Promise<void>;
   listPublicEntries(input: ListPublicEntriesInput): Promise<StoredEntry[]>;
   hasPublicEntryBefore(
     changelogId: string,
@@ -469,6 +502,17 @@ export type Store = {
   publishEntry(
     workspaceId: string,
     entryId: string,
+    expected?: {
+      status: ChangelogEntryStatus;
+      title?: string;
+      summary?: string;
+      category?: ChangelogCategory;
+    },
+    update?: {
+      title: string;
+      summary: string;
+      category: ChangelogCategory;
+    },
   ): Promise<StoredEntry | null>;
   updateEntry(input: UpdateEntryInput): Promise<StoredEntry | null>;
   updateEntryImage(input: UpdateEntryImageInput): Promise<StoredEntry | null>;

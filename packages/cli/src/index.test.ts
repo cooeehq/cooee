@@ -126,14 +126,14 @@ test("creates and updates AGENTS.md without committing it", async () => {
     await writeFile(
       agentsPath,
       (await readFile(agentsPath, "utf8")).replace(
-        "before handing the PR back to the user.",
+        "Do not hand the PR back without addressing its Cooee label.",
         "Outdated wording.",
       ),
       "utf8",
     );
     expect(await writeCooeeAgentsInstructions(repositoryRoot)).toBe("updated");
     expect(await readFile(agentsPath, "utf8")).toContain(
-      "before handing the PR back to the user.",
+      "Do not hand the PR back without addressing its Cooee label.",
     );
   } finally {
     await rm(repositoryRoot, { force: true, recursive: true });

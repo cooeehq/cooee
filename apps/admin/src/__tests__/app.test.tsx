@@ -9,6 +9,7 @@ import {
   getLocalPublicChangelogUrl,
   getHostedPublicChangelogUrl,
   getHeldReviewCountdownLabel,
+  getReviewEntryStateKey,
   getApiErrorMessage,
   getApiUnavailableMessage,
   getHistoricalBackfillActionLayout,
@@ -19,6 +20,17 @@ import {
 } from "../App";
 
 describe("Cooee admin app", () => {
+  test("keys review drafts by entry instead of their shared pull request", () => {
+    const sharedSource = "#42";
+
+    expect(
+      getReviewEntryStateKey({ id: "entry_one", source: sharedSource }),
+    ).toBe("entry_one");
+    expect(
+      getReviewEntryStateKey({ id: "entry_two", source: sharedSource }),
+    ).toBe("entry_two");
+  });
+
   test("shows the held review deletion countdown", () => {
     const now = new Date("2026-07-29T12:00:01.000Z");
 

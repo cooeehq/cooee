@@ -4,7 +4,11 @@ import {
   getLastCompletedScheduleWindow,
   isChangelogDue,
 } from "@cooee/shared";
-import type { PullRequestMetadata } from "@cooee/shared";
+import type {
+  ChangelogCategory,
+  ChangelogEntryStatus,
+  PullRequestMetadata,
+} from "@cooee/shared";
 import type {
   AiFeedback,
   CliSetupSession,
@@ -16,6 +20,7 @@ import type {
   MarkEntryNotRelevantInput,
   ResolveHeldEntryInput,
   ResolveHeldEntryResult,
+  ReviewNotificationDelivery,
   MergeGenerationJob,
   ListPublicEntriesInput,
   NewEntryInput,
@@ -31,6 +36,7 @@ import type {
   UpsertGitHubRepositoryInput,
   Workspace,
   WorkspaceMembership,
+  WorkspaceNotificationRecipient,
   WorkspaceSettings,
   PostImageGenerationJob,
 } from "./types";
@@ -45,9 +51,15 @@ export class InMemoryStore implements Store {
   aiFeedback: AiFeedback[];
   pullRequests: PullRequestMetadata[];
   workspaceSettings: Map<string, Partial<WorkspaceSettings>>;
+  notificationRecipients: Array<
+    WorkspaceNotificationRecipient & { workspaceId: string }
+  >;
+  reviewNotificationDeliveries: Array<
+    ReviewNotificationDelivery & { deliveredAt: string; workspaceId: string }
+  > = [];
   generationRuns = new Map<
     string,
-    "running" | "published" | "held" | "empty" | "failed"
+    "running" | "published" | "pending" | "held" | "empty" | "failed"
   >();
   mergeGenerationJobs: Array<
     Omit<MergeGenerationJob, "claimToken"> & {
@@ -71,6 +83,9 @@ export class InMemoryStore implements Store {
     aiFeedback?: AiFeedback[];
     pullRequests?: PullRequestMetadata[];
     workspaceSettings?: Array<[string, Partial<WorkspaceSettings>]>;
+    notificationRecipients?: Array<
+      WorkspaceNotificationRecipient & { workspaceId: string }
+    >;
   }) {
     this.workspaces = input?.workspaces ?? [];
     this.memberships = input?.memberships ?? [];
@@ -81,6 +96,7 @@ export class InMemoryStore implements Store {
     this.aiFeedback = input?.aiFeedback ?? [];
     this.pullRequests = input?.pullRequests ?? [];
     this.workspaceSettings = new Map(input?.workspaceSettings ?? []);
+    this.notificationRecipients = input?.notificationRecipients ?? [];
   }
 
   async healthCheck(): Promise<boolean> {
@@ -219,7 +235,7 @@ export class InMemoryStore implements Store {
     changelogId: string;
     windowStartedAt: string;
     windowEndedAt: string;
-    status: "published" | "held" | "empty" | "failed";
+    status: "published" | "pending" | "held" | "empty" | "failed";
   }): Promise<void> {
     const key = `${input.changelogId}:${input.windowStartedAt}:${input.windowEndedAt}`;
     this.generationRuns.set(key, input.status);
@@ -478,6 +494,18 @@ export class InMemoryStore implements Store {
     return this.memberships.filter(
       (membership) => membership.userId === userId,
     );
+  }
+
+  async listWorkspaceNotificationRecipients(
+    workspaceId: string,
+  ): Promise<WorkspaceNotificationRecipient[]> {
+    return this.notificationRecipients
+      .filter((recipient) => recipient.workspaceId === workspaceId)
+      .map(({ workspaceId: _workspaceId, ...recipient }) => recipient);
+  }
+
+  async listWorkspaceIdsForNotifications(): Promise<string[]> {
+    return this.workspaces.map((workspace) => workspace.id);
   }
 
   async ensureUserWorkspace(
@@ -851,6 +879,74 @@ export class InMemoryStore implements Store {
       .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
   }
 
+  async listPendingEntries(changelogId: string): Promise<StoredEntry[]> {
+    const changelog = this.changelogs.find((item) => item.id === changelogId);
+    return this.entries
+      .filter(
+        (entry) =>
+          entry.changelogId === changelogId && entry.status === "pending",
+      )
+      .map((entry) => this.withSourcePullRequestMergedAt(entry, changelog));
+  }
+
+  async listReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    entryIds: string[];
+  }): Promise<ReviewNotificationDelivery[]> {
+    const entryIds = new Set(input.entryIds);
+    return this.reviewNotificationDeliveries
+      .filter(
+        (delivery) =>
+          delivery.workspaceId === input.workspaceId &&
+          entryIds.has(delivery.entryId),
+      )
+      .map(({ entryId, recipientEmail }) => ({ entryId, recipientEmail }));
+  }
+
+  async recordReviewNotificationDeliveries(input: {
+    workspaceId: string;
+    deliveries: ReviewNotificationDelivery[];
+    deliveredAt: string;
+  }): Promise<void> {
+    for (const delivery of input.deliveries) {
+      const recipientEmail = delivery.recipientEmail.toLowerCase();
+      if (
+        this.reviewNotificationDeliveries.some(
+          (existing) =>
+            existing.workspaceId === input.workspaceId &&
+            existing.entryId === delivery.entryId &&
+            existing.recipientEmail === recipientEmail,
+        )
+      ) {
+        continue;
+      }
+      this.reviewNotificationDeliveries.push({
+        workspaceId: input.workspaceId,
+        entryId: delivery.entryId,
+        recipientEmail,
+        deliveredAt: input.deliveredAt,
+      });
+    }
+  }
+
+  async markEntriesReviewNotified(input: {
+    workspaceId: string;
+    entryIds: string[];
+    notifiedAt: string;
+  }): Promise<void> {
+    const entryIds = new Set(input.entryIds);
+    const changelogIds = new Set(
+      this.changelogs
+        .filter((changelog) => changelog.workspaceId === input.workspaceId)
+        .map((changelog) => changelog.id),
+    );
+    for (const entry of this.entries) {
+      if (changelogIds.has(entry.changelogId) && entryIds.has(entry.id)) {
+        entry.reviewNotifiedAt = input.notifiedAt;
+      }
+    }
+  }
+
   async listPublicEntries(
     input: ListPublicEntriesInput,
   ): Promise<StoredEntry[]> {
@@ -1033,6 +1129,17 @@ export class InMemoryStore implements Store {
   async publishEntry(
     workspaceId: string,
     entryId: string,
+    expected?: {
+      status: ChangelogEntryStatus;
+      title?: string;
+      summary?: string;
+      category?: ChangelogCategory;
+    },
+    update?: {
+      title: string;
+      summary: string;
+      category: ChangelogCategory;
+    },
   ): Promise<StoredEntry | null> {
     const entry = this.entries.find((item) => item.id === entryId);
     if (!entry) {
@@ -1045,7 +1152,21 @@ export class InMemoryStore implements Store {
     if (changelog?.workspaceId !== workspaceId) {
       return null;
     }
+    if (
+      expected &&
+      (entry.status !== expected.status ||
+        (expected.title !== undefined && entry.title !== expected.title) ||
+        (expected.summary !== undefined && entry.summary !== expected.summary) ||
+        (expected.category !== undefined && entry.category !== expected.category))
+    ) {
+      return null;
+    }
 
+    if (update) {
+      entry.title = update.title;
+      entry.summary = update.summary;
+      entry.category = update.category;
+    }
     entry.status = "published";
     entry.publishedAt =
       entry.publishedAt ?? this.getEntrySourcePullRequestMergedAt(entry);
@@ -1063,6 +1184,9 @@ export class InMemoryStore implements Store {
       (item) => item.id === entry.changelogId,
     );
     if (changelog?.workspaceId !== input.workspaceId) {
+      return null;
+    }
+    if (input.expectedStatus && entry.status !== input.expectedStatus) {
       return null;
     }
 

@@ -3,6 +3,8 @@ import {
   createCooeeMcpServer,
   fetchPublicChangelogUpdates,
   getChangelogUpdatesInputSchema,
+  publishPendingPostInputSchema,
+  updatePendingPostInputSchema,
 } from "./server";
 
 const validFeed = {
@@ -42,13 +44,18 @@ const validFeed = {
 };
 
 describe("Cooee MCP", () => {
-  test("registers one read-only tool and serves health", async () => {
+  test("registers public and authenticated review tools and serves health", async () => {
     const server = createCooeeMcpServer({
       apiBaseUrl: "https://cooee.test",
       mcpUrl: "https://mcp.cooee.test",
     });
 
-    expect(server.registeredTools).toEqual(["get-changelog-updates"]);
+    expect(server.registeredTools).toEqual([
+      "get-changelog-updates",
+      "list-pending-posts",
+      "update-pending-post",
+      "publish-pending-post",
+    ]);
     const health = await server.app.request("/health");
     expect(health.status).toBe(200);
     expect(await health.json()).toEqual({ ok: true, service: "cooee-mcp" });
@@ -66,6 +73,25 @@ describe("Cooee MCP", () => {
       getChangelogUpdatesInputSchema.safeParse({
         slug: "https://evil.test/feed",
         limit: 21,
+      }).success,
+    ).toBe(false);
+    expect(
+      updatePendingPostInputSchema.safeParse({
+        workspaceId: "ws_acme",
+        postId: "entry_1",
+        title: "Reviewed title",
+        summary: "Reviewed summary.",
+        category: "fix",
+      }).success,
+    ).toBe(true);
+    expect(
+      publishPendingPostInputSchema.safeParse({
+        workspaceId: "ws_acme",
+        postId: "entry_1",
+        title: "Reviewed title",
+        summary: "Reviewed summary.",
+        category: "fix",
+        confirmed: false,
       }).success,
     ).toBe(false);
   });

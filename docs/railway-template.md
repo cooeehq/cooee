@@ -3,19 +3,19 @@
 Cooee turns merged GitHub pull requests into a privacy-first product
 changelog. This template deploys the complete self-hosted stack: the web app,
 operator dashboard, public API, scheduled worker, PostgreSQL, and the optional
-read-only MCP service.
+authenticated MCP service.
 
 ## About Hosting Cooee
 
 Hosting Cooee gives your team its own changelog pipeline and data store. GitHub
 supplies pull-request metadata, Cooee drafts and reviews customer-facing
-updates, and your public feed, React embed, and MCP clients read only entries
-you have published.
+updates. Your public feed and React embed read published entries, while an
+authenticated MCP client can also guide review and confirmed publishing.
 
 The default deployment uses one public Cooee origin for the operator dashboard,
 public changelogs, and API. The managed marketing website and developer docs
 remain on `cooee.sh`. A private worker handles scheduled jobs, while MCP runs as
-a separate read-only public service.
+a separate OAuth-protected service.
 
 ## Why Deploy Cooee on Railway
 
@@ -33,7 +33,7 @@ release and let Railway rebuild the affected services from the repository.
 - Let coding agents classify the pull requests they create before merge.
 - Publish a hosted changelog and cross-origin JSON feed.
 - Add an accessible updates popup to a React 18 or 19 application.
-- Let AI clients retrieve published updates through a read-only MCP tool.
+- Let AI clients retrieve published updates and guide pending-post review.
 - Run a private, self-hosted Cooee instance.
 
 ## Dependencies for Cooee
@@ -56,7 +56,7 @@ required.
   template.
 - **Cron** processes scheduled changelog generation every 15 minutes.
 - **Postgres** stores application data on a persistent Railway volume.
-- **MCP** exposes the read-only `get-changelog-updates` tool at `/mcp`.
+- **MCP** exposes published-update and pending-review tools at `/mcp`.
 
 Railway generates the database password, Better Auth secret, and GitHub webhook
 secret. Service URLs and database connections use Railway reference variables,
@@ -76,6 +76,12 @@ Create a GitHub OAuth app and GitHub App before deploying, then provide:
 The GitHub App needs read-only access to pull requests, contents, and metadata,
 and should subscribe to pull request, release, installation, and
 installation-repository events.
+
+Pending-review email is optional. To enable it, provide a sending-only
+`RESEND_API_KEY` and a verified `REVIEW_EMAIL_FROM` sender. If either is blank,
+the scheduled worker leaves email delivery disabled.
+Only posts that passed every publication check and became pending because
+automatic publishing is off are included. Guardrail-held drafts stay separate.
 
 To label PRs from Codex, Claude, or another compatible coding agent, install
 the Cooee PR Labels skill in each developer environment. It uses the
