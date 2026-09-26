@@ -3,8 +3,8 @@
 This guide covers the supported single-origin self-hosted deployment. The
 combined Cooee service serves the operator dashboard, public changelogs, and
 API. PostgreSQL stores application data, a cron
-service runs scheduled generation, and the optional MCP service reads from the
-public API.
+service runs scheduled generation, and the optional MCP service supports
+authenticated changelog review and publishing.
 
 ## Railway template
 
@@ -13,7 +13,7 @@ public API.
 - PostgreSQL;
 - a public Cooee service for the dashboard, changelogs, and API;
 - a cron service for scheduled generation; and
-- a public, read-only MCP service.
+- an OAuth-protected MCP service.
 
 The template contains the complete self-hosted product. It does not create
 third-party accounts or credentials for GitHub, OpenAI, Cloudflare, or object
@@ -84,10 +84,11 @@ npx skills add cooeehq/cooee --skill cooee-pr-labels -g
 gh auth login
 ```
 
-The skill uses the developer's `gh` authority to inspect the active PR and add
-a missing Cooee label without replacing existing labels. It adds a clear
-customer-facing category (`cooee:feature`, `cooee:improvement`, `cooee:fix`, or
-`cooee:maintenance`) and asks before applying a privacy label. The defaults are
+The skill uses the developer's `gh` authority to inspect the PR connected to the
+task, recommend one Cooee label, and ask for confirmation before changing
+GitHub. It can add or replace a confirmed customer-facing category
+(`cooee:feature`, `cooee:improvement`, `cooee:fix`, or `cooee:maintenance`)
+while preserving unrelated labels. The default privacy labels are
 `cooee:skip` and `cooee:internal`; use `cooee:private` only after adding it to
 Cooee's Privacy labels settings. See [Coding-agent PR labels](agent-skills.md)
 for the full workflow and custom-category behavior.
@@ -137,8 +138,16 @@ HOST=0.0.0.0
 ```
 
 Attach a public domain and verify `/health` and `/mcp`. The MCP service is
-read-only, exposes only `get-changelog-updates`, and never accepts a caller-
-supplied API origin.
+OAuth-protected, exposes published-update and pending-review tools, and never
+accepts a caller-supplied API origin. Publishing requires explicit confirmation
+after the final post has been shown to the user.
+
+To email workspace owners when new posts are waiting for review, configure both
+`RESEND_API_KEY` and a verified `REVIEW_EMAIL_FROM` sender on the Cooee and Cron
+services. Without both values, email notifications remain disabled.
+Notifications cover only `pending` posts that passed all publication checks and
+are waiting because automatic publishing is off. Guardrail-held drafts remain a
+separate review queue and do not trigger pending-post emails or MCP results.
 
 ## Optional integrations
 

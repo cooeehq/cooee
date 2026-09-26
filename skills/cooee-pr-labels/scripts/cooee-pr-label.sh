@@ -5,10 +5,11 @@ usage() {
   cat <<'EOF'
 Usage:
   cooee-pr-label.sh status [PR]
-  cooee-pr-label.sh apply <cooee:label> [PR]
+  cooee-pr-label.sh apply --confirmed <cooee:label> <PR>
+  cooee-pr-label.sh replace --confirmed <old-cooee:label> <new-cooee:label> <PR>
 
-PR may be a pull request number, URL, or branch. When omitted, GitHub CLI uses
-the pull request for the current branch.
+PR may be a pull request number, URL, or branch. It may be omitted only for
+status, in which case GitHub CLI uses the pull request for the current branch.
 EOF
 }
 
@@ -53,9 +54,28 @@ label_details() {
   esac
 }
 
+repository_from_pr() {
+  local pr="$1"
+  if [[ "$pr" =~ ^https?://([^/]+)/([^/]+/[^/]+)/pull/[0-9]+/?$ ]]; then
+    local host="${BASH_REMATCH[1]}"
+    local repository="${BASH_REMATCH[2]}"
+    if [[ "$host" == "github.com" ]]; then
+      printf '%s\n' "$repository"
+    else
+      printf '%s/%s\n' "$host" "$repository"
+    fi
+  fi
+}
+
 ensure_label() {
   local label="$1"
-  if gh label list --limit 1000 --json name --jq '.[].name' | grep -Fqx -- "$label"; then
+  local repository="${2:-}"
+  local repo_args=()
+  if [[ -n "$repository" ]]; then
+    repo_args=(--repo "$repository")
+  fi
+
+  if gh label list "${repo_args[@]}" --limit 1000 --json name --jq '.[].name' | grep -Fqx -- "$label"; then
     return
   fi
 
@@ -63,7 +83,7 @@ ensure_label() {
   details="$(label_details "$label")"
   color="${details%%$'\t'*}"
   description="${details#*$'\t'}"
-  gh label create "$label" --color "$color" --description "$description"
+  gh label create "$label" "${repo_args[@]}" --color "$color" --description "$description"
 }
 
 is_cooee_label() {
@@ -86,26 +106,45 @@ case "$command" in
       exit 2
     fi
     if [[ "$#" -eq 1 ]]; then
-      gh pr view "$1" --json number,title,url,labels
+      gh pr view "$1" --json number,title,body,url,baseRefName,headRefName,labels
     else
-      gh pr view --json number,title,url,labels
+      gh pr view --json number,title,body,url,baseRefName,headRefName,labels
     fi
     ;;
   apply)
-    if [[ "$#" -lt 1 || "$#" -gt 2 ]] || ! is_cooee_label "$1"; then
-      echo "apply requires a label in the form cooee:<category-id>." >&2
+    if [[ "${1:-}" != "--confirmed" ]]; then
+      echo "Refusing to change the PR without --confirmed. Ask the user to confirm the exact Cooee label first." >&2
+      exit 2
+    fi
+    shift
+    if [[ "$#" -ne 2 ]] || ! is_cooee_label "$1"; then
+      echo "apply requires --confirmed, a label in the form cooee:<category-id>, and the confirmed PR." >&2
       usage >&2
       exit 2
     fi
     label="$1"
-    pr="${2:-}"
-    ensure_label "$label"
-    if [[ -n "$pr" ]]; then
-      gh pr edit "$pr" --add-label "$label"
-    else
-      gh pr edit --add-label "$label"
-    fi
+    pr="$2"
+    ensure_label "$label" "$(repository_from_pr "$pr")"
+    gh pr edit "$pr" --add-label "$label"
     echo "Added $label to the pull request. Existing labels were preserved."
+    ;;
+  replace)
+    if [[ "${1:-}" != "--confirmed" ]]; then
+      echo "Refusing to change the PR without --confirmed. Ask the user to confirm the exact replacement first." >&2
+      exit 2
+    fi
+    shift
+    if [[ "$#" -ne 3 ]] || ! is_cooee_label "$1" || ! is_cooee_label "$2" || [[ "$1" == "$2" ]]; then
+      echo "replace requires --confirmed, different old and new cooee:<category-id> labels, and the confirmed PR." >&2
+      usage >&2
+      exit 2
+    fi
+    old_label="$1"
+    new_label="$2"
+    pr="$3"
+    ensure_label "$new_label" "$(repository_from_pr "$pr")"
+    gh pr edit "$pr" --remove-label "$old_label" --add-label "$new_label"
+    echo "Replaced $old_label with $new_label on the pull request. Other labels were preserved."
     ;;
   *)
     usage >&2

@@ -27,8 +27,9 @@ export const cooeeAgentsInstructions = `${cooeeAgentsInstructionsStart}
 ## Cooee pull-request labels
 
 When creating, updating, reviewing, or preparing a pull request, use
-\`$cooee-pr-labels\` after the PR exists. Apply the appropriate Cooee category
-before handing the PR back to the user.
+\`$cooee-pr-labels\` after every connected PR exists. Inspect that exact PR,
+recommend one Cooee label, and ask the user to confirm it before adding or
+replacing the label. Do not hand the PR back without addressing its Cooee label.
 ${cooeeAgentsInstructionsEnd}`;
 
 export type CliArguments = {

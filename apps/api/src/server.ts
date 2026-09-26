@@ -546,6 +546,98 @@ export function createApp(options: AppOptions = {}): App {
             return secureResponse(await auth.handler(request));
           }
 
+          if (
+            request.method === "GET" &&
+            [
+              "/.well-known/oauth-authorization-server",
+              "/.well-known/oauth-protected-resource",
+            ].includes(url.pathname)
+          ) {
+            if (!auth) {
+              return json(
+                { error: "Authentication is not configured." },
+                { status: 503 },
+              );
+            }
+            const authUrl = new URL(request.url);
+            authUrl.pathname = `/api/auth${url.pathname}`;
+            return secureResponse(
+              await auth.handler(
+                new Request(authUrl, {
+                  headers: request.headers,
+                  method: "GET",
+                }),
+              ),
+            );
+          }
+
+          let mcpWorkspaceIds: string[] = [];
+          let mcpOwnerWorkspaceIds: string[] = [];
+          if (url.pathname.startsWith("/api/mcp/")) {
+            if (!auth?.getMcpSession) {
+              return json(
+                { error: "MCP authentication is not configured." },
+                { status: 503 },
+              );
+            }
+            const mcpSession = await auth.getMcpSession(request.headers);
+            if (!mcpSession) {
+              return json(
+                { error: "Authentication required." },
+                {
+                  status: 401,
+                  headers: {
+                    "www-authenticate": `Bearer resource_metadata="${config.appUrl}/api/auth/.well-known/oauth-protected-resource"`,
+                  },
+                },
+              );
+            }
+            if (!mcpSession.scopes.split(/\s+/).includes("cooee:review")) {
+              return json(
+                { error: "The cooee:review scope is required." },
+                { status: 403 },
+              );
+            }
+            const storedMemberships = await store.listWorkspaceMemberships(
+              mcpSession.userId,
+            );
+            let memberships = storedMemberships;
+            if (auth.listAccessibleGitHubResourcesForUser) {
+              const githubAccess =
+                await auth.listAccessibleGitHubResourcesForUser(
+                  mcpSession.userId,
+                );
+              if (githubAccess === null) {
+                memberships = storedMemberships.filter(
+                  (membership) =>
+                    membership.role === "owner" ||
+                    membership.source === "local",
+                );
+                if (memberships.length === 0 && env.NODE_ENV === "production") {
+                  return json(
+                    {
+                      error:
+                        "GitHub access could not be verified. Please try again.",
+                    },
+                    { status: 503 },
+                  );
+                }
+              } else {
+                memberships = await store.ensureGitHubInstallationMemberships({
+                  userId: mcpSession.userId,
+                  installationIds: githubAccess.installationIds,
+                  repositoryFullNames: githubAccess.repositoryFullNames,
+                });
+              }
+            }
+            mcpWorkspaceIds = memberships.map(
+              (membership) => membership.workspaceId,
+            );
+            mcpOwnerWorkspaceIds = memberships
+              .filter((membership) => membership.role === "owner")
+              .map((membership) => membership.workspaceId);
+          }
+
           const requiresAdminSession =
             url.pathname.startsWith("/api/admin/") ||
             url.pathname === "/api/github/callback" ||
@@ -691,6 +783,173 @@ export function createApp(options: AppOptions = {}): App {
             });
             const updated = await store.getCliSetupSession(claimed.id);
             return json(serializeCliSetupBrowserSession(updated ?? claimed));
+          }
+
+          if (
+            request.method === "GET" &&
+            url.pathname === "/api/mcp/pending-posts"
+          ) {
+            const requestedWorkspaceId = url.searchParams.get("workspaceId");
+            const workspaceIds = requestedWorkspaceId
+              ? [requestedWorkspaceId]
+              : mcpWorkspaceIds;
+            if (
+              requestedWorkspaceId &&
+              !mcpWorkspaceIds.includes(requestedWorkspaceId)
+            ) {
+              return json(
+                { error: "You do not have access to this workspace." },
+                { status: 403 },
+              );
+            }
+            const pending = [];
+            for (const workspaceId of workspaceIds) {
+              const workspace = await store.getWorkspace(workspaceId);
+              for (const changelog of await store.listChangelogs(workspaceId)) {
+                for (const entry of await store.listEntries(changelog.id)) {
+                  if (entry.status !== "pending") {
+                    continue;
+                  }
+                  pending.push({
+                    workspace: {
+                      id: workspaceId,
+                      name: workspace?.name ?? "Workspace",
+                    },
+                    changelog: {
+                      id: changelog.id,
+                      name: changelog.name,
+                      repository: changelog.repository,
+                    },
+                    post: serializeAdminChangelogEntry(entry),
+                  });
+                }
+              }
+            }
+            return json({ pending, total: pending.length });
+          }
+
+          const mcpPendingPostMatch =
+            /^\/api\/mcp\/pending-posts\/([^/]+)$/.exec(url.pathname);
+          if (
+            (request.method === "PUT" || request.method === "POST") &&
+            mcpPendingPostMatch
+          ) {
+            const workspaceId = url.searchParams.get("workspaceId") ?? "";
+            if (!workspaceId || !mcpOwnerWorkspaceIds.includes(workspaceId)) {
+              return json(
+                {
+                  error:
+                    "Workspace owner access is required to change pending posts.",
+                },
+                { status: 403 },
+              );
+            }
+            const entryId = decodeURIComponent(mcpPendingPostMatch[1]);
+            const selected = await findWorkspaceEntry({
+              entryId,
+              store,
+              workspaceId,
+            });
+            if (!selected || selected.entry.status !== "pending") {
+              return json(
+                { error: "Pending post not found." },
+                { status: 404 },
+              );
+            }
+            const body = (await request.json().catch(() => ({}))) as Record<
+              string,
+              unknown
+            >;
+
+            if (request.method === "PUT") {
+              const normalized = normalizeEntryUpdate(body);
+              if (!normalized) {
+                return json(
+                  { error: "Title, summary, and category are required." },
+                  { status: 400 },
+                );
+              }
+              const article = await resolveArticleFields({
+                articleMarkdown:
+                  normalized.articleMarkdown === undefined
+                    ? (selected.entry.articleMarkdown ?? null)
+                    : normalized.articleMarkdown,
+                articleSlug:
+                  normalized.articleSlug === undefined
+                    ? (selected.entry.articleSlug ?? null)
+                    : normalized.articleSlug,
+                category: normalized.category,
+                categoryDefinitions:
+                  selected.changelog.settings.categoryDefinitions,
+                entries: await store.listEntries(selected.changelog.id),
+                entryId,
+                title: normalized.title,
+              });
+              const updated = await store.updateEntry({
+                ...normalized,
+                ...article,
+                entryId,
+                expectedStatus: "pending",
+                workspaceId,
+              });
+              if (!updated || updated.status !== "pending") {
+                return json(
+                  { error: "The pending post changed before it was updated." },
+                  { status: 409 },
+                );
+              }
+              return json({ post: serializeAdminChangelogEntry(updated) });
+            }
+
+            if (body.confirm !== true) {
+              return json(
+                {
+                  error:
+                    "Publishing requires explicit confirmation after the user reviews the final post.",
+                },
+                { status: 400 },
+              );
+            }
+            const confirmed = normalizeEntryUpdate(body);
+            if (!confirmed) {
+              return json(
+                {
+                  error:
+                    "Publishing requires the confirmed title, summary, and category.",
+                },
+                { status: 400 },
+              );
+            }
+            const published = await store.publishEntry(
+              workspaceId,
+              entryId,
+              {
+                status: "pending",
+                title: confirmed.title,
+                summary: confirmed.summary,
+                category: confirmed.category,
+              },
+            );
+            if (!published) {
+              return json(
+                { error: "The pending post changed before it was published." },
+                { status: 409 },
+              );
+            }
+            const categoryDefinition = getChangelogCategoryDefinition(
+              published.category,
+              selected.changelog.settings.categoryDefinitions,
+            );
+            const publishedEntry =
+              selected.changelog.settings.postImageSettings.enabled &&
+              isPostLikeDisplayType(categoryDefinition.displayType) &&
+              !published.imageUrl
+                ? ((await store.enqueuePostImageGeneration({
+                    entryId: published.id,
+                    workspaceId,
+                  })) ?? published)
+                : published;
+            return json({ post: serializeAdminChangelogEntry(publishedEntry) });
           }
 
           if (
@@ -2191,7 +2450,44 @@ export function createApp(options: AppOptions = {}): App {
               string,
               unknown
             >;
-            if (Object.keys(body).length > 0) {
+            const hasExpectedDraft = Object.hasOwn(body, "expected");
+            let entry: StoredEntry | null = null;
+            if (hasExpectedDraft) {
+              const input = normalizeEntryUpdate(body);
+              const expected = isRecord(body.expected)
+                ? normalizeEntryUpdate(body.expected)
+                : null;
+              if (!input || !expected) {
+                return json(
+                  {
+                    error:
+                      "The current and expected title, summary, and category are required.",
+                  },
+                  { status: 400 },
+                );
+              }
+              entry = await store.publishEntry(
+                workspaceId,
+                entryId,
+                {
+                  status: "pending",
+                  title: expected.title,
+                  summary: expected.summary,
+                  category: expected.category,
+                },
+                {
+                  title: input.title,
+                  summary: input.summary,
+                  category: input.category,
+                },
+              );
+              if (!entry) {
+                return json(
+                  { error: "The pending post changed before it was published." },
+                  { status: 409 },
+                );
+              }
+            } else if (Object.keys(body).length > 0) {
               const input = normalizeEntryUpdate(body);
               if (!input) {
                 return json(
@@ -2241,7 +2537,7 @@ export function createApp(options: AppOptions = {}): App {
               }
             }
 
-            const entry = await store.publishEntry(workspaceId, entryId);
+            entry ??= await store.publishEntry(workspaceId, entryId);
 
             if (!entry) {
               return json(
@@ -2928,6 +3224,10 @@ function paginateAdminChangelogEntries(
       )
       .sort((a, b) => b.windowEndedAt.localeCompare(a.windowEndedAt))
       .map(serializeAdminChangelogEntry),
+    pendingEntries: entries
+      .filter((entry) => entry.status === "pending")
+      .sort((a, b) => b.windowEndedAt.localeCompare(a.windowEndedAt))
+      .map(serializeAdminChangelogEntry),
     pagination: {
       page,
       limit,
@@ -2953,7 +3253,9 @@ async function getReviewableHeldEntryCount(input: {
   return entriesByChangelog
     .flat()
     .filter(
-      (entry) => entry.status === "held" && !isLabelSkippedHeldEntry(entry),
+      (entry) =>
+        entry.status === "pending" ||
+        (entry.status === "held" && !isLabelSkippedHeldEntry(entry)),
     ).length;
 }
 

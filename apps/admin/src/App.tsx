@@ -170,7 +170,7 @@ type PublishedEntry = {
   summary: string;
   category: string;
   time: string;
-  status?: "draft" | "held" | "published" | "discarded";
+  status?: "draft" | "pending" | "held" | "published" | "discarded";
   holdReason?: string | null;
   processedAt?: string | null;
   windowEndedAt?: string | null;
@@ -194,13 +194,13 @@ type PublishedEntry = {
   }>;
 };
 
-type HeldEntry = {
+type ReviewEntry = {
   id: string;
   title: string;
-  reason: HeldReasonDetails;
   source: string;
   copy: string;
   category: PublishedEntry["category"];
+  status?: "pending" | "held";
   processedAt?: string | null;
   windowEndedAt?: string | null;
   sourcePullRequests: Array<{
@@ -211,6 +211,20 @@ type HeldEntry = {
     mergedAt?: string;
   }>;
 };
+
+type HeldEntry = ReviewEntry & {
+  reason: HeldReasonDetails;
+};
+
+type PendingEntry = ReviewEntry & {
+  status: "pending";
+};
+
+export function getReviewEntryStateKey(
+  entry: Pick<ReviewEntry, "id" | "source">,
+): string {
+  return entry.id;
+}
 
 type HeldResolution = "hold-correct" | "should-publish";
 
@@ -352,7 +366,7 @@ type ApiChangelogEntry = {
   title: string;
   summary: string;
   category: ApiChangelogCategory;
-  status?: "draft" | "held" | "published" | "discarded";
+  status?: "draft" | "pending" | "held" | "published" | "discarded";
   holdReason?: string | null;
   imageUrl?: string | null;
   articleSlug?: string | null;
@@ -419,6 +433,7 @@ type PublicChangelogPaginationState = Pick<
 type ApiAdminChangelogEntriesResponse = {
   entries?: ApiChangelogEntry[];
   heldEntries?: ApiChangelogEntry[];
+  pendingEntries?: ApiChangelogEntry[];
   pagination?: {
     page: number;
     limit: number;
@@ -1081,6 +1096,7 @@ export function App({
   >(() => new Set());
   const [heldEntries, setHeldEntries] =
     useState<HeldEntry[]>(initialHeldEntries);
+  const [pendingEntries, setPendingEntries] = useState<PendingEntry[]>([]);
   const [heldEntryCount, setHeldEntryCount] = useState<number | null>(null);
   const [regeneratingHeldEntryIds, setRegeneratingHeldEntryIds] = useState<
     Set<string>
@@ -1112,7 +1128,10 @@ export function App({
   >({});
   const [draftCopy, setDraftCopy] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      initialHeldEntries.map((entry) => [entry.source, entry.copy]),
+      initialHeldEntries.map((entry) => [
+        getReviewEntryStateKey(entry),
+        entry.copy,
+      ]),
     ),
   );
   const [manualUpdate, setManualUpdate] = useState<ManualUpdateState>({
@@ -2216,11 +2235,18 @@ export function App({
 
       setPublishedEntries((body.entries ?? []).map(toPublishedEntry));
       const nextHeldEntries = (body.heldEntries ?? []).map(toHeldEntry);
+      const nextPendingEntries = (body.pendingEntries ?? []).map(
+        toPendingEntry,
+      );
       setHeldEntries(nextHeldEntries);
+      setPendingEntries(nextPendingEntries);
       setDraftCopy((copy) => ({
         ...copy,
         ...Object.fromEntries(
-          nextHeldEntries.map((entry) => [entry.source, entry.copy]),
+          [...nextHeldEntries, ...nextPendingEntries].map((entry) => [
+            getReviewEntryStateKey(entry),
+            entry.copy,
+          ]),
         ),
       }));
       setPublishedEntriesTotal(pagination.total);
@@ -2450,7 +2476,7 @@ export function App({
     }
   }
 
-  async function publishHeldEntry(entry: HeldEntry) {
+  async function publishHeldEntry(entry: ReviewEntry) {
     if (
       publishingHeldEntryIds.has(entry.id) ||
       regeneratingHeldEntryIds.has(entry.id)
@@ -2463,7 +2489,15 @@ export function App({
 
     try {
       let publishableEntry = entry;
-      let summary = (draftCopy[entry.source] ?? entry.copy).trim();
+      const entryStateKey = getReviewEntryStateKey(entry);
+      let summary = (draftCopy[entryStateKey] ?? entry.copy).trim();
+
+      if (!summary && entry.status === "pending") {
+        setEditingSource(entryStateKey);
+        goToView("privacy");
+        toast.error("Add post copy before publishing.");
+        return;
+      }
 
       if (!summary) {
         const regenerateResponse = await fetch(
@@ -2498,6 +2532,15 @@ export function App({
             title: publishableEntry.title,
             summary,
             category: toApiCategory(publishableEntry.category),
+            ...(entry.status === "pending"
+              ? {
+                  expected: {
+                    title: entry.title,
+                    summary: entry.copy,
+                    category: toApiCategory(entry.category),
+                  },
+                }
+              : {}),
           }),
         },
       );
@@ -2513,6 +2556,9 @@ export function App({
       setHeldEntries((entries) =>
         entries.filter((item) => item.id !== entry.id),
       );
+      setPendingEntries((entries) =>
+        entries.filter((item) => item.id !== entry.id),
+      );
       setPublishedEntries((entries) => [
         publishedEntry,
         ...entries.filter((item) => item.id !== entry.id),
@@ -2523,16 +2569,24 @@ export function App({
       void loadHeldEntryCountEvent();
       setLogEvents((events) => [
         {
-          title: "Held draft published",
+          title:
+            entry.status === "pending"
+              ? "Pending post published"
+              : "Held draft published",
           detail: `${publishableEntry.title} moved into the public changelog.`,
           time: "Now",
         },
         ...events,
       ]);
       setEditingSource(null);
-      toast.success("Held draft published.", {
-        description: `${publishableEntry.title} moved into the public changelog.`,
-      });
+      toast.success(
+        entry.status === "pending"
+          ? "Pending post published."
+          : "Held draft published.",
+        {
+          description: `${publishableEntry.title} moved into the public changelog.`,
+        },
+      );
     } catch (error) {
       if (regeneratedApiEntry) {
         const regeneratedEntry = toHeldEntry(regeneratedApiEntry);
@@ -2543,7 +2597,7 @@ export function App({
         );
         setDraftCopy((copy) => ({
           ...copy,
-          [regeneratedEntry.source]: regeneratedEntry.copy,
+          [getReviewEntryStateKey(regeneratedEntry)]: regeneratedEntry.copy,
         }));
       }
       toast.error("Could not create and publish post.", {
@@ -2567,9 +2621,10 @@ export function App({
     );
     setDraftCopy((copy) => ({
       ...copy,
-      [entry.source]: copy[entry.source] ?? entry.copy,
+      [getReviewEntryStateKey(entry)]:
+        copy[getReviewEntryStateKey(entry)] ?? entry.copy,
     }));
-    setEditingSource(entry.source);
+    setEditingSource(getReviewEntryStateKey(entry));
     goToView("privacy");
   }
 
@@ -2603,7 +2658,7 @@ export function App({
       );
       setDraftCopy((copy) => ({
         ...copy,
-        [regeneratedEntry.source]: regeneratedEntry.copy,
+        [getReviewEntryStateKey(regeneratedEntry)]: regeneratedEntry.copy,
       }));
       setPublishedEntries((entries) =>
         entries.map((item) =>
@@ -2666,7 +2721,9 @@ export function App({
         (item) => item.id === entry.id,
       );
       const shouldPublish = resolution === "should-publish";
-      const summary = (draftCopy[entry.source] ?? entry.copy).trim();
+      const summary = (
+        draftCopy[getReviewEntryStateKey(entry)] ?? entry.copy
+      ).trim();
       if (shouldPublish && !summary) {
         openHeldEntryReview(entry);
         toast.error("Add draft copy before publishing.");
@@ -3905,6 +3962,7 @@ export function App({
                   draftCopy={draftCopy}
                   editingSource={editingSource}
                   heldEntries={heldEntries}
+                  pendingEntries={pendingEntries}
                   now={scheduleNow}
                   publishingHeldEntryIds={publishingHeldEntryIds}
                   regeneratingHeldEntryIds={regeneratingHeldEntryIds}
@@ -8456,6 +8514,7 @@ function PrivacyReviewView({
   draftCopy,
   editingSource,
   heldEntries,
+  pendingEntries,
   now,
   publishingHeldEntryIds,
   regeneratingHeldEntryIds,
@@ -8468,17 +8527,102 @@ function PrivacyReviewView({
   draftCopy: Record<string, string>;
   editingSource: string | null;
   heldEntries: HeldEntry[];
+  pendingEntries: PendingEntry[];
   now: Date;
   publishingHeldEntryIds: Set<string>;
   regeneratingHeldEntryIds: Set<string>;
   onResolveHeldEntry: (entry: HeldEntry, resolution: HeldResolution) => void;
-  onPublishHeldEntry: (entry: HeldEntry) => void;
+  onPublishHeldEntry: (entry: ReviewEntry) => void;
   onRegenerateHeldEntry: (entry: HeldEntry) => void;
   setDraftCopy: Dispatch<SetStateAction<Record<string, string>>>;
   setEditingSource: Dispatch<SetStateAction<string | null>>;
 }) {
   return (
     <section className="flex flex-col gap-6">
+      <div className="max-w-3xl">
+        <h2 className="text-balance text-xl font-semibold tracking-normal">
+          Pending publication
+        </h2>
+        <p className="mt-1 text-balance text-sm text-muted-foreground">
+          These posts passed Cooee&apos;s publishing checks and are waiting only
+          because automatic publishing is off.
+        </p>
+      </div>
+      <div className="flex flex-col gap-5">
+        {pendingEntries.length === 0 ? (
+          <p className="text-balance text-sm leading-6 text-muted-foreground">
+            No posts are pending publication.
+          </p>
+        ) : (
+          pendingEntries.map((entry) => {
+            const isPublishing = publishingHeldEntryIds.has(entry.id);
+            const entryStateKey = getReviewEntryStateKey(entry);
+            return (
+              <article
+                className="rounded-[1.5rem] border border-border/70 bg-card/70 p-5 sm:p-6"
+                key={entry.id}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-balance font-medium">{entry.title}</h3>
+                    <p className="mt-1 text-balance text-sm text-muted-foreground">
+                      Ready to publish after reviewing{" "}
+                      {formatCount(
+                        entry.sourcePullRequests.length || 1,
+                        "pull request",
+                      )}
+                    </p>
+                  </div>
+                  <Badge variant="secondary">Pending</Badge>
+                </div>
+
+                {editingSource === entryStateKey ? (
+                  <Textarea
+                    aria-label={`Edit public copy for ${entry.title}`}
+                    className="mt-4 min-h-24 resize-y leading-6"
+                    onChange={(event) =>
+                      setDraftCopy((copy) => ({
+                        ...copy,
+                        [entryStateKey]: event.target.value,
+                      }))
+                    }
+                    value={draftCopy[entryStateKey] ?? entry.copy}
+                  />
+                ) : (
+                  <p className="mt-4 text-sm leading-6 text-muted-foreground">
+                    {draftCopy[entryStateKey] ?? entry.copy}
+                  </p>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    onClick={() =>
+                      setEditingSource((source) =>
+                        source === entryStateKey ? null : entryStateKey,
+                      )
+                    }
+                    size="sm"
+                    variant="outline"
+                  >
+                    {editingSource === entryStateKey
+                      ? "Save draft"
+                      : "Edit draft"}
+                  </Button>
+                  <Button
+                    aria-busy={isPublishing}
+                    disabled={isPublishing}
+                    onClick={() => onPublishHeldEntry(entry)}
+                    size="sm"
+                  >
+                    {isPublishing ? "Publishing" : "Publish post"}
+                  </Button>
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
+
       <div className="max-w-3xl">
         <h2 className="text-balance text-xl font-semibold tracking-normal">
           Held for review
@@ -8497,6 +8641,7 @@ function PrivacyReviewView({
           heldEntries.map((entry) => {
             const isPublishing = publishingHeldEntryIds.has(entry.id);
             const isRegenerating = regeneratingHeldEntryIds.has(entry.id);
+            const entryStateKey = getReviewEntryStateKey(entry);
             const expiryLabel = getHeldReviewCountdownLabel(
               entry.processedAt,
               now,
@@ -8575,26 +8720,26 @@ function PrivacyReviewView({
                   </div>
                 ) : null}
 
-                {editingSource === entry.source ? (
+                {editingSource === entryStateKey ? (
                   <Textarea
                     aria-label={`Edit public copy for ${entry.title}`}
                     className="mt-3 min-h-24 resize-y leading-6"
                     onChange={(event) =>
                       setDraftCopy((copy) => ({
                         ...copy,
-                        [entry.source]: event.target.value,
+                        [entryStateKey]: event.target.value,
                       }))
                     }
-                    value={draftCopy[entry.source] ?? entry.copy}
+                    value={draftCopy[entryStateKey] ?? entry.copy}
                   />
                 ) : null}
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
                     onClick={() => {
-                      const wasEditing = editingSource === entry.source;
+                      const wasEditing = editingSource === entryStateKey;
                       setEditingSource((source) =>
-                        source === entry.source ? null : entry.source,
+                        source === entryStateKey ? null : entryStateKey,
                       );
                       if (wasEditing) {
                         toast.success("Draft copy updated.", {
@@ -8605,7 +8750,7 @@ function PrivacyReviewView({
                     size="sm"
                     variant="outline"
                   >
-                    {editingSource === entry.source
+                    {editingSource === entryStateKey
                       ? "Save draft"
                       : "Edit draft"}
                   </Button>
@@ -11449,6 +11594,23 @@ function toHeldEntry(entry: ApiChangelogEntry): HeldEntry {
     source: getHeldEntrySource(sourcePullRequests, entry.id),
     copy: getHeldEntryDraftCopy(entry.summary),
     category: toUiCategory(entry.category),
+    status: "held",
+    processedAt: entry.processedAt ?? null,
+    windowEndedAt: entry.windowEndedAt ?? null,
+    sourcePullRequests,
+  };
+}
+
+function toPendingEntry(entry: ApiChangelogEntry): PendingEntry {
+  const sourcePullRequests = entry.sourcePullRequests ?? [];
+
+  return {
+    id: entry.id,
+    title: entry.title,
+    source: getHeldEntrySource(sourcePullRequests, entry.id),
+    copy: getHeldEntryDraftCopy(entry.summary),
+    category: toUiCategory(entry.category),
+    status: "pending",
     processedAt: entry.processedAt ?? null,
     windowEndedAt: entry.windowEndedAt ?? null,
     sourcePullRequests,

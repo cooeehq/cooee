@@ -16,6 +16,7 @@ import {
   type AiSummarizer,
 } from "../services/openai";
 import { signPayload, type GitHubAppClient } from "../services/github";
+import type { AuthRuntime } from "../auth";
 
 class TestAssetStorage {
   objects = new Map<string, { body: Uint8Array; contentType: string }>();
@@ -61,6 +62,280 @@ function publishedEntry(input: {
 }
 
 describe("api routes", () => {
+  test("lets an authenticated MCP user review, edit, and explicitly publish pending posts", async () => {
+    const store = InMemoryStore.seeded();
+    store.changelogs[0].settings.postImageSettings = {
+      ...store.changelogs[0].settings.postImageSettings,
+      enabled: true,
+    };
+    store.memberships.push({
+      id: "membership_1",
+      workspaceId: "ws_acme",
+      userId: "user_1",
+      role: "owner",
+      source: "local",
+    });
+    store.entries.unshift({
+      ...store.entries[0]!,
+      id: "entry_pending_mcp",
+      status: "pending",
+      publishedAt: null,
+      holdReason: undefined,
+      title: "Draft title",
+    });
+    const auth: AuthRuntime = {
+      handler: async () => new Response(null, { status: 404 }),
+      getSession: async () => null,
+      canAccessGitHubInstallation: async () => false,
+      getMcpSession: async (headers) => {
+        const authorization = headers.get("authorization");
+        if (authorization === "Bearer valid-token") {
+          return { userId: "user_1", scopes: "openid cooee:review" };
+        }
+        if (authorization === "Bearer limited-token") {
+          return { userId: "user_1", scopes: "openid" };
+        }
+        return null;
+      },
+    };
+    const app = createApp({ auth, store });
+    const headers = { authorization: "Bearer valid-token" };
+
+    const forbidden = await app.fetch(
+      new Request("http://cooee.test/api/mcp/pending-posts", {
+        headers: { authorization: "Bearer limited-token" },
+      }),
+    );
+    expect(forbidden.status).toBe(403);
+
+    const listed = await app.fetch(
+      new Request("http://cooee.test/api/mcp/pending-posts", { headers }),
+    );
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      total: 1,
+      pending: [
+        {
+          workspace: { id: "ws_acme" },
+          post: { id: "entry_pending_mcp", title: "Draft title" },
+        },
+      ],
+    });
+
+    const updated = await app.fetch(
+      new Request(
+        "http://cooee.test/api/mcp/pending-posts/entry_pending_mcp?workspaceId=ws_acme",
+        {
+          method: "PUT",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Reviewed title",
+            summary: "Reviewed summary.",
+            category: "feature",
+          }),
+        },
+      ),
+    );
+    expect(updated.status).toBe(200);
+    expect((await updated.json()).post).toMatchObject({
+      title: "Reviewed title",
+      category: "feature",
+      status: "pending",
+    });
+
+    const unconfirmed = await app.fetch(
+      new Request(
+        "http://cooee.test/api/mcp/pending-posts/entry_pending_mcp?workspaceId=ws_acme",
+        {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({
+            confirm: false,
+            title: "Reviewed title",
+            summary: "Reviewed summary.",
+            category: "feature",
+          }),
+        },
+      ),
+    );
+    expect(unconfirmed.status).toBe(400);
+
+    const staleConfirmation = await app.fetch(
+      new Request(
+        "http://cooee.test/api/mcp/pending-posts/entry_pending_mcp?workspaceId=ws_acme",
+        {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({
+            confirm: true,
+            title: "An older reviewed title",
+            summary: "Reviewed summary.",
+            category: "feature",
+          }),
+        },
+      ),
+    );
+    expect(staleConfirmation.status).toBe(409);
+
+    const published = await app.fetch(
+      new Request(
+        "http://cooee.test/api/mcp/pending-posts/entry_pending_mcp?workspaceId=ws_acme",
+        {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({
+            confirm: true,
+            title: "Reviewed title",
+            summary: "Reviewed summary.",
+            category: "feature",
+          }),
+        },
+      ),
+    );
+    expect(published.status).toBe(200);
+    expect((await published.json()).post).toMatchObject({
+      status: "published",
+      imageGenerationStatus: "pending",
+    });
+  });
+
+  test("removes revoked GitHub-derived MCP workspace access", async () => {
+    const store = InMemoryStore.seeded();
+    store.memberships.push({
+      id: "membership_revoked",
+      workspaceId: "ws_acme",
+      userId: "user_revoked",
+      role: "member",
+      source: "github",
+    });
+    const auth: AuthRuntime = {
+      handler: async () => new Response(null, { status: 404 }),
+      getSession: async () => null,
+      canAccessGitHubInstallation: async () => false,
+      getMcpSession: async () => ({
+        userId: "user_revoked",
+        scopes: "cooee:review",
+      }),
+      listAccessibleGitHubResourcesForUser: async () => ({
+        installationIds: [],
+        repositoryFullNames: [],
+      }),
+    };
+    const app = createApp({ auth, store });
+
+    const response = await app.fetch(
+      new Request("http://cooee.test/api/mcp/pending-posts", {
+        headers: { authorization: "Bearer revoked-token" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ pending: [], total: 0 });
+    expect(
+      await store.listWorkspaceMemberships("user_revoked"),
+    ).toHaveLength(0);
+  });
+
+  test("requires workspace owner access for MCP edits and publishing", async () => {
+    const store = InMemoryStore.seeded();
+    store.memberships.push({
+      id: "membership_member",
+      workspaceId: "ws_acme",
+      userId: "user_member",
+      role: "member",
+      source: "local",
+    });
+    store.entries.unshift({
+      ...store.entries[0]!,
+      id: "entry_pending_member",
+      status: "pending",
+      publishedAt: null,
+      holdReason: undefined,
+    });
+    const auth: AuthRuntime = {
+      handler: async () => new Response(null, { status: 404 }),
+      getSession: async () => null,
+      canAccessGitHubInstallation: async () => false,
+      getMcpSession: async () => ({
+        userId: "user_member",
+        scopes: "cooee:review",
+      }),
+    };
+    const app = createApp({ auth, store });
+    const headers = {
+      authorization: "Bearer member-token",
+      "content-type": "application/json",
+    };
+    const endpoint =
+      "http://cooee.test/api/mcp/pending-posts/entry_pending_member?workspaceId=ws_acme";
+
+    const listed = await app.fetch(
+      new Request("http://cooee.test/api/mcp/pending-posts", { headers }),
+    );
+    expect(listed.status).toBe(200);
+
+    for (const method of ["PUT", "POST"]) {
+      const response = await app.fetch(
+        new Request(endpoint, {
+          method,
+          headers,
+          body: JSON.stringify({
+            confirm: true,
+            title: "Reviewed title",
+            summary: "Reviewed summary.",
+            category: "feature",
+          }),
+        }),
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: "Workspace owner access is required to change pending posts.",
+      });
+    }
+  });
+
+  test("does not overwrite a pending post changed after the admin loaded it", async () => {
+    const store = InMemoryStore.seeded();
+    const pending = await store.createEntry({
+      changelogId: "cl_acme",
+      title: "Original title",
+      summary: "Original summary.",
+      category: "feature",
+      status: "pending",
+      publishedAt: null,
+      windowEndedAt: "2026-09-26T00:00:00.000Z",
+      sourcePullRequests: [],
+    });
+    pending.summary = "Updated through MCP.";
+    const app = createApp({ store });
+
+    const response = await app.fetch(
+      new Request(
+        `http://cooee.test/api/admin/changelog-entries/${pending.id}/publish`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "Original title",
+            summary: "Edited in the dashboard.",
+            category: "feature",
+            expected: {
+              title: "Original title",
+              summary: "Original summary.",
+              category: "feature",
+            },
+          }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(pending).toMatchObject({
+      status: "pending",
+      summary: "Updated through MCP.",
+    });
+  });
+
   test("serves health, public feed, and latest updates", async () => {
     const store = InMemoryStore.seeded();
     const app = createApp({ store });
@@ -797,7 +1072,7 @@ describe("api routes", () => {
     ).toEqual(["feature", "improvement", "fix", "maintenance"]);
   });
 
-  test("returns the workspace count of reviewable held entries", async () => {
+  test("returns the workspace count of pending and reviewable held entries", async () => {
     const store = InMemoryStore.seeded();
     store.entries = [];
     await store.createEntry({
@@ -808,6 +1083,16 @@ describe("api routes", () => {
       status: "held",
       publishedAt: null,
       holdReason: "sensitive-content",
+      windowEndedAt: "2026-06-05T23:00:00.000Z",
+      sourcePullRequests: [],
+    });
+    await store.createEntry({
+      changelogId: "cl_acme",
+      title: "Ready to publish",
+      summary: "This passed every publishing check.",
+      category: "feature",
+      status: "pending",
+      publishedAt: null,
       windowEndedAt: "2026-06-05T23:00:00.000Z",
       sourcePullRequests: [],
     });
@@ -829,7 +1114,7 @@ describe("api routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ count: 1 });
+    expect(await response.json()).toEqual({ count: 2 });
   });
 
   test("manual generation fails closed into a held draft on low confidence", async () => {

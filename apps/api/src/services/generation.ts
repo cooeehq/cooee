@@ -92,6 +92,7 @@ export async function generateChangelogForWindow(input: {
       windowEndedAt,
       status:
         result.status === "published" ||
+        result.status === "pending" ||
         result.status === "held" ||
         result.status === "empty"
           ? result.status
@@ -224,10 +225,7 @@ async function generateChangelogForWindowUnlocked(input: {
   ).autoPublish;
   const generatedStatus: ChangelogEntry["status"] = autoPublish
     ? "published"
-    : "held";
-  const generatedHoldReason = autoPublish
-    ? undefined
-    : "editorial-review-required";
+    : "pending";
 
   const privacyHeldEntries = await createHeldPullRequestEntries({
     changelogId: changelog.id,
@@ -441,7 +439,7 @@ async function generateChangelogForWindowUnlocked(input: {
         category: group.category,
         status: generatedStatus,
         publishedAt: autoPublish ? itemPublishedAt : null,
-        holdReason: generatedHoldReason,
+        holdReason: undefined,
         windowEndedAt: windowEnd,
         items: [],
         sourcePullRequests: group.pullRequests.map(toSourcePullRequest),
@@ -475,7 +473,7 @@ async function generateChangelogForWindowUnlocked(input: {
             ? pullRequest.mergedAt
             : windowEnd
           : null,
-        holdReason: generatedHoldReason,
+        holdReason: undefined,
         windowEndedAt: windowEnd,
         items: [],
         sourcePullRequests: [toSourcePullRequest(pullRequest)],
@@ -544,7 +542,7 @@ async function generateChangelogForWindowUnlocked(input: {
               ? pullRequest.mergedAt
               : windowEnd
             : null,
-          holdReason: generatedHoldReason,
+          holdReason: undefined,
           windowEndedAt: windowEnd,
           items: [],
           sourcePullRequests: [toSourcePullRequest(pullRequest)],
@@ -587,8 +585,13 @@ async function generateChangelogForWindowUnlocked(input: {
   return {
     status: entries.some((entry) => entry.status === "published")
       ? "published"
-      : "held",
-    entry: entries.find((entry) => entry.status === "published") ?? entries[0],
+      : entries.some((entry) => entry.status === "pending")
+        ? "pending"
+        : "held",
+    entry:
+      entries.find((entry) => entry.status === "published") ??
+      entries.find((entry) => entry.status === "pending") ??
+      entries[0],
     entries,
     holdReason: heldEntry?.holdReason,
   };

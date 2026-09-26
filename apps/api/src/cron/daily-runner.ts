@@ -16,6 +16,11 @@ import { createAssetStorage, type AssetStorage } from "../services/assets";
 import { PostImageOrchestrator } from "../services/post-images";
 import { processPostImageGenerationJobs } from "../services/post-image-jobs";
 import { createGitHubAppClient } from "../services/github";
+import {
+  createReviewNotificationSender,
+  sendPendingReviewNotifications,
+  type ReviewNotificationSender,
+} from "../services/review-notifications";
 
 export type DailyCronResult = {
   processed: number;
@@ -35,6 +40,7 @@ export async function runDailyChangelogCron(
     imageGenerator?: AiImageGenerator;
     assetStorage?: AssetStorage | null;
     logger?: CronLogger;
+    reviewNotificationSender?: ReviewNotificationSender | null;
   } = {},
 ): Promise<DailyCronResult> {
   const env = input.env ?? Bun.env;
@@ -55,6 +61,10 @@ export async function runDailyChangelogCron(
   const config = loadConfig(env);
   const githubClient = createGitHubAppClient(config);
   const logger = input.logger ?? console;
+  const reviewNotificationSender =
+    input.reviewNotificationSender === undefined
+      ? createReviewNotificationSender(env)
+      : input.reviewNotificationSender;
 
   try {
     await store.deleteHeldEntriesOlderThan(
@@ -154,6 +164,14 @@ export async function runDailyChangelogCron(
       assetStorage,
       now,
       orchestrator: new PostImageOrchestrator(imageGenerator),
+      store,
+    });
+
+    await sendPendingReviewNotifications({
+      appUrl: config.appUrl,
+      logger,
+      now,
+      sender: reviewNotificationSender,
       store,
     });
 
