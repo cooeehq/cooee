@@ -1,4 +1,5 @@
 import type { Store, StoredChangelog, StoredEntry } from "../store/types";
+import { renderPendingReviewEmail } from "./review-notification-email";
 
 export type ReviewNotificationMessage = {
   to: string;
@@ -91,37 +92,47 @@ export async function sendPendingReviewNotifications(input: {
         deliveryKey(delivery.entryId, delivery.recipientEmail),
       ),
     );
-    const pendingMessages = recipients.flatMap((recipient) => {
-      const recipientGroups = unnotifiedGroups
-        .map((group) => ({
-          ...group,
-          entries: group.entries.filter(
-            (entry) =>
-              !delivered.has(deliveryKey(entry.id, recipient.email)),
-          ),
-        }))
-        .filter((group) => group.entries.length > 0);
-      const recipientEntries = recipientGroups.flatMap(
-        (group) => group.entries,
-      );
-      if (recipientEntries.length === 0) return [];
-      return [
-        {
-          entryIds: recipientEntries.map((entry) => entry.id),
-          message: {
-            ...renderReviewNotification({
-              appUrl: input.appUrl,
-              groups: recipientGroups,
-              pendingCount: recipientEntries.length,
-              workspaceName: workspace?.name ?? "your workspace",
-            }),
-            to: recipient.email,
-          },
-        },
-      ];
-    });
-
     try {
+      const pendingMessages = (
+        await Promise.all(
+          recipients.map(async (recipient) => {
+            const recipientGroups = unnotifiedGroups
+              .map((group) => ({
+                ...group,
+                entries: group.entries.filter(
+                  (entry) =>
+                    !delivered.has(deliveryKey(entry.id, recipient.email)),
+                ),
+              }))
+              .filter((group) => group.entries.length > 0);
+            const recipientEntries = recipientGroups.flatMap(
+              (group) => group.entries,
+            );
+            if (recipientEntries.length === 0) return null;
+            return {
+              entryIds: recipientEntries.map((entry) => entry.id),
+              message: {
+                ...(await renderPendingReviewEmail({
+                  appUrl: input.appUrl,
+                  groups: recipientGroups.map((group) => ({
+                    changelogName: group.changelog.name,
+                    entries: group.entries.map((entry) => ({
+                      category: entry.category,
+                      id: entry.id,
+                      summary: entry.summary,
+                      title: entry.title,
+                    })),
+                  })),
+                  pendingCount: recipientEntries.length,
+                  workspaceName: workspace?.name ?? "your workspace",
+                })),
+                to: recipient.email,
+              },
+            };
+          }),
+        )
+      ).filter((message) => message !== null);
+
       for (
         let offset = 0;
         offset < pendingMessages.length;
@@ -144,9 +155,7 @@ export async function sendPendingReviewNotifications(input: {
           deliveredAt: input.now.toISOString(),
         });
         for (const delivery of batchDeliveries) {
-          delivered.add(
-            deliveryKey(delivery.entryId, delivery.recipientEmail),
-          );
+          delivered.add(deliveryKey(delivery.entryId, delivery.recipientEmail));
         }
         sent += batch.length;
       }
@@ -178,48 +187,4 @@ function deliveryKey(entryId: string, recipientEmail: string): string {
 
 async function listWorkspaceIds(store: Store): Promise<string[]> {
   return store.listWorkspaceIdsForNotifications();
-}
-
-function renderReviewNotification(input: {
-  appUrl: string;
-  groups: Array<{ changelog: StoredChangelog; entries: StoredEntry[] }>;
-  pendingCount: number;
-  workspaceName: string;
-}): Omit<ReviewNotificationMessage, "to"> {
-  const reviewUrl = new URL("/changelog/privacy", input.appUrl).toString();
-  const subject = `${input.pendingCount} changelog ${input.pendingCount === 1 ? "post" : "posts"} waiting for review`;
-  const lines = input.groups.flatMap(({ changelog, entries }) => [
-    changelog.name,
-    ...entries.map((entry) => `- ${entry.title}: ${entry.summary}`),
-  ]);
-  const htmlGroups = input.groups
-    .map(
-      ({ changelog, entries }) =>
-        `<h2>${escapeHtml(changelog.name)}</h2><ul>${entries
-          .map(
-            (entry) =>
-              `<li><strong>${escapeHtml(entry.title)}</strong><br>${escapeHtml(entry.summary)}</li>`,
-          )
-          .join("")}</ul>`,
-    )
-    .join("");
-
-  return {
-    subject,
-    text: `Cooee has ${input.pendingCount} ${input.pendingCount === 1 ? "post" : "posts"} waiting for review in ${input.workspaceName}.\n\n${lines.join("\n")}\n\nReview and publish: ${reviewUrl}`,
-    html: `<p>Cooee has <strong>${input.pendingCount}</strong> ${input.pendingCount === 1 ? "post" : "posts"} waiting for review in ${escapeHtml(input.workspaceName)}.</p>${htmlGroups}<p><a href="${escapeHtml(reviewUrl)}">Review and publish posts</a></p>`,
-  };
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const replacements: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return replacements[character] ?? character;
-  });
 }

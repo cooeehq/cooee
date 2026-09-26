@@ -63,11 +63,14 @@ describe("pending review notifications", () => {
       title: "Safer exports",
       summary: "Exports now omit hidden fields.",
     });
-    const messages: Array<{ to: string; subject: string; html: string }> = [];
+    const messages: Array<{
+      to: string;
+      subject: string;
+      html: string;
+      text: string;
+    }> = [];
     const sender = {
-      async sendBatch(
-        batch: Array<(typeof messages)[number] & { text: string }>,
-      ) {
+      async sendBatch(batch: Array<(typeof messages)[number]>) {
         messages.push(...batch);
       },
     };
@@ -87,9 +90,13 @@ describe("pending review notifications", () => {
       subject: "1 changelog post waiting for review",
     });
     expect(messages[0]?.html).toContain("Safer exports");
+    expect(messages[0]?.html).toContain("READY FOR REVIEW");
+    expect(messages[0]?.html).toContain("You can edit every post");
+    expect(messages[0]?.html).toContain("background-color:#faf9f6");
     expect(messages[0]?.html).toContain(
       "https://app.cooee.test/changelog/privacy",
     );
+    expect(messages[0]?.text).toContain("[Feature] Safer exports");
     expect(
       store.entries.find((entry) => entry.id === "entry_pending_review")
         ?.reviewNotifiedAt,
