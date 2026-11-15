@@ -1118,14 +1118,26 @@ function normalizeMaxItems(value: number): number {
 }
 
 export function buildCooeePoweredByUrl(hostname?: string): string {
-  const url = new URL(defaultCooeePoweredByUrl);
   const attributedHost = hostname?.trim();
+
+  // On Cooee's own sites the link is internal navigation, not a referral, so
+  // it carries no campaign tags that would split one page across URLs.
+  if (attributedHost && isCooeeHost(attributedHost)) {
+    return "https://cooee.sh/";
+  }
+
+  const url = new URL(defaultCooeePoweredByUrl);
 
   if (attributedHost) {
     url.searchParams.set("utm_content", attributedHost);
   }
 
   return url.toString();
+}
+
+function isCooeeHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return host === "cooee.sh" || host.endsWith(".cooee.sh");
 }
 
 function buildInstanceStyles(
