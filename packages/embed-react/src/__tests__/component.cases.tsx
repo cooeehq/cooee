@@ -119,6 +119,18 @@ describe("CooeeUpdates embed", () => {
     );
   });
 
+  test("links to Cooee without campaign tags on Cooee's own sites", () => {
+    expect(buildCooeePoweredByUrl("cooee.sh")).toBe("https://cooee.sh/");
+    expect(buildCooeePoweredByUrl("app.cooee.sh")).toBe("https://cooee.sh/");
+    expect(buildCooeePoweredByUrl("COOEE.SH.")).toBe("https://cooee.sh/");
+    expect(buildCooeePoweredByUrl("notcooee.sh")).toBe(
+      "https://cooee.sh/?utm_source=widget&utm_medium=referral&utm_campaign=powered_by&utm_content=notcooee.sh",
+    );
+    expect(buildCooeePoweredByUrl("cooee.sh.example.com")).toContain(
+      "utm_content=cooee.sh.example.com",
+    );
+  });
+
   test("gives multiple instances unique disclosure IDs", () => {
     const html = renderToStaticMarkup(
       <>
