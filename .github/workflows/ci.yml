@@ -67,8 +67,21 @@ jobs:
       - name: Verify MCP production start
         run: bash .github/scripts/verify-mcp-production.sh
 
+      # better-auth is pinned to 1.6.34 because 1.7 removes the `mcp` plugin that
+      # apps/api/src/auth.ts uses. These advisories are fixed only in 1.7, and each
+      # needs a better-auth feature this repo does not enable:
+      #   GHSA-965c-763c-88jm  Magic Link plugin (not enabled)
+      #   GHSA-r4xp-prcw-77qf  OAuth Proxy plugin (not enabled)
+      #   GHSA-q84f-53jg-9ppm  deviceAuthorization plugin (not enabled)
+      #   GHSA-44jh-23m7-hpcf  database rate-limit storage (we use the default memory store)
+      # Remove these ignores once the API moves to @better-auth/mcp and better-auth 1.7.
       - name: Audit dependencies
-        run: bun audit
+        run: >-
+          bun audit
+          --ignore GHSA-965c-763c-88jm
+          --ignore GHSA-r4xp-prcw-77qf
+          --ignore GHSA-q84f-53jg-9ppm
+          --ignore GHSA-44jh-23m7-hpcf
 
       - name: Verify React package contents
         run: npm pack --dry-run
